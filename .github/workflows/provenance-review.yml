@@ -1,0 +1,45 @@
+name: Provenance PR Review
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  provenance-review:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run AI provenance PR review
+        if: ${{ secrets.PROVENANCE_BACKEND_API_BASE_URL != '' && secrets.PROVENANCE_BACKEND_API_JWT != '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BACKEND_API_BASE_URL: ${{ secrets.PROVENANCE_BACKEND_API_BASE_URL }}
+          BACKEND_API_JWT: ${{ secrets.PROVENANCE_BACKEND_API_JWT }}
+          PROVENANCE_WORKSPACE_ID: ${{ secrets.PROVENANCE_WORKSPACE_ID }}
+          PROVENANCE_SEARCH_LIMIT: "60"
+        run: |
+          python .github/scripts/provenance_pr_review.py
+
+      - name: Skip review when backend secrets are not configured
+        if: ${{ !(secrets.PROVENANCE_BACKEND_API_BASE_URL != '' && secrets.PROVENANCE_BACKEND_API_JWT != '') }}
+        run: |
+          echo "Skipping provenance review because backend secrets are not configured."

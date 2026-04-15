@@ -1,0 +1,248 @@
+{
+  "name": "ai-insertion-detector",
+  "displayName": "AI Insertion Detector",
+  "description": "Detects and records qualifying AI-generated code insertion events.",
+  "version": "0.0.1",
+  "publisher": "local-dev",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "aiInsertionDetector.toggleFeature",
+        "title": "AI Insertion Detector: Toggle Feature"
+      },
+      {
+        "command": "aiInsertionDetector.showStatus",
+        "title": "AI Insertion Detector: Show Status"
+      },
+      {
+        "command": "aiInsertionDetector.showProvenance",
+        "title": "AI Insertion Detector: Show Provenance"
+      },
+      {
+        "command": "aiInsertionDetector.openProvenanceSearch",
+        "title": "AI Insertion Detector: Open Provenance Search"
+      },
+      {
+        "command": "aiInsertionDetector.backendLogin",
+        "title": "AI Insertion Detector: Backend Login"
+      },
+      {
+        "command": "aiInsertionDetector.switchToBackendMode",
+        "title": "AI Provenance: Switch to Backend Mode"
+      },
+      {
+        "command": "aiInsertionDetector.refreshLocalLineage",
+        "title": "AI Provenance: Refresh Local Lineage (Latest Commit)"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "aiInsertionDetector.provenanceSidebar",
+          "name": "AI Provenance"
+        },
+        {
+          "id": "aiInsertionDetector.provenanceSearchSidebar",
+          "name": "AI Provenance Search"
+        }
+      ]
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "aiInsertionDetector.showProvenance",
+          "when": "editorHasSelection"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "aiInsertionDetector.showProvenance"
+        },
+        {
+          "command": "aiInsertionDetector.openProvenanceSearch"
+        },
+        {
+          "command": "aiInsertionDetector.backendLogin"
+        },
+        {
+          "command": "aiInsertionDetector.switchToBackendMode"
+        },
+        {
+          "command": "aiInsertionDetector.refreshLocalLineage"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "AI Insertion Detector",
+      "properties": {
+        "aiCodeProvenance.mode": {
+          "type": "string",
+          "enum": [
+            "local",
+            "backend"
+          ],
+          "default": "local",
+          "description": "Choose storage and features: local (zero-setup) or backend (full power)."
+        },
+        "aiInsertionDetector.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable or disable AI insertion detection."
+        },
+        "aiInsertionDetector.lineThreshold": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "description": "Minimum net added lines required before an insertion event is captured."
+        },
+        "aiInsertionDetector.proxyPort": {
+          "type": "number",
+          "default": 8787,
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Proxy port used when forwarding captured insertion payloads via HTTP POST."
+        },
+        "aiInsertionDetector.localProxy.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable or disable the local LLM HTTP proxy that intercepts outgoing POST calls."
+        },
+        "aiInsertionDetector.localProxy.port": {
+          "type": "number",
+          "default": 8080,
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Listening port for the local LLM proxy server."
+        },
+        "aiInsertionDetector.correlation.similarityThreshold": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum Levenshtein similarity score used to boost content-based request correlation when timing matches are ambiguous."
+        },
+        "aiInsertionDetector.backend.baseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8787",
+          "description": "Base URL for provenance backend APIs used by the sidebar, for example GET /provenance/{uuid} and POST /explain."
+        },
+        "aiInsertionDetector.backend.websocketUrl": {
+          "type": "string",
+          "default": "ws://127.0.0.1:8787/ws/capture",
+          "description": "WebSocket endpoint used for primary backend capture ingest."
+        },
+        "aiInsertionDetector.backend.ingestPath": {
+          "type": "string",
+          "default": "/ingest",
+          "description": "Relative backend path used for HTTP fallback ingest when WebSocket delivery fails."
+        },
+        "aiInsertionDetector.backend.auth.loginPath": {
+          "type": "string",
+          "default": "/auth/login",
+          "description": "Relative backend authentication endpoint used by the login command when requesting JWT tokens."
+        },
+        "aiInsertionDetector.backend.auth.registerPath": {
+          "type": "string",
+          "default": "/auth/register",
+          "description": "Relative backend registration endpoint used when creating new per-user accounts from the extension."
+        },
+        "aiInsertionDetector.backend.auth.refreshPath": {
+          "type": "string",
+          "default": "/auth/refresh",
+          "description": "Relative backend endpoint used to refresh expired access tokens using a refresh token."
+        },
+        "aiInsertionDetector.backend.auth.refreshSkewSeconds": {
+          "type": "number",
+          "default": 45,
+          "minimum": 5,
+          "maximum": 600,
+          "description": "How many seconds before token expiration the extension should proactively refresh access tokens."
+        },
+        "aiInsertionDetector.backend.auth.autoAcquireOnActivate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Attempt backend authentication preflight on extension activation using any stored JWT token."
+        },
+        "aiInsertionDetector.backend.retry.websocketAttempts": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Maximum number of WebSocket ingest attempts before switching to HTTP fallback."
+        },
+        "aiInsertionDetector.backend.retry.httpAttempts": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Maximum number of HTTP fallback ingest attempts after WebSocket failures."
+        },
+        "aiInsertionDetector.backend.vectorSearchPath": {
+          "type": "string",
+          "default": "/search",
+          "description": "Relative backend endpoint path for vector similarity search used by the provenance search panel."
+        },
+        "aiInsertionDetector.local.explanation.provider": {
+          "type": "string",
+          "enum": [
+            "templated",
+            "ollama"
+          ],
+          "default": "templated",
+          "description": "Local explanation mode: templated summary (default) or local Ollama request with templated fallback."
+        },
+        "aiInsertionDetector.local.ollama.url": {
+          "type": "string",
+          "default": "http://127.0.0.1:11434/api/generate",
+          "description": "Local Ollama generate endpoint used for local provenance explanations."
+        },
+        "aiInsertionDetector.local.ollama.model": {
+          "type": "string",
+          "default": "qwen2.5-coder:7b",
+          "description": "Ollama model name used for local provenance explanation generation."
+        },
+        "aiInsertionDetector.local.ollama.timeoutMs": {
+          "type": "number",
+          "default": 15000,
+          "minimum": 2000,
+          "maximum": 120000,
+          "description": "Timeout in milliseconds for local Ollama explanation requests."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "http-proxy": "^1.18.1",
+    "neo4j-driver": "^6.0.1",
+    "simple-git": "^3.28.0",
+    "tree-sitter": "^0.21.1",
+    "tree-sitter-javascript": "^0.21.4",
+    "tree-sitter-python": "^0.21.0",
+    "tree-sitter-typescript": "^0.21.2",
+    "uuid": "^9.0.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/http-proxy": "^1.17.15",
+    "@types/node": "^20.14.12",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.5.13",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.6.2"
+  }
+}
