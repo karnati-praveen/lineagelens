@@ -1,0 +1,16 @@
+# Node / TypeScript
+node_modules/
+out/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# VS Code local data
+.vscode/ai-provenance/
+
+# Logs / temp
+*.log
+.DS_Store
