@@ -4,7 +4,7 @@
 
 Use these channels based on your issue type:
 
-- Feature request or bug report: open an issue at https://github.com/karnati-praveen/linegalens/issues
+- Feature request or bug report: open an issue at https://github.com/karnati-praveen/lineagelens/issues
 - Security vulnerability: do not open a public issue. Contact the maintainer privately and include reproduction details.
 - Usage questions: open a GitHub Discussion or issue labeled `question`.
 
