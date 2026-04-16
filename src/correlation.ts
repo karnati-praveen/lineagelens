@@ -1,7 +1,7 @@
 import * as path from 'path';
 import { LocalLlmProxyRuntime, RequestResponsePair } from './proxy';
 
-const DEFAULT_CORRELATION_WINDOW_MS = 3_000;
+const DEFAULT_CORRELATION_WINDOW_MS = 15_000;
 const DEFAULT_SIMILARITY_THRESHOLD = 0.7;
 const AMBIGUOUS_TIMING_DELTA_MS = 250;
 const MAX_SIMILARITY_INPUT_LENGTH = 4_000;
@@ -15,13 +15,13 @@ export type PromptCorrelationResult =
       requestUuid: string;
       timingDifferenceMs: number;
       correlationWindowMs: number;
-  similarityThreshold: number;
-  correlationConfidence: number;
+        similarityThreshold: number;
+        correlationConfidence: number;
       fileContextMatched: boolean;
       matchedFileContextTokens: string[];
-  contentSimilarityApplied: boolean;
-  ambiguityResolvedByContent: boolean;
-  contentSimilarityScore: number | null;
+        contentSimilarityApplied: boolean;
+        ambiguityResolvedByContent: boolean;
+        contentSimilarityScore: number | null;
       proxyResponseTimestampIso: string;
       proxyRequestTimestampIso: string;
       fullPromptMessages: unknown;

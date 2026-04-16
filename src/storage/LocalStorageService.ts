@@ -17,10 +17,13 @@ import {
 
 const LOCAL_STORAGE_RELATIVE_PATH = path.join('.vscode', 'ai-provenance', 'records.json');
 const GLOBAL_STATE_KEY = 'aiInsertionDetector.localStorage.records.v1';
+const DEFAULT_LOCAL_STORAGE_LOCATION = 'globalState';
 const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434/api/generate';
 const DEFAULT_OLLAMA_MODEL = 'qwen2.5-coder:7b';
 const DEFAULT_OLLAMA_TIMEOUT_MS = 15_000;
 const MAX_SNIPPET_LENGTH = 700;
+
+type LocalStorageLocation = 'globalState' | 'workspaceFile';
 
 type LineageRelationshipType =
   | 'INITIAL'
@@ -217,7 +220,7 @@ export class LocalStorageService implements ProvenanceStorageService {
     const dateToEpoch = parseDateToEpoch(filters.dateTo);
     const normalizedCurrentFilePath = normalizePath(filters.currentFilePath ?? '');
 
-    const results: ProvenanceSearchResultItem[] = [];
+    const candidateEntries: LocalRecordEntry[] = [];
 
     for (const entry of store.records) {
       const recordTimestamp = parseDateToEpoch(entry.record.timestampIso);
@@ -241,8 +244,25 @@ export class LocalStorageService implements ProvenanceStorageService {
         }
       }
 
-      const haystack = entry.searchText;
-      const score = scoreByTerms(haystack, terms);
+      candidateEntries.push(entry);
+    }
+
+    const candidateTokens = candidateEntries.map((entry) => tokenizeForSearch(entry.searchText));
+    const queryVector =
+      terms.length > 0 ? buildQueryTfidfVector(terms, candidateTokens) : undefined;
+
+    const results: ProvenanceSearchResultItem[] = [];
+
+    for (let index = 0; index < candidateEntries.length; index += 1) {
+      const entry = candidateEntries[index];
+      const tokens = candidateTokens[index] ?? [];
+      const modelName = normalizeModelName(entry.record.prompt.modelName);
+
+      const score =
+        terms.length > 0 && queryVector
+          ? computeTfidfCosineScore(queryVector, tokens)
+          : 0;
+
       if (terms.length > 0 && score <= 0) {
         continue;
       }
@@ -570,12 +590,27 @@ export class LocalStorageService implements ProvenanceStorageService {
   }
 
   private resolveStorageFilePath(resource?: vscode.Uri): string | undefined {
+    if (this.getStorageLocation(resource) !== 'workspaceFile') {
+      return undefined;
+    }
+
     const workspaceFolder = this.resolveWorkspaceFolder(resource);
     if (!workspaceFolder) {
       return undefined;
     }
 
     return path.join(workspaceFolder.uri.fsPath, LOCAL_STORAGE_RELATIVE_PATH);
+  }
+
+  private getStorageLocation(resource?: vscode.Uri): LocalStorageLocation {
+    const config = vscode.workspace.getConfiguration('aiInsertionDetector', resource);
+    const locationRaw =
+      config
+        .get<string>('local.storage.location', DEFAULT_LOCAL_STORAGE_LOCATION)
+        ?.trim()
+        .toLowerCase() ?? DEFAULT_LOCAL_STORAGE_LOCATION;
+
+    return locationRaw === 'workspacefile' ? 'workspaceFile' : 'globalState';
   }
 
   private resolveWorkspaceFolder(resource?: vscode.Uri): vscode.WorkspaceFolder | undefined {
@@ -866,40 +901,107 @@ function buildSearchText(record: ProvenanceRecord): string {
   return parts.join('\n').toLowerCase();
 }
 
+type QueryTfidfVector = {
+  weights: Map<string, number>;
+  idfByTerm: Map<string, number>;
+  norm: number;
+};
+
 function splitTerms(value: string): string[] {
-  return value
-    .toLowerCase()
-    .split(/\s+/)
-    .map((term) => term.trim())
-    .filter((term) => term.length > 0);
+  return tokenizeForSearch(value);
 }
 
-function scoreByTerms(haystack: string, terms: readonly string[]): number {
-  if (terms.length === 0) {
-    return 0;
+function tokenizeForSearch(value: string): string[] {
+  return value.toLowerCase().match(/[a-z0-9_]{2,}/g) ?? [];
+}
+
+function buildQueryTfidfVector(
+  queryTerms: readonly string[],
+  documentTokens: readonly string[][]
+): QueryTfidfVector | undefined {
+  if (queryTerms.length === 0 || documentTokens.length === 0) {
+    return undefined;
   }
 
-  let matchedTerms = 0;
-  let rawMentions = 0;
+  const uniqueTerms = new Set(queryTerms);
+  const idfByTerm = new Map<string, number>();
 
-  for (const term of terms) {
-    const escaped = escapeRegExp(term);
-    const regex = new RegExp(escaped, 'g');
-    const mentions = (haystack.match(regex) ?? []).length;
+  for (const term of uniqueTerms) {
+    let documentFrequency = 0;
 
-    if (mentions > 0) {
-      matchedTerms += 1;
-      rawMentions += mentions;
+    for (const tokens of documentTokens) {
+      if (tokens.includes(term)) {
+        documentFrequency += 1;
+      }
     }
+
+    const idf = Math.log((documentTokens.length + 1) / (documentFrequency + 1)) + 1;
+    idfByTerm.set(term, idf);
   }
 
-  if (matchedTerms === 0) {
+  const queryCounts = new Map<string, number>();
+  for (const term of queryTerms) {
+    queryCounts.set(term, (queryCounts.get(term) ?? 0) + 1);
+  }
+
+  const weights = new Map<string, number>();
+  let normSquared = 0;
+
+  for (const [term, count] of queryCounts.entries()) {
+    const idf = idfByTerm.get(term) ?? 1;
+    const tf = count / queryTerms.length;
+    const weight = tf * idf;
+    weights.set(term, weight);
+    normSquared += weight * weight;
+  }
+
+  if (normSquared <= 0) {
+    return undefined;
+  }
+
+  return {
+    weights,
+    idfByTerm,
+    norm: Math.sqrt(normSquared)
+  };
+}
+
+function computeTfidfCosineScore(
+  queryVector: QueryTfidfVector,
+  documentTokens: readonly string[]
+): number {
+  if (documentTokens.length === 0 || queryVector.norm <= 0) {
     return 0;
   }
 
-  const coverage = matchedTerms / terms.length;
-  const density = Math.min(1, rawMentions / Math.max(1, terms.length * 3));
-  return coverage * 0.7 + density * 0.3;
+  const documentCounts = new Map<string, number>();
+  for (const token of documentTokens) {
+    if (!queryVector.weights.has(token)) {
+      continue;
+    }
+
+    documentCounts.set(token, (documentCounts.get(token) ?? 0) + 1);
+  }
+
+  if (documentCounts.size === 0) {
+    return 0;
+  }
+
+  let dotProduct = 0;
+  let documentNormSquared = 0;
+
+  for (const [term, count] of documentCounts.entries()) {
+    const idf = queryVector.idfByTerm.get(term) ?? 1;
+    const documentWeight = (count / documentTokens.length) * idf;
+    documentNormSquared += documentWeight * documentWeight;
+    dotProduct += documentWeight * (queryVector.weights.get(term) ?? 0);
+  }
+
+  if (documentNormSquared <= 0) {
+    return 0;
+  }
+
+  return dotProduct / (Math.sqrt(documentNormSquared) * queryVector.norm);
 }
 
 function extractSnippet(record: ProvenanceRecord): string {
@@ -1012,10 +1114,6 @@ function normalizeModelName(value: unknown): string {
   }
 
   return '';
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function parseDateToEpoch(value: string | null | undefined): number | null {

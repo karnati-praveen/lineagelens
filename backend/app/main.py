@@ -55,6 +55,45 @@ app.add_middleware(
 
 
 @app.middleware("http")
+async def enforce_http_payload_size(request: Request, call_next):
+    current_settings: Settings = request.app.state.settings
+
+    if request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
+        return await call_next(request)
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > current_settings.http_max_body_bytes:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": "Request body too large."},
+                )
+        except ValueError:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Invalid Content-Length header."},
+            )
+
+    body = await request.body()
+    if len(body) > current_settings.http_max_body_bytes:
+        return JSONResponse(
+            status_code=413,
+            content={"detail": "Request body too large."},
+        )
+
+    async def receive() -> dict[str, object]:
+        return {
+            "type": "http.request",
+            "body": body,
+            "more_body": False,
+        }
+
+    request = Request(request.scope, receive)
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def enforce_http_rate_limit(request: Request, call_next):
     current_settings: Settings = request.app.state.settings
     if not current_settings.rate_limit_enabled:

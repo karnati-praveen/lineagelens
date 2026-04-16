@@ -70,6 +70,14 @@ export type LineageRelationshipType =
   | 'MOVED'
   | 'SPLIT';
 
+const RELATIONSHIP_TYPE_TO_CYPHER: Record<LineageRelationshipType, string> = {
+  EXTENDED: 'EXTENDED',
+  REFACTORED: 'REFACTORED',
+  DELETED: 'DELETED',
+  MOVED: 'MOVED',
+  SPLIT: 'SPLIT'
+};
+
 export type LineageBuilderOptions = {
   repositoryPath: string;
   jaccardThreshold?: number;
@@ -577,7 +585,10 @@ export class LineageBuilder {
     }
   ): Promise<void> {
     const nowIso = new Date().toISOString();
-    const relationshipType = input.relationshipType;
+    const relationshipType = RELATIONSHIP_TYPE_TO_CYPHER[input.relationshipType];
+    if (!relationshipType) {
+      throw new Error('Unsupported lineage relationship type.');
+    }
 
     const query = `
       MATCH (previous:ProvenanceBlockVersion {versionId: $fromVersionId})
@@ -668,8 +679,15 @@ function extractBlocksFromSource(source: string, filePath: string): ParsedSource
 function parseTopLevelNodes(source: string, language: LineageParserLanguage): TreeSitterNode[] {
   try {
     const ParserConstructor = resolveParserConstructor();
+    if (!ParserConstructor) {
+      return [];
+    }
+
     const parser = new ParserConstructor() as TreeSitterParser;
     const grammar = resolveParserGrammar(language);
+    if (!grammar) {
+      return [];
+    }
 
     parser.setLanguage(grammar);
     const tree = parser.parse(source);
@@ -696,8 +714,14 @@ function parseTopLevelNodes(source: string, language: LineageParserLanguage): Tr
   }
 }
 
-function resolveParserConstructor(): new () => TreeSitterParser {
-  const parserModule = require('tree-sitter') as unknown;
+function resolveParserConstructor(): (new () => TreeSitterParser) | undefined {
+  let parserModule: unknown;
+
+  try {
+    parserModule = require('tree-sitter') as unknown;
+  } catch {
+    return undefined;
+  }
 
   if (typeof parserModule === 'function') {
     return parserModule as new () => TreeSitterParser;
@@ -712,10 +736,10 @@ function resolveParserConstructor(): new () => TreeSitterParser {
     return (parserModule as { default: new () => TreeSitterParser }).default;
   }
 
-  throw new Error('Cannot resolve tree-sitter parser constructor.');
+  return undefined;
 }
 
-function resolveParserGrammar(language: LineageParserLanguage): unknown {
+function resolveParserGrammar(language: LineageParserLanguage): unknown | undefined {
   const cached = parserLanguageCache.get(language);
   if (cached) {
     return cached;
@@ -723,26 +747,30 @@ function resolveParserGrammar(language: LineageParserLanguage): unknown {
 
   let grammarModule: unknown;
 
-  if (language === 'python') {
-    grammarModule = require('tree-sitter-python');
-  } else if (language === 'javascript') {
-    grammarModule = require('tree-sitter-javascript');
-  } else {
-    const typescriptModule = require('tree-sitter-typescript') as {
-      typescript?: unknown;
-      tsx?: unknown;
-      default?: unknown;
-    };
+  try {
+    if (language === 'python') {
+      grammarModule = require('tree-sitter-python');
+    } else if (language === 'javascript') {
+      grammarModule = require('tree-sitter-javascript');
+    } else {
+      const typescriptModule = require('tree-sitter-typescript') as {
+        typescript?: unknown;
+        tsx?: unknown;
+        default?: unknown;
+      };
 
-    grammarModule = language === 'tsx' ? typescriptModule.tsx : typescriptModule.typescript;
-    if (!grammarModule) {
-      grammarModule = typescriptModule.default;
+      grammarModule = language === 'tsx' ? typescriptModule.tsx : typescriptModule.typescript;
+      if (!grammarModule) {
+        grammarModule = typescriptModule.default;
+      }
     }
+  } catch {
+    return undefined;
   }
 
   const normalizedGrammar = unwrapDefaultExport(grammarModule);
   if (!normalizedGrammar) {
-    throw new Error('Cannot resolve tree-sitter grammar for language ' + language + '.');
+    return undefined;
   }
 
   parserLanguageCache.set(language, normalizedGrammar);
