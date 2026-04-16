@@ -1,11 +1,15 @@
 import * as http from 'http';
 import httpProxy = require('http-proxy');
+import * as net from 'net';
 import { Readable } from 'stream';
 import { v4 as uuidv4 } from 'uuid';
 
 const DEFAULT_PROXY_PORT = 8080;
-const DEFAULT_RETENTION_MS = 30_000;
+const DEFAULT_RETENTION_MS = 5 * 60_000;
 const CLEANUP_INTERVAL_MS = 5_000;
+const REDACTED_HEADER_VALUE = '[redacted]';
+const SENSITIVE_HEADER_PATTERN =
+  /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key|x-auth-token|x-csrf-token)$/i;
 const DEFAULT_LLM_HOST_PATTERNS: RegExp[] = [
   /(^|\.)api\.openai\.com$/i,
   /(^|\.)api\.anthropic\.com$/i,
@@ -219,10 +223,60 @@ export async function startLocalLlmProxy(
     forwardRequest(proxy, req, res, target, rawBody);
   });
 
-  server.on('connect', (request, socket) => {
-    socket.write('HTTP/1.1 405 Method Not Allowed\r\n\r\n');
-    socket.destroy();
-    log('Rejected CONNECT tunnel request for ' + String(request.url ?? 'unknown') + '.');
+  server.on('connect', (request, clientSocket, head) => {
+    const target = resolveConnectTarget(request.url);
+    if (!target) {
+      clientSocket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+      clientSocket.destroy();
+      log('Invalid CONNECT target: ' + String(request.url ?? 'unknown') + '.');
+      return;
+    }
+
+    const upstreamSocket = net.connect(target.port, target.host, () => {
+      clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+
+      if (head.length > 0) {
+        upstreamSocket.write(head);
+      }
+
+      upstreamSocket.pipe(clientSocket);
+      clientSocket.pipe(upstreamSocket);
+      log(
+        'Established CONNECT tunnel for ' +
+          target.host +
+          ':' +
+          String(target.port) +
+          '. HTTPS payload is tunneled and not captured.'
+      );
+    });
+
+    upstreamSocket.on('error', (error: Error) => {
+      if (!clientSocket.destroyed) {
+        clientSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+        clientSocket.destroy();
+      }
+
+      log(
+        'CONNECT tunnel error for ' +
+          target.host +
+          ':' +
+          String(target.port) +
+          ': ' +
+          error.message
+      );
+    });
+
+    clientSocket.on('error', () => {
+      if (!upstreamSocket.destroyed) {
+        upstreamSocket.destroy();
+      }
+    });
+
+    clientSocket.on('close', () => {
+      if (!upstreamSocket.destroyed) {
+        upstreamSocket.destroy();
+      }
+    });
   });
 
   await listen(server, port);
@@ -305,6 +359,29 @@ function resolveTarget(req: http.IncomingMessage): TargetResolution | undefined 
   }
 }
 
+function resolveConnectTarget(rawTarget: string | undefined): { host: string; port: number } | undefined {
+  if (!rawTarget || rawTarget.trim().length === 0) {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL('http://' + rawTarget.trim());
+    const host = parsed.hostname;
+    const port = parsed.port.length > 0 ? Number(parsed.port) : 443;
+
+    if (!host || !Number.isFinite(port) || port < 1 || port > 65535) {
+      return undefined;
+    }
+
+    return {
+      host,
+      port
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function inferProtocol(req: http.IncomingMessage): 'http' | 'https' {
   const forwarded = firstHeaderValue(req.headers['x-forwarded-proto']);
   if (forwarded === 'http' || forwarded === 'https') {
@@ -342,11 +419,15 @@ function normalizeIncomingHeaders(headers: http.IncomingHttpHeaders): Normalized
     }
 
     if (Array.isArray(value)) {
-      normalized[key] = value.map((item) => String(item));
+      normalized[key] = SENSITIVE_HEADER_PATTERN.test(key)
+        ? value.map(() => REDACTED_HEADER_VALUE)
+        : value.map((item) => String(item));
       continue;
     }
 
-    normalized[key] = String(value);
+    normalized[key] = SENSITIVE_HEADER_PATTERN.test(key)
+      ? REDACTED_HEADER_VALUE
+      : String(value);
   }
 
   return normalized;

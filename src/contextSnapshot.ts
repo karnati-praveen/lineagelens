@@ -5,6 +5,22 @@ import * as vscode from 'vscode';
 const SECRET_ENV_KEY_PATTERN = /key|secret|password|token|auth/i;
 const NEARBY_IMPORT_WINDOW_LINES = 120;
 const MAX_SUMMARY_DEPENDENCIES = 120;
+const MAX_CAPTURED_ENV_VARS = 80;
+const MAX_ENV_VALUE_CHARS = 256;
+const ENVIRONMENT_ALLOWLIST = new Set<string>([
+  'CI',
+  'GITHUB_ACTIONS',
+  'GITHUB_WORKFLOW',
+  'NODE_ENV',
+  'PYTHONUTF8',
+  'TERM',
+  'LANG',
+  'LC_ALL',
+  'OS',
+  'PROCESSOR_ARCHITECTURE',
+  'PROCESSOR_IDENTIFIER'
+]);
+const ENVIRONMENT_ALLOWLIST_PREFIXES = ['VSCODE_IPC_HOOK'];
 
 type LanguageProfile = 'python' | 'node' | 'unknown';
 
@@ -510,8 +526,11 @@ function mergeVersionMaps(target: Map<string, string>, source: Map<string, strin
 
 function captureNonSecretEnvironmentVariables(): Record<string, string> {
   const environmentVariables: Record<string, string> = {};
+  const sortedEntries = Object.entries(process.env).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
 
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const [key, value] of sortedEntries) {
     if (typeof value !== 'string') {
       continue;
     }
@@ -520,7 +539,26 @@ function captureNonSecretEnvironmentVariables(): Record<string, string> {
       continue;
     }
 
-    environmentVariables[key] = value;
+    const normalizedKey = key.toUpperCase();
+    const allowedByName = ENVIRONMENT_ALLOWLIST.has(normalizedKey);
+    const allowedByPrefix = ENVIRONMENT_ALLOWLIST_PREFIXES.some((prefix) =>
+      normalizedKey.startsWith(prefix)
+    );
+
+    if (!allowedByName && !allowedByPrefix) {
+      continue;
+    }
+
+    const normalizedValue = value.trim();
+    if (!normalizedValue) {
+      continue;
+    }
+
+    environmentVariables[key] = normalizedValue.slice(0, MAX_ENV_VALUE_CHARS);
+
+    if (Object.keys(environmentVariables).length >= MAX_CAPTURED_ENV_VARS) {
+      break;
+    }
   }
 
   return environmentVariables;

@@ -1,5 +1,6 @@
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
+alembic==1.14.0
 sqlalchemy[asyncio]==2.0.36
 asyncpg==0.30.0
 pgvector==0.3.6
@@ -7,5 +8,5 @@ neo4j==5.26.0
 python-jose[cryptography]==3.3.0
 pydantic-settings==2.7.0
 python-dotenv==1.0.1
-tree-sitter==0.21.3
-tree-sitter-languages==1.10.2
+tree-sitter==0.21.3; python_version < "3.12"
+tree-sitter-languages==1.10.2; python_version < "3.12"

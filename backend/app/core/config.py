@@ -1,7 +1,18 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+DEFAULT_PGVECTOR_DIMENSION = 256
+DISALLOWED_JWT_SECRETS = {
+    "",
+    "change-me",
+    "changeme",
+    "default",
+    "secret",
+    "password",
+}
 
 
 class Settings(BaseSettings):
@@ -13,14 +24,19 @@ class Settings(BaseSettings):
         default="postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/provenance",
         alias="DATABASE_URL",
     )
-    pgvector_dimension: int = Field(default=256, alias="PGVECTOR_DIMENSION")
+    pgvector_dimension: int = Field(default=DEFAULT_PGVECTOR_DIMENSION, alias="PGVECTOR_DIMENSION")
+
+    db_pool_size: int = Field(default=10, alias="DB_POOL_SIZE")
+    db_max_overflow: int = Field(default=20, alias="DB_MAX_OVERFLOW")
+    db_pool_timeout_seconds: int = Field(default=30, alias="DB_POOL_TIMEOUT_SECONDS")
+    db_pool_recycle_seconds: int = Field(default=1800, alias="DB_POOL_RECYCLE_SECONDS")
 
     neo4j_uri: str = Field(default="bolt://127.0.0.1:7687", alias="NEO4J_URI")
     neo4j_username: str = Field(default="neo4j", alias="NEO4J_USERNAME")
     neo4j_password: str = Field(default="neo4j_password", alias="NEO4J_PASSWORD")
     neo4j_database: str = Field(default="neo4j", alias="NEO4J_DATABASE")
 
-    jwt_secret_key: str = Field(default="change-me", alias="JWT_SECRET_KEY")
+    jwt_secret_key: str = Field(alias="JWT_SECRET_KEY")
     jwt_refresh_secret_key: str | None = Field(default=None, alias="JWT_REFRESH_SECRET_KEY")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
     jwt_audience: str | None = Field(default="provenance-api", alias="JWT_AUDIENCE")
@@ -36,6 +52,9 @@ class Settings(BaseSettings):
         default="http://127.0.0.1:3000,http://localhost:3000",
         alias="BACKEND_CORS_ORIGINS",
     )
+
+    http_max_body_bytes: int = Field(default=2_000_000, alias="HTTP_MAX_BODY_BYTES")
+    ws_max_message_bytes: int = Field(default=2_000_000, alias="WS_MAX_MESSAGE_BYTES")
 
     rate_limit_enabled: bool = Field(default=True, alias="RATE_LIMIT_ENABLED")
     rate_limit_window_seconds: int = Field(default=60, alias="RATE_LIMIT_WINDOW_SECONDS")
@@ -64,7 +83,8 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins(self) -> list[str]:
-        return [entry.strip() for entry in self.backend_cors_origins.split(",") if entry.strip()]
+        origins = [entry.strip() for entry in self.backend_cors_origins.split(",") if entry.strip()]
+        return list(dict.fromkeys(origins))
 
     @property
     def required_scopes_set(self) -> set[str]:
@@ -73,6 +93,40 @@ class Settings(BaseSettings):
     @property
     def refresh_secret_key(self) -> str:
         return self.jwt_refresh_secret_key or self.jwt_secret_key
+
+    @field_validator("jwt_secret_key")
+    @classmethod
+    def validate_jwt_secret_key(cls, value: str) -> str:
+        secret = value.strip()
+        if secret.lower() in DISALLOWED_JWT_SECRETS:
+            raise ValueError("JWT_SECRET_KEY must be set to a strong, non-default value.")
+
+        if len(secret) < 32:
+            raise ValueError("JWT_SECRET_KEY must be at least 32 characters long.")
+
+        return secret
+
+    @field_validator("pgvector_dimension")
+    @classmethod
+    def validate_pgvector_dimension(cls, value: int) -> int:
+        if value != DEFAULT_PGVECTOR_DIMENSION:
+            raise ValueError(
+                f"PGVECTOR_DIMENSION must be {DEFAULT_PGVECTOR_DIMENSION} to match the database schema."
+            )
+        return value
+
+    @field_validator("http_max_body_bytes", "ws_max_message_bytes")
+    @classmethod
+    def validate_payload_limits(cls, value: int) -> int:
+        if value < 8_192:
+            raise ValueError("Payload limit values must be at least 8192 bytes.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_cors_for_environment(self) -> "Settings":
+        if self.app_env.strip().lower() == "production" and not self.cors_origins:
+            raise ValueError("BACKEND_CORS_ORIGINS must not be empty in production.")
+        return self
 
 
 @lru_cache

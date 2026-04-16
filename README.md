@@ -1,4 +1,4 @@
-# AI Insertion Detector + Provenance Backend
+# LineageLens + Provenance Backend
 
 End-to-end system for AI code provenance:
 - VS Code extension detects qualifying insertions.
@@ -26,7 +26,7 @@ The extension now supports two runtime modes controlled by `aiCodeProvenance.mod
 ### Pure Local Mode (`local`, default)
 
 - Best for individual developers, privacy-focused workflows, and quick offline trials.
-- Stores provenance records locally in `.vscode/ai-provenance/records.json` (or VS Code global state when no workspace folder exists).
+- Stores provenance records in VS Code global state by default (safer for repositories); optional workspace file mode stores in `.vscode/ai-provenance/records.json`.
 - Captures insertions, proxy correlation metadata, context snapshots, AST normalization, and deterministic local embeddings without backend setup.
 - Uses local keyword/date/model/file filtering in the search sidebar.
 - Maintains a simple local evolution chain and diffs; refresh with command: `AI Provenance: Refresh Local Lineage (Latest Commit)`.
@@ -72,11 +72,14 @@ npm install
 npm run compile
 ```
 
-2. Start backend stack:
+2. Create compose env file and start backend stack:
 
 ```bash
+cp .env.docker.example .env
 docker compose up -d --build
 ```
+
+The backend container now runs `alembic upgrade head` before API startup, so schema migrations are applied automatically on boot.
 
 3. Verify backend health:
 
@@ -100,7 +103,16 @@ npm run compile
 2. Package extension:
 
 ```bash
-npx @vscode/vsce package --out ai-insertion-detector.vsix
+npm run package:vsix
+```
+
+Platform-targeted package commands:
+
+```bash
+npm run package:web
+npm run package:win32-x64
+npm run package:linux-x64
+npm run package:darwin-arm64
 ```
 
 3. Install .vsix:
@@ -108,7 +120,7 @@ npx @vscode/vsce package --out ai-insertion-detector.vsix
 Option A (CLI):
 
 ```bash
-code --install-extension ai-insertion-detector.vsix
+code --install-extension lineagelens-<version>.vsix
 ```
 
 Option B (UI):
@@ -121,6 +133,112 @@ Option B (UI):
 - AI Insertion Detector: Open Provenance Search
 - AI Insertion Detector: Backend Login
 
+## Command Palette, Shortcuts, and UI
+
+Core UX integration included by default:
+
+- Command Palette commands via Ctrl+Shift+P.
+- Sidebar integration through `AI Provenance` and `AI Provenance Search` views.
+- Status bar integration via a persistent `AI Prov` status item.
+- Editor context integration for selected-code provenance lookup.
+
+Default keyboard shortcuts:
+
+- Toggle feature: Ctrl+Alt+I (macOS: Cmd+Alt+I)
+- Open provenance search: Ctrl+Alt+F (macOS: Cmd+Alt+F)
+- Show provenance for selected text: Ctrl+Alt+U (macOS: Cmd+Alt+U)
+
+You can customize any shortcut from VS Code Keyboard Shortcuts.
+
+## Packaging and Publishing
+
+Package for local/private distribution:
+
+```bash
+npm run package:vsix
+```
+
+Publish to Marketplace:
+
+```bash
+npm run publish
+```
+
+Required before publishing:
+
+- A valid VS Code Marketplace publisher account.
+- A Personal Access Token (PAT) created for Marketplace publishing.
+- Publisher must match the `publisher` field in [package.json](package.json).
+
+## Semantic Versioning and Release Channels
+
+Publish and auto-bump patch/minor/major versions:
+
+```bash
+npm run publish:patch
+npm run publish:minor
+npm run publish:major
+```
+
+Publish a pre-release build:
+
+```bash
+npm run publish:pre-release
+```
+
+## Platform Targets
+
+Targeted publish commands:
+
+```bash
+npm run publish:web
+npm run publish:win32-x64
+npm run publish:linux-x64
+npm run publish:darwin-arm64
+```
+
+## Marketplace Compliance Checklist
+
+This repository includes required Marketplace assets:
+
+- [README.md](README.md)
+- [CHANGELOG.md](CHANGELOG.md)
+- [LICENSE](LICENSE)
+- [SUPPORT.md](SUPPORT.md)
+- PNG icon >= 128x128
+- Marketplace banner color and curated keywords in [package.json](package.json)
+
+Security and policy checks:
+
+- Avoid SVG icons/badges from untrusted sources.
+- Use HTTPS-only image links in docs.
+- Use trusted badge providers when adding badges.
+- Keep secrets out of source control; use environment variables.
+
+## Compatibility and Local Validation
+
+- Engine constraints are declared in [package.json](package.json) under `engines`.
+- Run `npm run vscode:prepublish` to execute the pre-publish quality gate.
+- Always validate a packaged VSIX before publishing:
+
+```bash
+code --install-extension lineagelens-<version>.vsix
+```
+
+## Analytics, Feedback, and Branding
+
+- Marketplace metrics to monitor: installs, ratings, reviews.
+- Support and issue intake: [SUPPORT.md](SUPPORT.md).
+- Pricing model: Free.
+- Sponsorship link: https://github.com/sponsors/karnati-praveen
+
+## Packaging and Runtime Notes
+
+- The extension now uses esbuild bundling for production packaging (`dist/extension.js`) to reduce package size and improve activation reliability.
+- `.vscodeignore` excludes backend, virtual environments, source maps, and other non-extension assets from the VSIX.
+- Tree-sitter modules are native addons; package separate VSIX files per platform/architecture using the provided target scripts.
+- If native parsers are unavailable at runtime, AST normalization gracefully degrades instead of crashing extension activation.
+
 ## Run the FastAPI Backend
 
 ### Option A: Docker Compose (recommended)
@@ -128,6 +246,7 @@ Option B (UI):
 Use the included [docker-compose.yml](docker-compose.yml).
 
 ```bash
+cp .env.docker.example .env
 docker compose up -d --build
 ```
 
@@ -158,13 +277,19 @@ cp .env.example .env
 pip install -r requirements.txt
 ```
 
-3. Run API:
+3. Apply migrations:
+
+```bash
+alembic upgrade head
+```
+
+4. Run API:
 
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8787
 ```
 
-4. Ensure Postgres and Neo4j are running and reachable from backend env settings.
+5. Ensure Postgres and Neo4j are running and reachable from backend env settings.
 
 ## Sample docker-compose.yml (Backend Stack)
 
@@ -181,7 +306,7 @@ services:
     environment:
       POSTGRES_DB: provenance
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     ports:
       - "5432:5432"
     volumes:
@@ -192,7 +317,7 @@ services:
     container_name: provenance-neo4j
     restart: unless-stopped
     environment:
-      NEO4J_AUTH: neo4j/neo4j_password
+      NEO4J_AUTH: ${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -212,10 +337,10 @@ services:
       neo4j:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/provenance
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/provenance
       NEO4J_URI: bolt://neo4j:7687
-      JWT_SECRET_KEY: change-me
-      JWT_REFRESH_SECRET_KEY: change-me-refresh
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}
+      JWT_REFRESH_SECRET_KEY: ${JWT_REFRESH_SECRET_KEY:?Set JWT_REFRESH_SECRET_KEY in .env}
       RATE_LIMIT_ENABLED: "true"
     ports:
       - "8787:8787"
@@ -238,6 +363,10 @@ Use [backend/.env.example](backend/.env.example) as the source of truth.
 ### Database
 - DATABASE_URL
 - PGVECTOR_DIMENSION
+- DB_POOL_SIZE
+- DB_MAX_OVERFLOW
+- DB_POOL_TIMEOUT_SECONDS
+- DB_POOL_RECYCLE_SECONDS
 
 ### Neo4j
 - NEO4J_URI
@@ -258,6 +387,10 @@ Use [backend/.env.example](backend/.env.example) as the source of truth.
 
 ### CORS
 - BACKEND_CORS_ORIGINS
+
+### Payload Limits
+- HTTP_MAX_BODY_BYTES
+- WS_MAX_MESSAGE_BYTES
 
 ### Rate Limiting
 - RATE_LIMIT_ENABLED
@@ -281,7 +414,9 @@ Configured under aiInsertionDetector.* in VS Code settings.
 ### Core Detection
 - aiInsertionDetector.enabled
 - aiInsertionDetector.lineThreshold
+- aiInsertionDetector.correlation.windowMs
 - aiInsertionDetector.correlation.similarityThreshold
+- aiInsertionDetector.activation.startupMode
 
 ### Mode Selection
 - aiCodeProvenance.mode
@@ -289,7 +424,11 @@ Configured under aiInsertionDetector.* in VS Code settings.
 ### Local Proxy
 - aiInsertionDetector.localProxy.enabled
 - aiInsertionDetector.localProxy.port
+- aiInsertionDetector.localProxy.retentionMs
 - aiInsertionDetector.proxyPort
+
+### Local Storage
+- aiInsertionDetector.local.storage.location
 
 ### Backend Connectivity
 - aiInsertionDetector.backend.baseUrl
@@ -344,6 +483,13 @@ Isolation behavior:
 - JWT includes workspace_id claim.
 - Read/write access is restricted to that workspace scope.
 - Workspace mismatch returns 403.
+
+## Production Deployment Notes
+
+- Terminate TLS at your ingress or reverse proxy (for example NGINX, Caddy, or a managed load balancer) and forward traffic to the backend container over an internal network.
+- Keep `APP_ENV=production`, configure explicit `BACKEND_CORS_ORIGINS`, and use strong random JWT secrets.
+- Run migrations as part of startup or release rollout (`alembic upgrade head`) before serving traffic.
+- API docs are available at `/docs` (Swagger UI) and `/redoc` (ReDoc) once the service is running.
 
 ## Usage Guide
 
@@ -410,7 +556,7 @@ Required repository secrets:
 
 - Ensure local proxy enabled and port matches your client settings.
 - Only matching POST requests to supported LLM hosts are captured.
-- CONNECT-only client modes are not captured by this proxy.
+- CONNECT HTTPS traffic is now tunneled (so clients continue to work), but encrypted payload bodies are not captured unless you add a trusted MITM certificate setup.
 
 ### Neo4j connection failures
 
@@ -423,11 +569,13 @@ From repository root:
 
 ```bash
 npm run compile
+npm run package:vsix
 ```
 
 From backend folder:
 
 ```bash
+alembic upgrade head
 uvicorn app.main:app --reload --port 8787
 ```
 

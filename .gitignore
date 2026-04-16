@@ -1,12 +1,18 @@
 # Node / TypeScript
 node_modules/
 out/
+dist/
+*.vsix
 
 # Python
 .venv/
 venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+.mypy_cache/
+.coverage
+coverage.xml
 
 # VS Code local data
 .vscode/ai-provenance/
@@ -14,3 +20,9 @@ __pycache__/
 # Logs / temp
 *.log
 .DS_Store
+
+# Local environment files
+.env
+.env.*
+!.env.example
+!.env.docker.example

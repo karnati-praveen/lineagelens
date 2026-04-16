@@ -1,0 +1,36 @@
+﻿# Exclude development and infrastructure content from extension package.
+.git/**
+.github/**
+.venv/**
+backend/**
+src/**
+out/**
+.vscode/**
+
+# Local and build artifacts
+**/*.map
+**/*.ts
+!**/*.d.ts
+*.vsix
+
+# Workspace files not needed in the VSIX
+tsconfig.json
+docker-compose.yml
+.gitignore
+
+# Exclude all node_modules by default, then allow required runtime native modules.
+node_modules/**
+!node_modules/
+!node_modules/tree-sitter/**
+!node_modules/tree-sitter-javascript/**
+!node_modules/tree-sitter-python/**
+!node_modules/tree-sitter-typescript/**
+!node_modules/node-addon-api/**
+!node_modules/node-gyp-build/**
+
+# Keep package metadata/docs
+!package.json
+!README.md
+!CHANGELOG.md
+!LICENSE
+!SUPPORT.md

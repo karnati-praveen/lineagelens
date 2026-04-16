@@ -33,11 +33,16 @@ const DEFAULT_ENABLED = true;
 const DEFAULT_LOCAL_PROXY_ENABLED = true;
 const DEFAULT_LOCAL_PROXY_PORT = 8080;
 const DEFAULT_CORRELATION_SIMILARITY_THRESHOLD = 0.7;
+const DEFAULT_CORRELATION_WINDOW_MS = 15_000;
+const DEFAULT_LOCAL_PROXY_RETENTION_MS = 5 * 60_000;
+const DEFAULT_ACTIVATION_STARTUP_MODE = 'lazy';
 const DEFAULT_BACKEND_BASE_URL = 'http://127.0.0.1:8787';
 const CONTEXT_TOKEN_WINDOW = 200;
 const LOCAL_EMBEDDING_DIMENSIONS = 128;
 const LOCAL_EMBEDDING_PROVIDER = 'local-hash';
 const LOCAL_EMBEDDING_MODEL = 'deterministic-hash-v1';
+
+type StartupMode = 'lazy' | 'eager';
 
 type LineColumn = {
   line: number;
@@ -50,7 +55,10 @@ type DetectorConfig = {
   proxyPort: number;
   localProxyEnabled: boolean;
   localProxyPort: number;
+  localProxyRetentionMs: number;
+  correlationWindowMs: number;
   correlationSimilarityThreshold: number;
+  startupMode: StartupMode;
 };
 
 type InternalInsertedChunk = {
@@ -96,17 +104,32 @@ let outputChannel: vscode.OutputChannel | undefined;
 let lastPayload: DetectionPayload | undefined;
 let lastProvenanceRecord: ProvenanceRecord | undefined;
 let localLlmProxy: LocalLlmProxyRuntime | undefined;
+let localProxyRuntimeConfig: { port: number; retentionMs: number } | undefined;
 let extensionContextRef: vscode.ExtensionContext | undefined;
 let activeStorageService: ProvenanceStorageService | undefined;
+let activeStorageMode: ProvenanceMode | undefined;
+let storageInitialized = false;
+let runtimeInitialized = false;
+let detectorStatusBarItem: vscode.StatusBarItem | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   extensionContextRef = context;
   outputChannel = vscode.window.createOutputChannel('AI Insertion Detector');
   context.subscriptions.push(outputChannel);
 
+  detectorStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  detectorStatusBarItem.command = 'aiInsertionDetector.showStatus';
+  context.subscriptions.push(detectorStatusBarItem);
+  updateStatusBarIndicator(vscode.window.activeTextEditor?.document.uri);
+  detectorStatusBarItem.show();
+
   const getStorageService = (): ProvenanceStorageService => {
     if (!activeStorageService) {
-      throw new Error('Storage service has not been initialized yet.');
+      const activeUri = vscode.window.activeTextEditor?.document.uri;
+      const mode = getConfiguredMode(activeUri);
+      activeStorageService = createStorageService(mode, context);
+      activeStorageMode = mode;
+      storageInitialized = false;
     }
 
     return activeStorageService;
@@ -150,10 +173,6 @@ export function activate(context: vscode.ExtensionContext): void {
     )
   );
 
-  for (const document of vscode.workspace.textDocuments) {
-    trackDocumentSnapshot(document);
-  }
-
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument((document) => {
       trackDocumentSnapshot(document);
@@ -164,6 +183,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeTextDocument((event) => {
       void handleTextDocumentChange(event);
     }),
+    vscode.commands.registerCommand('lineagelens.start', function () {
+      vscode.window.showInformationMessage('LineageLens working!');
+    }),
     vscode.commands.registerCommand('aiInsertionDetector.toggleFeature', async () => {
       await toggleFeature();
     }),
@@ -171,47 +193,76 @@ export function activate(context: vscode.ExtensionContext): void {
       showStatus();
     }),
     vscode.commands.registerCommand('aiInsertionDetector.showProvenance', async () => {
+      await ensureRuntimeInitialized(vscode.window.activeTextEditor?.document.uri);
       await handleShowProvenanceCommand(provenanceSidebarProvider);
     }),
     vscode.commands.registerCommand('aiInsertionDetector.openProvenanceSearch', async () => {
+      await ensureRuntimeInitialized(vscode.window.activeTextEditor?.document.uri);
       await provenanceSearchSidebarProvider.focus();
     }),
     vscode.commands.registerCommand('aiInsertionDetector.backendLogin', async () => {
-      if (!activeStorageService) {
-        return;
-      }
-
-      await activeStorageService.authenticate(vscode.window.activeTextEditor?.document.uri);
+      await ensureRuntimeInitialized(vscode.window.activeTextEditor?.document.uri);
+      await activeStorageService?.authenticate(vscode.window.activeTextEditor?.document.uri);
     }),
     vscode.commands.registerCommand('aiInsertionDetector.switchToBackendMode', async () => {
-      await switchToBackendMode(context);
+      await switchToBackendMode();
     }),
     vscode.commands.registerCommand('aiInsertionDetector.refreshLocalLineage', async () => {
       await refreshLocalLineage();
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
+      const activeUri = vscode.window.activeTextEditor?.document.uri;
+
       if (
         event.affectsConfiguration(CONFIG_SECTION + '.localProxy.enabled') ||
-        event.affectsConfiguration(CONFIG_SECTION + '.localProxy.port')
+        event.affectsConfiguration(CONFIG_SECTION + '.localProxy.port') ||
+        event.affectsConfiguration(CONFIG_SECTION + '.localProxy.retentionMs')
       ) {
-        void syncLocalProxyLifecycle();
+        if (runtimeInitialized) {
+          void syncLocalProxyLifecycle();
+        } else {
+          log('Local proxy configuration updated. Changes will apply when runtime initializes.');
+        }
       }
 
       if (event.affectsConfiguration(MODE_CONFIG_SECTION + '.mode')) {
-        void initializeStorageService(context, vscode.window.activeTextEditor?.document.uri, true);
+        if (runtimeInitialized) {
+          void initializeStorageService(context, activeUri, true);
+        } else {
+          void prepareStorageService(context, activeUri, true);
+        }
+
+        updateStatusBarIndicator(activeUri);
         return;
       }
 
-      if (isStorageConfigurationChange(event)) {
-        void activeStorageService?.handleConfigurationChanged(vscode.window.activeTextEditor?.document.uri);
+      if (event.affectsConfiguration(CONFIG_SECTION + '.activation.startupMode')) {
+        const startupMode = getDetectorConfig(activeUri).startupMode;
+
+        if (startupMode === 'eager' && !runtimeInitialized) {
+          void ensureRuntimeInitialized(activeUri);
+        }
       }
+
+      if (isStorageConfigurationChange(event)) {
+        if (runtimeInitialized) {
+          void activeStorageService?.handleConfigurationChanged(activeUri);
+        }
+      }
+
+      updateStatusBarIndicator(activeUri);
     })
   );
 
-  void syncLocalProxyLifecycle();
-  void initializeStorageService(context, vscode.window.activeTextEditor?.document.uri, true);
+  const activeUri = vscode.window.activeTextEditor?.document.uri;
+  void prepareStorageService(context, activeUri, true);
 
-  log('AI Insertion Detector activated.');
+  const startupMode = getDetectorConfig(activeUri).startupMode;
+  if (startupMode === 'eager') {
+    void ensureRuntimeInitialized(activeUri);
+  }
+
+  log('AI Insertion Detector activated in ' + startupMode + ' startup mode.');
 }
 
 export async function deactivate(): Promise<void> {
@@ -219,6 +270,11 @@ export async function deactivate(): Promise<void> {
   await stopLocalProxy();
   await activeStorageService?.shutdown();
   activeStorageService = undefined;
+  activeStorageMode = undefined;
+  storageInitialized = false;
+  runtimeInitialized = false;
+  detectorStatusBarItem?.hide();
+  detectorStatusBarItem = undefined;
   extensionContextRef = undefined;
 }
 
@@ -233,8 +289,14 @@ function trackDocumentSnapshot(document: vscode.TextDocument): void {
 async function handleTextDocumentChange(event: vscode.TextDocumentChangeEvent): Promise<void> {
   const document = event.document;
   const key = document.uri.toString();
-  const oldText = previousDocumentTexts.get(key) ?? '';
   const newText = document.getText();
+
+  if (!previousDocumentTexts.has(key)) {
+    previousDocumentTexts.set(key, newText);
+    return;
+  }
+
+  const oldText = previousDocumentTexts.get(key) ?? newText;
 
   try {
     if (document.uri.scheme !== 'file') {
@@ -249,6 +311,8 @@ async function handleTextDocumentChange(event: vscode.TextDocumentChangeEvent): 
     if (!config.enabled) {
       return;
     }
+
+    await ensureRuntimeInitialized(document.uri);
 
     const diffResult = extractInsertedChunksFromDiff(oldText, event.contentChanges);
     if (diffResult.chunks.length === 0 || diffResult.netAddedLines < config.lineThreshold) {
@@ -274,6 +338,7 @@ async function handleTextDocumentChange(event: vscode.TextDocumentChangeEvent): 
       filePath: document.uri.fsPath,
       localProxy: localLlmProxy,
       insertedCode: insertedText,
+      correlationWindowMs: config.correlationWindowMs,
       similarityThreshold: config.correlationSimilarityThreshold
     });
 
@@ -305,10 +370,6 @@ async function handleTextDocumentChange(event: vscode.TextDocumentChangeEvent): 
 
     log('[' + payload.timestampIso + '] Qualifying insertion detected: ' + payload.id);
     log(JSON.stringify(payload, null, 2));
-
-    if (!activeStorageService && extensionContextRef) {
-      await initializeStorageService(extensionContextRef, document.uri, false);
-    }
 
     const storageService = activeStorageService;
     const shouldPersistRecord =
@@ -467,6 +528,12 @@ function toLineColumn(position: vscode.Position): LineColumn {
 
 function getDetectorConfig(resource?: vscode.Uri): DetectorConfig {
   const config = vscode.workspace.getConfiguration(CONFIG_SECTION, resource);
+  const startupModeRaw =
+    config
+      .get<string>('activation.startupMode', DEFAULT_ACTIVATION_STARTUP_MODE)
+      ?.trim()
+      .toLowerCase() ?? DEFAULT_ACTIVATION_STARTUP_MODE;
+  const startupMode: StartupMode = startupModeRaw === 'eager' ? 'eager' : 'lazy';
 
   return {
     enabled: config.get<boolean>('enabled', DEFAULT_ENABLED),
@@ -474,6 +541,16 @@ function getDetectorConfig(resource?: vscode.Uri): DetectorConfig {
     proxyPort: Math.max(1, config.get<number>('proxyPort', DEFAULT_PROXY_PORT)),
     localProxyEnabled: config.get<boolean>('localProxy.enabled', DEFAULT_LOCAL_PROXY_ENABLED),
     localProxyPort: Math.max(1, config.get<number>('localProxy.port', DEFAULT_LOCAL_PROXY_PORT)),
+    localProxyRetentionMs: Math.max(
+      1_000,
+      config.get<number>('localProxy.retentionMs', DEFAULT_LOCAL_PROXY_RETENTION_MS) ??
+        DEFAULT_LOCAL_PROXY_RETENTION_MS
+    ),
+    correlationWindowMs: Math.max(
+      1_000,
+      config.get<number>('correlation.windowMs', DEFAULT_CORRELATION_WINDOW_MS) ??
+        DEFAULT_CORRELATION_WINDOW_MS
+    ),
     correlationSimilarityThreshold: Math.min(
       1,
       Math.max(
@@ -483,7 +560,8 @@ function getDetectorConfig(resource?: vscode.Uri): DetectorConfig {
           DEFAULT_CORRELATION_SIMILARITY_THRESHOLD
         )
       )
-    )
+    ),
+    startupMode
   };
 }
 
@@ -676,7 +754,12 @@ async function syncLocalProxyLifecycle(): Promise<void> {
     return;
   }
 
-  if (localLlmProxy && localLlmProxy.port === config.localProxyPort) {
+  if (
+    localLlmProxy &&
+    localProxyRuntimeConfig &&
+    localLlmProxy.port === config.localProxyPort &&
+    localProxyRuntimeConfig.retentionMs === config.localProxyRetentionMs
+  ) {
     return;
   }
 
@@ -685,8 +768,13 @@ async function syncLocalProxyLifecycle(): Promise<void> {
   try {
     localLlmProxy = await startLocalLlmProxy({
       port: config.localProxyPort,
+      retentionMs: config.localProxyRetentionMs,
       log
     });
+    localProxyRuntimeConfig = {
+      port: config.localProxyPort,
+      retentionMs: config.localProxyRetentionMs
+    };
     log('Local LLM proxy started on 127.0.0.1:' + String(localLlmProxy.port) + '.');
   } catch (error: unknown) {
     const message =
@@ -703,6 +791,7 @@ async function stopLocalProxy(): Promise<void> {
 
   await localLlmProxy.stop();
   localLlmProxy = undefined;
+  localProxyRuntimeConfig = undefined;
 }
 
 async function getActiveGitBranch(resource: vscode.Uri): Promise<string | null> {
@@ -777,6 +866,27 @@ async function toggleFeature(): Promise<void> {
     'AI insertion detection ' + (next ? 'enabled' : 'disabled') + ' (workspace setting).';
   vscode.window.showInformationMessage(message);
   log(message);
+  updateStatusBarIndicator(vscode.window.activeTextEditor?.document.uri);
+}
+
+function updateStatusBarIndicator(resource?: vscode.Uri): void {
+  if (!detectorStatusBarItem) {
+    return;
+  }
+
+  const config = getDetectorConfig(resource);
+  const mode = getConfiguredMode(resource);
+  const enabledLabel = config.enabled ? 'on' : 'off';
+  const runtimeLabel = runtimeInitialized ? 'ready' : 'idle';
+
+  detectorStatusBarItem.text = 'AI Prov: ' + enabledLabel + ' (' + mode + ')';
+  detectorStatusBarItem.tooltip =
+    'AI provenance detection is ' +
+    enabledLabel +
+    '. Runtime is ' +
+    runtimeLabel +
+    '. Click for detailed status.';
+  detectorStatusBarItem.show();
 }
 
 function showStatus(): void {
@@ -794,14 +904,24 @@ function showStatus(): void {
     String(config.localProxyEnabled) +
     ', localProxyPort=' +
     String(config.localProxyPort) +
+    ', localProxyRetentionMs=' +
+    String(config.localProxyRetentionMs) +
+    ', correlationWindowMs=' +
+    String(config.correlationWindowMs) +
     ', correlationSimilarityThreshold=' +
     String(config.correlationSimilarityThreshold) +
+    ', startupMode=' +
+    config.startupMode +
     ', localProxyRunning=' +
     String(Boolean(localLlmProxy)) +
     ', mode=' +
     mode +
     ', storageServiceReady=' +
-    String(Boolean(activeStorageService));
+    String(Boolean(activeStorageService)) +
+    ', storageInitialized=' +
+    String(storageInitialized) +
+    ', runtimeInitialized=' +
+    String(runtimeInitialized);
 
   vscode.window.showInformationMessage('AI Insertion Detector status: ' + status);
   log('Status requested: ' + status);
@@ -820,10 +940,35 @@ async function initializeStorageService(
   resource?: vscode.Uri,
   forceRecreate = false
 ): Promise<void> {
+  await prepareStorageService(context, resource, forceRecreate);
+
+  if (!activeStorageService) {
+    return;
+  }
+
+  if (storageInitialized && !forceRecreate) {
+    await activeStorageService.handleConfigurationChanged(resource);
+    return;
+  }
+
+  await activeStorageService.initialize(resource);
+  storageInitialized = true;
+
+  const activeMode = activeStorageMode ?? activeStorageService.mode;
+  const modeMessage = 'AI provenance mode active: ' + activeMode + '.';
+  log(modeMessage);
+  vscode.window.setStatusBarMessage(modeMessage, 5000);
+  updateStatusBarIndicator(resource);
+}
+
+async function prepareStorageService(
+  context: vscode.ExtensionContext,
+  resource?: vscode.Uri,
+  forceRecreate = false
+): Promise<void> {
   const targetMode = getConfiguredMode(resource);
 
-  if (activeStorageService && activeStorageService.mode === targetMode && !forceRecreate) {
-    await activeStorageService.handleConfigurationChanged(resource);
+  if (activeStorageService && activeStorageMode === targetMode && !forceRecreate) {
     return;
   }
 
@@ -834,11 +979,27 @@ async function initializeStorageService(
   }
 
   activeStorageService = createStorageService(targetMode, context);
-  await activeStorageService.initialize(resource);
+  activeStorageMode = targetMode;
+  storageInitialized = false;
+  updateStatusBarIndicator(resource);
+}
 
-  const modeMessage = 'AI provenance mode active: ' + targetMode + '.';
-  log(modeMessage);
-  vscode.window.setStatusBarMessage(modeMessage, 5000);
+async function ensureRuntimeInitialized(
+  resource?: vscode.Uri,
+  forceStorageRecreate = false
+): Promise<void> {
+  if (!extensionContextRef) {
+    return;
+  }
+
+  if (runtimeInitialized && !forceStorageRecreate) {
+    return;
+  }
+
+  await initializeStorageService(extensionContextRef, resource, forceStorageRecreate);
+  await syncLocalProxyLifecycle();
+  runtimeInitialized = true;
+  updateStatusBarIndicator(resource);
 }
 
 function createStorageService(
@@ -865,6 +1026,7 @@ function isStorageConfigurationChange(event: vscode.ConfigurationChangeEvent): b
     CONFIG_SECTION + '.backend.retry.websocketAttempts',
     CONFIG_SECTION + '.backend.retry.httpAttempts',
     CONFIG_SECTION + '.backend.vectorSearchPath',
+    CONFIG_SECTION + '.local.storage.location',
     CONFIG_SECTION + '.local.explanation.provider',
     CONFIG_SECTION + '.local.ollama.url',
     CONFIG_SECTION + '.local.ollama.model',
@@ -874,7 +1036,7 @@ function isStorageConfigurationChange(event: vscode.ConfigurationChangeEvent): b
   return keys.some((key) => event.affectsConfiguration(key));
 }
 
-async function switchToBackendMode(context: vscode.ExtensionContext): Promise<void> {
+async function switchToBackendMode(): Promise<void> {
   const modeConfig = vscode.workspace.getConfiguration(MODE_CONFIG_SECTION);
   await modeConfig.update('mode', 'backend', vscode.ConfigurationTarget.Workspace);
 
@@ -924,7 +1086,7 @@ async function switchToBackendMode(context: vscode.ExtensionContext): Promise<vo
     );
   }
 
-  await initializeStorageService(context, vscode.window.activeTextEditor?.document.uri, true);
+  await ensureRuntimeInitialized(vscode.window.activeTextEditor?.document.uri, true);
 
   const loginChoice = await vscode.window.showInformationMessage(
     'Backend mode enabled. Configure your backend and sign in to start shared ingest.',
@@ -952,13 +1114,7 @@ function deriveWebSocketUrlFromBase(baseUrl: string): string | undefined {
 }
 
 async function refreshLocalLineage(): Promise<void> {
-  if (!activeStorageService && extensionContextRef) {
-    await initializeStorageService(
-      extensionContextRef,
-      vscode.window.activeTextEditor?.document.uri,
-      false
-    );
-  }
+  await ensureRuntimeInitialized(vscode.window.activeTextEditor?.document.uri);
 
   if (!activeStorageService) {
     return;
@@ -981,6 +1137,8 @@ async function refreshLocalLineage(): Promise<void> {
 async function handleShowProvenanceCommand(
   sidebarProvider: ProvenanceSidebarViewProvider
 ): Promise<void> {
+  await ensureRuntimeInitialized(vscode.window.activeTextEditor?.document.uri);
+
   const selectedText = getActiveSelectionText();
   let uuid = extractUuidFromText(selectedText ?? '');
 

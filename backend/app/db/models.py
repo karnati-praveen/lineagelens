@@ -1,4 +1,4 @@
-import uuid
+import uuid as uuid_pkg
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
@@ -9,14 +9,22 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 
 
+EMBEDDING_VECTOR_DIMENSION = 256
+
+
 class ProvenanceRecord(Base):
     __tablename__ = "provenance_records"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    uuid: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), unique=True, index=True, nullable=False)
+    uuid: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
     workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
 
-    request_uuid: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    request_uuid: Mapped[uuid_pkg.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     file_path: Mapped[str] = mapped_column(Text, nullable=False)
     file_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -36,7 +44,10 @@ class ProvenanceRecord(Base):
     embeddings: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     ast_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
-    embedding_vector: Mapped[list[float] | None] = mapped_column(Vector(), nullable=True)
+    embedding_vector: Mapped[list[float] | None] = mapped_column(
+        Vector(EMBEDDING_VECTOR_DIMENSION),
+        nullable=True,
+    )
     embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     lineage_node_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -59,10 +70,10 @@ class ProvenanceRecord(Base):
 class UserAccount(Base):
     __tablename__ = "user_accounts"
 
-    id: Mapped[uuid.UUID] = mapped_column(
+    id: Mapped[uuid_pkg.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
-        default=uuid.uuid4,
+        default=uuid_pkg.uuid4,
         nullable=False,
     )
     username: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)

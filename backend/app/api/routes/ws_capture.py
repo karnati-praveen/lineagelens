@@ -135,6 +135,20 @@ async def ws_capture(
 
             raw_message = await websocket.receive_text()
 
+            if len(raw_message.encode("utf-8")) > settings.ws_max_message_bytes:
+                logger.warning(
+                    "WebSocket payload too large: workspace=%s subject=%s",
+                    auth.workspace_id,
+                    auth.subject,
+                )
+                await send_error(
+                    websocket,
+                    error_message="WebSocket message too large.",
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    details={"maxBytes": settings.ws_max_message_bytes},
+                )
+                break
+
             try:
                 message = json.loads(raw_message)
             except json.JSONDecodeError as error:
@@ -221,7 +235,7 @@ async def ws_capture(
                         settings=settings,
                         neo4j_service=neo4j_service,
                     )
-            except Exception as error:
+            except Exception:
                 logger.exception(
                     "Failed to ingest websocket payload: workspace=%s request_uuid=%s file=%s",
                     auth.workspace_id,
@@ -230,7 +244,7 @@ async def ws_capture(
                 )
                 await send_error(
                     websocket,
-                    error_message=f"Failed to ingest event: {error}",
+                    error_message="Failed to ingest event.",
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
                 continue

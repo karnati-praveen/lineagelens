@@ -1,21 +1,63 @@
 {
-  "name": "ai-insertion-detector",
-  "displayName": "AI Insertion Detector",
+  "name": "lineagelens",
+  "displayName": "LineageLens",
   "description": "Detects and records qualifying AI-generated code insertion events.",
-  "version": "0.0.1",
-  "publisher": "local-dev",
+  "keywords": [
+    "ai",
+    "provenance",
+    "code-provenance",
+    "ai-governance",
+    "audit-trail",
+    "code-security",
+    "llm",
+    "copilot",
+    "developer-tools",
+    "traceability",
+    "software-compliance",
+    "lineage",
+    "code-review",
+    "supply-chain",
+    "pgvector",
+    "neo4j"
+  ],
+  "version": "0.0.2",
+  "publisher": "karnatipraveen",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/karnati-praveen/linegalens"
+  },
+  "homepage": "https://github.com/karnati-praveen/linegalens#readme",
+  "bugs": {
+    "url": "https://github.com/karnati-praveen/linegalens/issues"
+  },
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/karnati-praveen"
+  },
   "engines": {
-    "vscode": "^1.90.0"
+    "vscode": "^1.90.0",
+    "node": ">=18.17.0"
   },
   "categories": [
+    "AI",
+    "SCM Providers",
     "Other"
   ],
+  "galleryBanner": {
+    "color": "#132c45",
+    "theme": "dark"
+  },
   "activationEvents": [
     "onStartupFinished"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
     "commands": [
+      {
+        "command": "lineagelens.start",
+        "title": "Start LineageLens"
+      },
       {
         "command": "aiInsertionDetector.toggleFeature",
         "title": "AI Insertion Detector: Toggle Feature"
@@ -45,15 +87,36 @@
         "title": "AI Provenance: Refresh Local Lineage (Latest Commit)"
       }
     ],
+    "keybindings": [
+      {
+        "command": "aiInsertionDetector.toggleFeature",
+        "key": "ctrl+alt+i",
+        "mac": "cmd+alt+i"
+      },
+      {
+        "command": "aiInsertionDetector.openProvenanceSearch",
+        "key": "ctrl+alt+f",
+        "mac": "cmd+alt+f",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "aiInsertionDetector.showProvenance",
+        "key": "ctrl+alt+u",
+        "mac": "cmd+alt+u",
+        "when": "editorHasSelection"
+      }
+    ],
     "views": {
       "explorer": [
         {
           "id": "aiInsertionDetector.provenanceSidebar",
-          "name": "AI Provenance"
+          "name": "AI Provenance",
+          "icon": "media/icon.png"
         },
         {
           "id": "aiInsertionDetector.provenanceSearchSidebar",
-          "name": "AI Provenance Search"
+          "name": "AI Provenance Search",
+          "icon": "media/icon.png"
         }
       ]
     },
@@ -124,12 +187,44 @@
           "maximum": 65535,
           "description": "Listening port for the local LLM proxy server."
         },
+        "aiInsertionDetector.localProxy.retentionMs": {
+          "type": "number",
+          "default": 300000,
+          "minimum": 1000,
+          "maximum": 3600000,
+          "description": "How long to keep captured local proxy request/response pairs for insertion correlation, in milliseconds."
+        },
+        "aiInsertionDetector.correlation.windowMs": {
+          "type": "number",
+          "default": 15000,
+          "minimum": 1000,
+          "maximum": 120000,
+          "description": "Maximum time gap (in milliseconds) allowed between an insertion and captured model response during prompt correlation."
+        },
         "aiInsertionDetector.correlation.similarityThreshold": {
           "type": "number",
           "default": 0.7,
           "minimum": 0,
           "maximum": 1,
           "description": "Minimum Levenshtein similarity score used to boost content-based request correlation when timing matches are ambiguous."
+        },
+        "aiInsertionDetector.activation.startupMode": {
+          "type": "string",
+          "enum": [
+            "lazy",
+            "eager"
+          ],
+          "default": "lazy",
+          "description": "Initialization strategy: lazy starts proxy/storage on first extension interaction, eager starts them immediately after activation."
+        },
+        "aiInsertionDetector.local.storage.location": {
+          "type": "string",
+          "enum": [
+            "globalState",
+            "workspaceFile"
+          ],
+          "default": "globalState",
+          "description": "Local mode storage location. globalState keeps records in VS Code user data; workspaceFile stores records in .vscode/ai-provenance/records.json."
         },
         "aiInsertionDetector.backend.baseUrl": {
           "type": "string",
@@ -222,20 +317,33 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "vscode:prepublish": "npm run compile"
+    "typecheck": "tsc -p ./ --noEmit",
+    "bundle": "esbuild ./src/extension.ts --bundle --platform=node --format=cjs --target=node18 --outfile=dist/extension.js --external:vscode --external:tree-sitter --external:tree-sitter-javascript --external:tree-sitter-python --external:tree-sitter-typescript",
+    "lint": "npm run typecheck",
+    "compile": "npm run typecheck && npm run bundle",
+    "test": "tsx --test src/test/**/*.test.ts",
+    "watch": "tsc -watch -p ./ --noEmit",
+    "vscode:prepublish": "npm run lint && npm run test && npm run bundle",
+    "package:vsix": "npm run compile && npx @vscode/vsce package",
+    "package:web": "npm run compile && npx @vscode/vsce package --target web",
+    "package:win32-x64": "npm run compile && npx @vscode/vsce package --target win32-x64",
+    "package:linux-x64": "npm run compile && npx @vscode/vsce package --target linux-x64",
+    "package:darwin-arm64": "npm run compile && npx @vscode/vsce package --target darwin-arm64",
+    "publish": "npx @vscode/vsce publish",
+    "publish:patch": "npx @vscode/vsce publish patch",
+    "publish:minor": "npx @vscode/vsce publish minor",
+    "publish:major": "npx @vscode/vsce publish major",
+    "publish:pre-release": "npx @vscode/vsce publish --pre-release",
+    "publish:web": "npx @vscode/vsce publish --target web",
+    "publish:win32-x64": "npx @vscode/vsce publish --target win32-x64",
+    "publish:linux-x64": "npx @vscode/vsce publish --target linux-x64",
+    "publish:darwin-arm64": "npx @vscode/vsce publish --target darwin-arm64"
   },
   "dependencies": {
-    "http-proxy": "^1.18.1",
-    "neo4j-driver": "^6.0.1",
-    "simple-git": "^3.28.0",
     "tree-sitter": "^0.21.1",
     "tree-sitter-javascript": "^0.21.4",
     "tree-sitter-python": "^0.21.0",
-    "tree-sitter-typescript": "^0.21.2",
-    "uuid": "^9.0.1",
-    "ws": "^8.18.0"
+    "tree-sitter-typescript": "^0.21.2"
   },
   "devDependencies": {
     "@types/http-proxy": "^1.17.15",
@@ -243,6 +351,13 @@
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.5.13",
     "@types/vscode": "^1.90.0",
-    "typescript": "^5.6.2"
+    "esbuild": "^0.25.3",
+    "http-proxy": "^1.18.1",
+    "neo4j-driver": "^6.0.1",
+    "simple-git": "^3.28.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.6.2",
+    "uuid": "^9.0.1",
+    "ws": "^8.18.0"
   }
 }

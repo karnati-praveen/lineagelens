@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +10,7 @@ from app.services.provenance_service import ingest_provenance_event
 
 
 router = APIRouter(tags=["ingest"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/ingest", response_model=IngestResponse)
@@ -30,11 +33,17 @@ async def ingest_provenance(
             settings=settings,
             neo4j_service=neo4j_service,
         )
-    except Exception as error:
+    except Exception:
+        logger.exception(
+            "Failed to ingest provenance payload: workspace=%s request_uuid=%s file=%s",
+            auth.workspace_id,
+            payload.request_uuid,
+            payload.file_path,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to ingest provenance payload: {error}",
-        ) from error
+            detail="Failed to ingest provenance payload.",
+        )
 
     return IngestResponse(
         uuid=str(record.uuid),
