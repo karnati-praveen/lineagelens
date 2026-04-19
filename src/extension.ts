@@ -1,11 +1,23 @@
 import * as http from 'http';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { StructuredLogger } from './logger';
 import simpleGit from 'simple-git';
 import { v4 as uuidv4 } from 'uuid';
-import { correlateInsertionWithProxyRequest, PromptCorrelationResult } from './correlation';
+import {
+  correlateInsertionWithProxyRequest,
+  PromptCorrelationResult,
+  resetCorrelationState
+} from './correlation';
 import { LocalLlmProxyRuntime, startLocalLlmProxy } from './proxy';
 import { ContextSnapshot, captureContextSnapshot } from './contextSnapshot';
+import {
+  PROVENANCE_EVENT_SCHEMA_VERSION,
+  buildProviderAgnosticProvenanceEvent
+} from './eventSchema';
+import { assessProvenanceRisk } from './insights';
+import { InsightsDashboardViewProvider } from './insightsDashboard';
+import { createDefaultAgentAdapterRegistry } from './agentAdapters';
 import {
   ProvenanceEmbedding,
   ProvenanceEmbeddingBundle,
@@ -17,6 +29,7 @@ import {
   ProvenanceSearchSidebarViewProvider,
   SearchSelection
 } from './provenanceSearchSidebar';
+import { ProvenanceReviewerService } from './reviewer';
 import { BackendStorageService } from './storage/BackendStorageService';
 import { LocalStorageService } from './storage/LocalStorageService';
 import {
@@ -24,6 +37,7 @@ import {
   ProvenanceStorageService,
   getConfiguredMode
 } from './storage/StorageService';
+import { getStoragePathForUri } from './storagePath';
 
 const CONFIG_SECTION = 'aiInsertionDetector';
 const MODE_CONFIG_SECTION = 'aiCodeProvenance';
@@ -33,7 +47,7 @@ const DEFAULT_ENABLED = true;
 const DEFAULT_LOCAL_PROXY_ENABLED = true;
 const DEFAULT_LOCAL_PROXY_PORT = 8080;
 const DEFAULT_CORRELATION_SIMILARITY_THRESHOLD = 0.7;
-const DEFAULT_CORRELATION_WINDOW_MS = 15_000;
+const DEFAULT_CORRELATION_WINDOW_MS = 30_000;
 const DEFAULT_LOCAL_PROXY_RETENTION_MS = 5 * 60_000;
 const DEFAULT_ACTIVATION_STARTUP_MODE = 'lazy';
 const DEFAULT_BACKEND_BASE_URL = 'http://127.0.0.1:8787';
@@ -41,6 +55,7 @@ const CONTEXT_TOKEN_WINDOW = 200;
 const LOCAL_EMBEDDING_DIMENSIONS = 128;
 const LOCAL_EMBEDDING_PROVIDER = 'local-hash';
 const LOCAL_EMBEDDING_MODEL = 'deterministic-hash-v1';
+const agentAdapterRegistry = createDefaultAgentAdapterRegistry();
 
 type StartupMode = 'lazy' | 'eager';
 
@@ -100,6 +115,7 @@ type DetectionPayload = {
 };
 
 const previousDocumentTexts = new Map<string, string>();
+const documentChangeQueues = new Map<string, Promise<void>>();
 let outputChannel: vscode.OutputChannel | undefined;
 let lastPayload: DetectionPayload | undefined;
 let lastProvenanceRecord: ProvenanceRecord | undefined;
@@ -110,11 +126,30 @@ let activeStorageService: ProvenanceStorageService | undefined;
 let activeStorageMode: ProvenanceMode | undefined;
 let storageInitialized = false;
 let runtimeInitialized = false;
+let runtimeInitializationPromise: Promise<void> | undefined;
 let detectorStatusBarItem: vscode.StatusBarItem | undefined;
+let structuredLogger: StructuredLogger | undefined;
+
+type TelemetryCounters = {
+  insertionsDetected: number;
+  insertionsIngested: number;
+  ingestErrors: number;
+  correlationsCaptured: number;
+  correlationsMissed: number;
+};
+
+const telemetry: TelemetryCounters = {
+  insertionsDetected: 0,
+  insertionsIngested: 0,
+  ingestErrors: 0,
+  correlationsCaptured: 0,
+  correlationsMissed: 0
+};
 
 export function activate(context: vscode.ExtensionContext): void {
   extensionContextRef = context;
   outputChannel = vscode.window.createOutputChannel('AI Insertion Detector');
+  structuredLogger = new StructuredLogger((line) => outputChannel?.appendLine(line));
   context.subscriptions.push(outputChannel);
 
   detectorStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -140,6 +175,13 @@ export function activate(context: vscode.ExtensionContext): void {
     log,
     getStorageService
   );
+  const reviewerService = new ProvenanceReviewerService(context, log);
+  const insightsDashboardProvider = new InsightsDashboardViewProvider(
+    context.extensionUri,
+    log,
+    getStorageService,
+    reviewerService
+  );
   const provenanceSearchSidebarProvider = new ProvenanceSearchSidebarViewProvider(
     context.extensionUri,
     log,
@@ -152,10 +194,20 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     provenanceSidebarProvider,
+    insightsDashboardProvider,
     provenanceSearchSidebarProvider,
     vscode.window.registerWebviewViewProvider(
       ProvenanceSidebarViewProvider.viewType,
       provenanceSidebarProvider,
+      {
+        webviewOptions: {
+          retainContextWhenHidden: true
+        }
+      }
+    ),
+    vscode.window.registerWebviewViewProvider(
+      InsightsDashboardViewProvider.viewType,
+      insightsDashboardProvider,
       {
         webviewOptions: {
           retainContextWhenHidden: true
@@ -181,7 +233,7 @@ export function activate(context: vscode.ExtensionContext): void {
       previousDocumentTexts.delete(document.uri.toString());
     }),
     vscode.workspace.onDidChangeTextDocument((event) => {
-      void handleTextDocumentChange(event);
+      void queueDocumentChangeProcessing(event);
     }),
     vscode.commands.registerCommand('lineagelens.start', function () {
       vscode.window.showInformationMessage('LineageLens working!');
@@ -196,9 +248,32 @@ export function activate(context: vscode.ExtensionContext): void {
       await ensureRuntimeInitialized(vscode.window.activeTextEditor?.document.uri);
       await handleShowProvenanceCommand(provenanceSidebarProvider);
     }),
+    vscode.commands.registerCommand('aiInsertionDetector.showAgentAdapterDiagnostics', async () => {
+      await showAgentAdapterDiagnostics();
+    }),
     vscode.commands.registerCommand('aiInsertionDetector.openProvenanceSearch', async () => {
       await ensureRuntimeInitialized(vscode.window.activeTextEditor?.document.uri);
       await provenanceSearchSidebarProvider.focus();
+    }),
+    vscode.commands.registerCommand('aiInsertionDetector.openInsightsDashboard', async () => {
+      await ensureRuntimeInitialized(vscode.window.activeTextEditor?.document.uri);
+      await insightsDashboardProvider.focus();
+    }),
+    vscode.commands.registerCommand('aiInsertionDetector.reviewCurrentFile', async () => {
+      await ensureRuntimeInitialized(vscode.window.activeTextEditor?.document.uri);
+      const review = await reviewerService.reviewCurrentFile(
+        getStorageService(),
+        vscode.window.activeTextEditor?.document.uri
+      );
+
+      await insightsDashboardProvider.focus();
+      await insightsDashboardProvider.showReviewResult(review);
+      vscode.window.showInformationMessage(
+        'AI reviewer completed for ' + review.filePath + ' (' + review.source + ').'
+      );
+    }),
+    vscode.commands.registerCommand('aiInsertionDetector.configureReviewerApiKey', async () => {
+      await reviewerService.configureApiKey();
     }),
     vscode.commands.registerCommand('aiInsertionDetector.backendLogin', async () => {
       await ensureRuntimeInitialized(vscode.window.activeTextEditor?.document.uri);
@@ -267,15 +342,18 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export async function deactivate(): Promise<void> {
   previousDocumentTexts.clear();
+  documentChangeQueues.clear();
   await stopLocalProxy();
   await activeStorageService?.shutdown();
   activeStorageService = undefined;
   activeStorageMode = undefined;
   storageInitialized = false;
   runtimeInitialized = false;
+  runtimeInitializationPromise = undefined;
   detectorStatusBarItem?.hide();
   detectorStatusBarItem = undefined;
   extensionContextRef = undefined;
+  structuredLogger = undefined;
 }
 
 function trackDocumentSnapshot(document: vscode.TextDocument): void {
@@ -330,12 +408,13 @@ async function handleTextDocumentChange(event: vscode.TextDocumentChangeEvent): 
       span.endOffset,
       CONTEXT_TOKEN_WINDOW
     );
+    const storedFilePath = getStoragePathForUri(document.uri);
     const insertedText = diffResult.chunks.map((chunk) => chunk.text).join('\n');
     const insertionTimestampIso = new Date().toISOString();
     const contextSnapshot = await captureContextSnapshot(document.uri.fsPath);
     const provenance = await correlateInsertionWithProxyRequest({
       insertionTimestampIso,
-      filePath: document.uri.fsPath,
+      filePath: storedFilePath,
       localProxy: localLlmProxy,
       insertedCode: insertedText,
       correlationWindowMs: config.correlationWindowMs,
@@ -345,7 +424,7 @@ async function handleTextDocumentChange(event: vscode.TextDocumentChangeEvent): 
     const payload: DetectionPayload = {
       id: uuidv4(),
       timestampIso: insertionTimestampIso,
-      filePath: document.uri.fsPath,
+      filePath: storedFilePath,
       fileUri: document.uri.toString(),
       cursor: getCursorPosition(document, span.endOffset),
       netAddedLines: diffResult.netAddedLines,
@@ -368,17 +447,24 @@ async function handleTextDocumentChange(event: vscode.TextDocumentChangeEvent): 
     const provenanceRecord = buildProvenanceRecord(payload, document, config);
     lastProvenanceRecord = provenanceRecord;
 
-    log('[' + payload.timestampIso + '] Qualifying insertion detected: ' + payload.id);
-    log(JSON.stringify(payload, null, 2));
+    telemetry.insertionsDetected += 1;
+    if (provenance.promptStatus === 'captured') {
+      telemetry.correlationsCaptured += 1;
+    } else {
+      telemetry.correlationsMissed += 1;
+    }
+
+    log('Qualifying insertion detected: ' + payload.id, { filePath: payload.filePath, netAddedLines: payload.netAddedLines });
 
     const storageService = activeStorageService;
     const shouldPersistRecord =
       storageService !== undefined &&
-      (storageService.mode === 'local' || provenanceRecord.promptStatus === 'captured');
+      (storageService.mode === 'local' || provenanceRecord.correlation.promptStatus === 'captured');
 
     if (storageService && shouldPersistRecord) {
       try {
         const ingestResult = await storageService.ingest(provenanceRecord, document.uri);
+        telemetry.insertionsIngested += 1;
 
         const statusMessage =
           'AI provenance stored: ' +
@@ -395,6 +481,7 @@ async function handleTextDocumentChange(event: vscode.TextDocumentChangeEvent): 
           log('Storage warning: ' + warning);
         }
       } catch (error: unknown) {
+        telemetry.ingestErrors += 1;
         const message =
           'Provenance persistence failed for ' + provenanceRecord.uuid + ': ' + toErrorMessage(error);
         log(message);
@@ -402,7 +489,7 @@ async function handleTextDocumentChange(event: vscode.TextDocumentChangeEvent): 
       }
     } else if (!storageService) {
       log('No active storage service is available; persistence skipped for ' + provenanceRecord.uuid + '.');
-    } else if (provenanceRecord.promptStatus !== 'captured' && storageService.mode === 'backend') {
+    } else if (provenanceRecord.correlation.promptStatus !== 'captured' && storageService.mode === 'backend') {
       log('Backend ingest skipped for ' + provenanceRecord.uuid + ' because correlation was not captured.');
     }
 
@@ -571,20 +658,48 @@ function buildProvenanceRecord(
   config: DetectorConfig
 ): ProvenanceRecord {
   const normalizedNodeTypes = normalizeAST(payload.insertedText, document.languageId || payload.filePath);
-  const promptCaptured = payload.provenance.promptStatus === 'captured';
+  const workspaceHint = vscode.workspace.getWorkspaceFolder(document.uri)?.name ?? null;
+  const agentContext = agentAdapterRegistry.detect({
+    timestampIso: payload.timestampIso,
+    filePath: payload.filePath,
+    fileLanguageId: document.languageId || 'unknown',
+    workspaceHint,
+    insertedText: payload.insertedText,
+    correlation: payload.provenance
+  });
+  const correlationCaptured = payload.provenance.promptStatus === 'captured';
+  const fullPromptCaptured = correlationCaptured && payload.provenance.captureStatus === 'full';
+  const normalizedEvent = buildProviderAgnosticProvenanceEvent({
+    eventId: payload.id,
+    timestampIso: payload.timestampIso,
+    filePath: payload.filePath,
+    fileUri: payload.fileUri,
+    languageId: document.languageId,
+    workspaceHint,
+    gitBranch: payload.activeGitBranch,
+    insertedText: payload.insertedText,
+    insertedChunks: payload.insertedChunks,
+    netAddedLines: payload.netAddedLines,
+    surroundingContext: payload.surroundingContext,
+    contextSnapshot: payload.contextSnapshot,
+    correlation: payload.provenance,
+    agentContext,
+    shimName: 'vscode-extension'
+  });
 
-  return {
+  const record: ProvenanceRecord = {
+    schemaVersion: PROVENANCE_EVENT_SCHEMA_VERSION,
     uuid: payload.id,
-    requestUuid: promptCaptured ? payload.provenance.requestUuid : null,
+    requestUuid: correlationCaptured ? payload.provenance.requestUuid : null,
     timestampIso: payload.timestampIso,
     insertionTimestampIso: payload.timestampIso,
-    promptStatus: payload.provenance.promptStatus,
+    promptStatus: correlationCaptured ? 'captured' : 'not-captured',
     prompt: {
-      fullMessages: promptCaptured ? payload.provenance.fullPromptMessages : null,
-      modelName: promptCaptured ? payload.provenance.modelName : null,
-      parameters: promptCaptured ? payload.provenance.parameters ?? null : null,
-      rawModelResponse: promptCaptured ? payload.provenance.rawModelResponse ?? null : null,
-      rawModelResponseBase64: promptCaptured ? payload.provenance.rawModelResponseBase64 ?? null : null
+      fullMessages: fullPromptCaptured ? payload.provenance.fullPromptMessages : null,
+      modelName: correlationCaptured ? payload.provenance.modelName : null,
+      parameters: correlationCaptured ? payload.provenance.parameters ?? null : null,
+      rawModelResponse: fullPromptCaptured ? payload.provenance.rawModelResponse ?? null : null,
+      rawModelResponseBase64: fullPromptCaptured ? payload.provenance.rawModelResponseBase64 ?? null : null
     },
     insertion: {
       extractedInsertedCodeBlock: payload.insertedText,
@@ -602,6 +717,12 @@ function buildProvenanceRecord(
       gitBranch: payload.activeGitBranch
     },
     contextSnapshot: payload.contextSnapshot,
+    normalizedEvent,
+    rawData: {
+      detectionPayload: payload as unknown as Record<string, unknown>,
+      proxyRequest: buildRawProxyRequest(payload.provenance),
+      proxyResponse: buildRawProxyResponse(payload.provenance)
+    },
     embeddings: buildDeterministicEmbeddingBundle(payload),
     astSnapshot: {
       parserEngine: 'tree-sitter',
@@ -622,9 +743,55 @@ function buildProvenanceRecord(
       correlationConfidence: payload.provenance.correlationConfidence,
       contentSimilarityApplied: payload.provenance.contentSimilarityApplied,
       ambiguityResolvedByContent: payload.provenance.ambiguityResolvedByContent,
-      featureVersion: 'backend-integration-v1',
-      localProxyPort: payload.proxyPort
+      featureVersion: 'governance-dashboard-v1',
+      schemaVersion: PROVENANCE_EVENT_SCHEMA_VERSION,
+      localProxyPort: payload.proxyPort,
+      captureStatus: payload.provenance.captureStatus,
+      proxyCapture: payload.provenance.captureEvidence ?? null,
+      agentContext,
+      agentDiagnostics: agentContext
+        ? {
+            adapterName: agentContext.adapterName,
+            confidence: agentContext.confidence,
+            evidence: agentContext.evidence
+          }
+        : null,
+      workspaceHint
     }
+  };
+
+  record.metadata.riskAssessment = assessProvenanceRisk(record);
+
+  return record;
+}
+
+function buildRawProxyRequest(correlation: PromptCorrelationResult): Record<string, unknown> | null {
+  if (correlation.promptStatus !== 'captured') {
+    return null;
+  }
+
+  return {
+    requestUuid: correlation.requestUuid,
+    timestampIso: correlation.proxyRequestTimestampIso,
+    targetHost: correlation.targetHost,
+    requestHeaders: correlation.requestHeaders,
+    fullPromptMessages: correlation.fullPromptMessages,
+    modelName: correlation.modelName,
+    parameters: correlation.parameters,
+    systemPrompt: correlation.systemPrompt,
+    captureEvidence: correlation.captureEvidence
+  };
+}
+
+function buildRawProxyResponse(correlation: PromptCorrelationResult): Record<string, unknown> | null {
+  if (correlation.promptStatus !== 'captured') {
+    return null;
+  }
+
+  return {
+    timestampIso: correlation.proxyResponseTimestampIso,
+    rawModelResponse: correlation.rawModelResponse,
+    rawModelResponseBase64: correlation.rawModelResponseBase64
   };
 }
 
@@ -766,6 +933,7 @@ async function syncLocalProxyLifecycle(): Promise<void> {
   await stopLocalProxy();
 
   try {
+    resetCorrelationState();
     localLlmProxy = await startLocalLlmProxy({
       port: config.localProxyPort,
       retentionMs: config.localProxyRetentionMs,
@@ -785,13 +953,38 @@ async function syncLocalProxyLifecycle(): Promise<void> {
 }
 
 async function stopLocalProxy(): Promise<void> {
-  if (!localLlmProxy) {
+  const proxy = localLlmProxy;
+  if (!proxy) {
+    resetCorrelationState();
     return;
   }
 
-  await localLlmProxy.stop();
-  localLlmProxy = undefined;
-  localProxyRuntimeConfig = undefined;
+  try {
+    await proxy.stop();
+  } finally {
+    resetCorrelationState();
+    localLlmProxy = undefined;
+    localProxyRuntimeConfig = undefined;
+  }
+}
+
+function queueDocumentChangeProcessing(event: vscode.TextDocumentChangeEvent): Promise<void> {
+  const key = event.document.uri.toString();
+  const previousWork = documentChangeQueues.get(key) ?? Promise.resolve();
+  const nextWork = previousWork.then(
+    () => handleTextDocumentChange(event),
+    () => handleTextDocumentChange(event)
+  );
+
+  documentChangeQueues.set(key, nextWork);
+
+  void nextWork.finally(() => {
+    if (documentChangeQueues.get(key) === nextWork) {
+      documentChangeQueues.delete(key);
+    }
+  });
+
+  return nextWork;
 }
 
 async function getActiveGitBranch(resource: vscode.Uri): Promise<string | null> {
@@ -923,8 +1116,30 @@ function showStatus(): void {
     ', runtimeInitialized=' +
     String(runtimeInitialized);
 
-  vscode.window.showInformationMessage('AI Insertion Detector status: ' + status);
-  log('Status requested: ' + status);
+  const proxyReport = localLlmProxy?.getCapabilityReport();
+  const proxySummary = proxyReport
+    ? ', proxyCapture=' +
+      String(proxyReport.fullCaptures) +
+      '/' +
+      String(proxyReport.metadataOnlyCaptures) +
+      '/' +
+      String(proxyReport.tunnelOnlyCaptures) +
+      '/' +
+      String(proxyReport.unavailableCaptures)
+    : '';
+
+  const telemetrySummary =
+    ', [telemetry] detected=' + String(telemetry.insertionsDetected) +
+    ' ingested=' + String(telemetry.insertionsIngested) +
+    ' errors=' + String(telemetry.ingestErrors) +
+    ' captured=' + String(telemetry.correlationsCaptured) +
+    ' missed=' + String(telemetry.correlationsMissed);
+
+  vscode.window.showInformationMessage('AI Insertion Detector status: ' + status + proxySummary + telemetrySummary);
+  log('Status requested: ' + status + telemetrySummary);
+  if (proxyReport) {
+    log('Proxy capability report: ' + JSON.stringify(proxyReport, null, 2));
+  }
 
   if (lastPayload) {
     log('Last detected insertion id: ' + lastPayload.id);
@@ -933,6 +1148,60 @@ function showStatus(): void {
   if (lastProvenanceRecord) {
     log('Last provenance record uuid: ' + lastProvenanceRecord.uuid);
   }
+}
+
+async function showAgentAdapterDiagnostics(): Promise<void> {
+  const activeUri = vscode.window.activeTextEditor?.document.uri;
+  const provenance = lastProvenanceRecord;
+
+  if (!provenance) {
+    const enteredUuid = await vscode.window.showInputBox({
+      title: 'Adapter Diagnostics',
+      prompt: 'Enter a provenance UUID to inspect adapter matching.',
+      ignoreFocusOut: true
+    });
+
+    if (!enteredUuid || enteredUuid.trim().length === 0) {
+      return;
+    }
+
+    const storageService = activeStorageService;
+    if (!storageService) {
+      throw new Error('No active storage service is available.');
+    }
+
+    const payload = await storageService.getProvenanceByUuid(enteredUuid.trim(), activeUri);
+    logAgentDiagnostics(payload.record as Record<string, unknown>, payload.uuid);
+    return;
+  }
+
+  logAgentDiagnostics(provenance as unknown as Record<string, unknown>, provenance.uuid);
+}
+
+function logAgentDiagnostics(record: Record<string, unknown>, uuid: string): void {
+  const metadata = isRecord(record.metadata) ? record.metadata : {};
+  const agentContext = isRecord(metadata.agentContext) ? metadata.agentContext : null;
+  const agentDiagnostics = isRecord(metadata.agentDiagnostics) ? metadata.agentDiagnostics : null;
+  const captureStatus =
+    typeof metadata.captureStatus === 'string'
+      ? metadata.captureStatus
+      : isRecord(record.correlation) && typeof record.correlation.captureStatus === 'string'
+        ? record.correlation.captureStatus
+        : 'unknown';
+
+  const payload = {
+    uuid,
+    captureStatus,
+    agentContext,
+    agentDiagnostics,
+    correlation: isRecord(record.correlation) ? record.correlation : null
+  };
+
+  const text = JSON.stringify(payload, null, 2);
+  log('Agent adapter diagnostics for ' + uuid + ': ' + text);
+  void vscode.window.showInformationMessage(
+    'Adapter diagnostics logged for ' + uuid + ' (' + String(captureStatus) + ').'
+  );
 }
 
 async function initializeStorageService(
@@ -996,10 +1265,23 @@ async function ensureRuntimeInitialized(
     return;
   }
 
-  await initializeStorageService(extensionContextRef, resource, forceStorageRecreate);
-  await syncLocalProxyLifecycle();
-  runtimeInitialized = true;
-  updateStatusBarIndicator(resource);
+  if (runtimeInitializationPromise && !forceStorageRecreate) {
+    return runtimeInitializationPromise;
+  }
+
+  const ctx = extensionContextRef;
+  runtimeInitializationPromise = (async () => {
+    try {
+      await initializeStorageService(ctx, resource, forceStorageRecreate);
+      await syncLocalProxyLifecycle();
+      runtimeInitialized = true;
+      updateStatusBarIndicator(resource);
+    } finally {
+      runtimeInitializationPromise = undefined;
+    }
+  })();
+
+  return runtimeInitializationPromise;
 }
 
 function createStorageService(
@@ -1027,6 +1309,7 @@ function isStorageConfigurationChange(event: vscode.ConfigurationChangeEvent): b
     CONFIG_SECTION + '.backend.retry.httpAttempts',
     CONFIG_SECTION + '.backend.vectorSearchPath',
     CONFIG_SECTION + '.local.storage.location',
+    CONFIG_SECTION + '.local.storage.customFilePath',
     CONFIG_SECTION + '.local.explanation.provider',
     CONFIG_SECTION + '.local.ollama.url',
     CONFIG_SECTION + '.local.ollama.model',
@@ -1034,6 +1317,10 @@ function isStorageConfigurationChange(event: vscode.ConfigurationChangeEvent): b
   ];
 
   return keys.some((key) => event.affectsConfiguration(key));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 async function switchToBackendMode(): Promise<void> {
@@ -1251,6 +1538,10 @@ function toErrorMessage(error: unknown): string {
   }
 }
 
-function log(message: string): void {
-  outputChannel?.appendLine(message);
+function log(message: string, fields?: Record<string, unknown>): void {
+  if (structuredLogger) {
+    structuredLogger.info(message, fields);
+  } else {
+    outputChannel?.appendLine(message);
+  }
 }

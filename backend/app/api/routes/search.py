@@ -21,7 +21,7 @@ async def search_provenance(
 
     settings = get_settings()
 
-    rows = await search_provenance_records(
+    rows, warnings = await search_provenance_records(
         session=session,
         search=payload,
         workspace_id=auth.workspace_id,
@@ -43,4 +43,4 @@ async def search_provenance(
             )
         )
 
-    return SearchResponse(results=items, count=len(items))
+    return SearchResponse(results=items, count=len(items), warnings=warnings)

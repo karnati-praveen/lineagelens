@@ -4,6 +4,7 @@ import {
   ProvenanceSearchFilters,
   ProvenanceStorageService
 } from './storage/StorageService';
+import { getStoragePathForUri } from './storagePath';
 
 type SearchFilters = ProvenanceSearchFilters;
 
@@ -201,7 +202,7 @@ export class ProvenanceSearchSidebarViewProvider
       return undefined;
     }
 
-    return activeEditor.document.uri.fsPath;
+    return getStoragePathForUri(activeEditor.document.uri);
   }
 
   private async postMessage(message: unknown): Promise<void> {

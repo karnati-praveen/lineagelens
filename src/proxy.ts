@@ -1,13 +1,15 @@
 import * as http from 'http';
 import httpProxy = require('http-proxy');
 import * as net from 'net';
-import { Readable } from 'stream';
+import { Duplex, Readable } from 'stream';
 import { v4 as uuidv4 } from 'uuid';
 
 const DEFAULT_PROXY_PORT = 8080;
 const DEFAULT_RETENTION_MS = 5 * 60_000;
 const CLEANUP_INTERVAL_MS = 5_000;
 const REDACTED_HEADER_VALUE = '[redacted]';
+const MAX_REQUEST_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_RESPONSE_BODY_BYTES = 4 * 1024 * 1024;
 const SENSITIVE_HEADER_PATTERN =
   /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key|x-auth-token|x-csrf-token)$/i;
 const DEFAULT_LLM_HOST_PATTERNS: RegExp[] = [
@@ -21,10 +23,68 @@ const DEFAULT_LLM_HOST_PATTERNS: RegExp[] = [
 
 type NormalizedHeaders = Record<string, string | string[]>;
 
+export type CaptureStatus = 'full' | 'metadata_only' | 'tunnel_only' | 'hook' | 'unavailable';
+
+export type RequestMetadata = {
+  method: string;
+  targetUrl: string;
+  targetHost: string;
+  targetPort: number | null;
+  path: string;
+  headers: NormalizedHeaders;
+  userAgent: string | null;
+  captureStatus: CaptureStatus;
+  captureReason: string | null;
+};
+
+export type RequestBodyCapture = {
+  rawBodyUtf8: string;
+  rawBodyBase64: string;
+  payload: unknown;
+  messages: unknown;
+  model: unknown;
+  temperature: unknown;
+  systemPrompt: unknown;
+  parameters: Record<string, unknown> | undefined;
+};
+
+export type TunnelMetadata = {
+  targetHost: string;
+  targetPort: number;
+  clientAddress: string | null;
+  serverAddress: string | null;
+  startedAtIso: string;
+  endedAtIso: string | null;
+  durationMs: number | null;
+  bytesUpstream: number;
+  bytesDownstream: number;
+  connectionCount: number;
+};
+
+export type ProxyCapabilityReport = {
+  port: number;
+  retentionMs: number;
+  allowlist: string[];
+  observedRequests: number;
+  capturedRequests: number;
+  fullCaptures: number;
+  metadataOnlyCaptures: number;
+  tunnelOnlyCaptures: number;
+  unavailableCaptures: number;
+  recentHosts: Array<{
+    host: string;
+    status: CaptureStatus;
+    count: number;
+    lastSeenIso: string;
+  }>;
+  notes: string[];
+};
+
 type TargetResolution = {
   origin: string;
   fullUrl: string;
   host: string;
+  port: number;
   path: string;
 };
 
@@ -42,7 +102,13 @@ export type CapturedLlmRequest = {
   method: string;
   targetUrl: string;
   targetHost: string;
+  targetPort: number | null;
   headers: NormalizedHeaders;
+  captureStatus: CaptureStatus;
+  captureReason: string | null;
+  requestMetadata: RequestMetadata;
+  requestBody: RequestBodyCapture | null;
+  tunnelMetadata: TunnelMetadata | null;
   rawBodyUtf8: string;
   rawBodyBase64: string;
   payload: unknown;
@@ -79,6 +145,7 @@ export type LocalLlmProxyOptions = {
 export type LocalLlmProxyRuntime = {
   port: number;
   getRecentPairs: () => RequestResponsePair[];
+  getCapabilityReport: () => ProxyCapabilityReport;
   stop: () => Promise<void>;
 };
 
@@ -91,7 +158,21 @@ export async function startLocalLlmProxy(
   const log = options.log ?? (() => undefined);
 
   const recentPairs = new Map<string, StoredPair>();
+  const capabilityTelemetry = new Map<
+    string,
+    {
+      host: string;
+      status: CaptureStatus;
+      totalCount: number;
+      fullCount: number;
+      metadataOnlyCount: number;
+      tunnelOnlyCount: number;
+      unavailableCount: number;
+      lastSeenIso: string;
+    }
+  >();
   const pendingByRequest = new WeakMap<http.IncomingMessage, string>();
+  const tunnelByClientSocket = new WeakMap<Duplex, string>();
   const proxy = httpProxy.createProxyServer({
     secure: true,
     changeOrigin: true,
@@ -101,9 +182,18 @@ export async function startLocalLlmProxy(
 
   proxy.on('proxyRes', (proxyRes, req, res) => {
     const chunks: Buffer[] = [];
+    let responseBytes = 0;
+    let responseTruncated = false;
 
     proxyRes.on('data', (chunk: Buffer | string) => {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      responseBytes += buffer.byteLength;
+      if (responseBytes <= MAX_RESPONSE_BODY_BYTES) {
+        chunks.push(buffer);
+      } else if (!responseTruncated) {
+        responseTruncated = true;
+        log('Response body truncated at ' + String(MAX_RESPONSE_BODY_BYTES) + ' bytes for capture.');
+      }
     });
 
     proxyRes.on('end', () => {
@@ -120,6 +210,8 @@ export async function startLocalLlmProxy(
       if (pendingId) {
         const pair = recentPairs.get(pendingId);
         if (pair) {
+          const existingCaptureStatus = pair.request.captureStatus;
+          const existingCaptureReason = pair.request.captureReason;
           pair.response = {
             timestampIso: new Date().toISOString(),
             statusCode,
@@ -127,6 +219,22 @@ export async function startLocalLlmProxy(
             rawBodyUtf8: rawBuffer.toString('utf8'),
             rawBodyBase64: rawBuffer.toString('base64')
           };
+          if (existingCaptureStatus === 'full') {
+            pair.request.captureStatus = 'full';
+            pair.request.requestMetadata.captureStatus = 'full';
+            pair.request.requestBody = {
+              rawBodyUtf8: pair.request.rawBodyUtf8,
+              rawBodyBase64: pair.request.rawBodyBase64,
+              payload: pair.request.payload,
+              messages: pair.request.messages,
+              model: pair.request.model,
+              temperature: pair.request.temperature,
+              systemPrompt: pair.request.systemPrompt,
+              parameters: pair.request.parameters
+            };
+          }
+          pair.request.captureReason = existingCaptureReason;
+          pair.request.requestMetadata.captureReason = existingCaptureReason;
           pair.updatedAtMs = Date.now();
         }
       }
@@ -164,8 +272,62 @@ export async function startLocalLlmProxy(
       return;
     }
 
-    const shouldCapture = shouldCaptureRequest(req.method ?? 'GET', target.host, hostPatterns);
-    if (!shouldCapture) {
+    const allowlisted = isAllowlistedHost(target.host, hostPatterns);
+    if (!allowlisted) {
+      recordCapabilityObservation(capabilityTelemetry, target.host, 'unavailable');
+      forwardRequest(proxy, req, res, target);
+      return;
+    }
+
+    const requestMethod = (req.method ?? 'GET').toUpperCase();
+    if (requestMethod !== 'POST') {
+      const requestId = uuidv4();
+      const createdAtMs = Date.now();
+      const pair: StoredPair = {
+        id: requestId,
+        createdAtMs,
+        updatedAtMs: createdAtMs,
+        request: {
+          id: requestId,
+          timestampIso: new Date(createdAtMs).toISOString(),
+          method: req.method ?? 'GET',
+          targetUrl: target.fullUrl,
+          targetHost: target.host,
+          targetPort: target.port,
+          headers: normalizeIncomingHeaders(req.headers),
+          captureStatus: 'metadata_only',
+          captureReason: 'Allowlisted request captured with metadata only because the body was not captured.',
+          requestMetadata: {
+            method: req.method ?? 'GET',
+            targetUrl: target.fullUrl,
+            targetHost: target.host,
+            targetPort: target.port,
+            path: target.path,
+            headers: normalizeIncomingHeaders(req.headers),
+            userAgent: firstHeaderValue(req.headers['user-agent']) ?? null,
+            captureStatus: 'metadata_only',
+            captureReason: 'Allowlisted request captured with metadata only because the body was not captured.'
+          },
+          requestBody: null,
+          tunnelMetadata: null,
+          rawBodyUtf8: '',
+          rawBodyBase64: '',
+          payload: undefined,
+          messages: undefined,
+          model: undefined,
+          temperature: undefined,
+          systemPrompt: undefined,
+          parameters: undefined
+        }
+      };
+
+      recentPairs.set(requestId, pair);
+      pendingByRequest.set(req, requestId);
+      recordCapabilityObservation(capabilityTelemetry, target.host, 'metadata_only');
+      pruneExpiredPairs(recentPairs, retentionMs);
+
+      log('Captured allowlisted metadata-only request ' + requestId + ' for host ' + target.host + '.');
+
       forwardRequest(proxy, req, res, target);
       return;
     }
@@ -199,7 +361,32 @@ export async function startLocalLlmProxy(
         method: req.method ?? 'POST',
         targetUrl: target.fullUrl,
         targetHost: target.host,
+        targetPort: target.port,
         headers: normalizeIncomingHeaders(req.headers),
+        captureStatus: 'full',
+        captureReason: null,
+        requestMetadata: {
+          method: req.method ?? 'POST',
+          targetUrl: target.fullUrl,
+          targetHost: target.host,
+          targetPort: target.port,
+          path: target.path,
+          headers: normalizeIncomingHeaders(req.headers),
+          userAgent: firstHeaderValue(req.headers['user-agent']) ?? null,
+          captureStatus: 'full',
+          captureReason: null
+        },
+        requestBody: {
+          rawBodyUtf8: rawBody.toString('utf8'),
+          rawBodyBase64: rawBody.toString('base64'),
+          payload: parsedPayload,
+          messages: payloadRecord?.messages,
+          model: payloadRecord?.model,
+          temperature: payloadRecord?.temperature,
+          systemPrompt: extractSystemPrompt(payloadRecord),
+          parameters: payloadRecord
+        },
+        tunnelMetadata: null,
         rawBodyUtf8: rawBody.toString('utf8'),
         rawBodyBase64: rawBody.toString('base64'),
         payload: parsedPayload,
@@ -213,6 +400,7 @@ export async function startLocalLlmProxy(
 
     recentPairs.set(requestId, pair);
     pendingByRequest.set(req, requestId);
+    recordCapabilityObservation(capabilityTelemetry, target.host, 'full');
     pruneExpiredPairs(recentPairs, retentionMs);
 
     req.headers['content-length'] = String(rawBody.length);
@@ -233,6 +421,62 @@ export async function startLocalLlmProxy(
     }
 
     const upstreamSocket = net.connect(target.port, target.host, () => {
+      const tunnelRequestId = uuidv4();
+      const startedAtMs = Date.now();
+      const startedAtIso = new Date(startedAtMs).toISOString();
+      const pair: StoredPair = {
+        id: tunnelRequestId,
+        createdAtMs: startedAtMs,
+        updatedAtMs: startedAtMs,
+        request: {
+          id: tunnelRequestId,
+          timestampIso: startedAtIso,
+          method: 'CONNECT',
+          targetUrl: target.host + ':' + String(target.port),
+          targetHost: target.host,
+          targetPort: target.port,
+          headers: normalizeIncomingHeaders(request.headers),
+          captureStatus: 'tunnel_only',
+          captureReason: 'HTTPS payload is encrypted inside the tunnel.',
+          requestMetadata: {
+            method: 'CONNECT',
+            targetUrl: target.host + ':' + String(target.port),
+            targetHost: target.host,
+            targetPort: target.port,
+            path: '/',
+            headers: normalizeIncomingHeaders(request.headers),
+            userAgent: firstHeaderValue(request.headers['user-agent']) ?? null,
+            captureStatus: 'tunnel_only',
+            captureReason: 'HTTPS payload is encrypted inside the tunnel.'
+          },
+          requestBody: null,
+          tunnelMetadata: {
+            targetHost: target.host,
+            targetPort: target.port,
+            clientAddress: request.socket.remoteAddress ?? null,
+            serverAddress: upstreamSocket.localAddress ?? null,
+            startedAtIso,
+            endedAtIso: null,
+            durationMs: null,
+            bytesUpstream: 0,
+            bytesDownstream: 0,
+            connectionCount: 1
+          },
+          rawBodyUtf8: '',
+          rawBodyBase64: '',
+          payload: undefined,
+          messages: undefined,
+          model: undefined,
+          temperature: undefined,
+          systemPrompt: undefined,
+          parameters: undefined
+        }
+      };
+
+      recentPairs.set(tunnelRequestId, pair);
+      tunnelByClientSocket.set(clientSocket, tunnelRequestId);
+      recordCapabilityObservation(capabilityTelemetry, target.host, 'tunnel_only');
+
       clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
 
       if (head.length > 0) {
@@ -273,6 +517,21 @@ export async function startLocalLlmProxy(
     });
 
     clientSocket.on('close', () => {
+      const tunnelRequestId = tunnelByClientSocket.get(clientSocket);
+      const pair = tunnelRequestId ? recentPairs.get(tunnelRequestId) : undefined;
+
+      if (pair) {
+        const endedAtMs = Date.now();
+        pair.updatedAtMs = endedAtMs;
+        if (pair.request.tunnelMetadata) {
+          pair.request.tunnelMetadata.endedAtIso = new Date(endedAtMs).toISOString();
+          pair.request.tunnelMetadata.durationMs = Math.max(
+            0,
+            endedAtMs - Date.parse(pair.request.tunnelMetadata.startedAtIso)
+          );
+        }
+      }
+
       if (!upstreamSocket.destroyed) {
         upstreamSocket.destroy();
       }
@@ -302,6 +561,14 @@ export async function startLocalLlmProxy(
           response: pair.response
         }));
     },
+    getCapabilityReport: () =>
+      buildProxyCapabilityReport({
+        port,
+        retentionMs,
+        hostPatterns,
+        recentPairs,
+        capabilityTelemetry
+      }),
     stop: async () => {
       clearInterval(cleanupTimer);
       await closeServer(server);
@@ -320,11 +587,7 @@ function clampPort(value: number): number {
   return Math.max(1, Math.min(65535, Math.floor(value)));
 }
 
-function shouldCaptureRequest(method: string, host: string, hostPatterns: RegExp[]): boolean {
-  if (method.toUpperCase() !== 'POST') {
-    return false;
-  }
-
+function isAllowlistedHost(host: string, hostPatterns: RegExp[]): boolean {
   return hostPatterns.some((pattern) => pattern.test(host));
 }
 
@@ -352,6 +615,7 @@ function resolveTarget(req: http.IncomingMessage): TargetResolution | undefined 
       origin: parsed.origin,
       fullUrl: parsed.toString(),
       host: parsed.hostname.toLowerCase(),
+      port: parsed.port.length > 0 ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80,
       path: parsed.pathname + parsed.search
     };
   } catch {
@@ -521,13 +785,26 @@ function pruneExpiredPairs(pairs: Map<string, StoredPair>, retentionMs: number):
 function readRawBody(req: http.IncomingMessage): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    let rejected = false;
 
     req.on('data', (chunk: Buffer | string) => {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      if (rejected) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buffer.byteLength;
+      if (totalBytes > MAX_REQUEST_BODY_BYTES) {
+        rejected = true;
+        req.destroy();
+        reject(new Error('Request body exceeds the ' + String(MAX_REQUEST_BODY_BYTES) + '-byte limit.'));
+        return;
+      }
+      chunks.push(buffer);
     });
 
     req.on('end', () => {
-      resolve(Buffer.concat(chunks));
+      if (!rejected) {
+        resolve(Buffer.concat(chunks));
+      }
     });
 
     req.on('error', (error: Error) => {
@@ -584,4 +861,106 @@ function toErrorMessage(error: unknown): string {
   } catch {
     return String(error);
   }
+}
+
+function recordCapabilityObservation(
+  telemetry: Map<
+    string,
+    {
+      host: string;
+      status: CaptureStatus;
+      totalCount: number;
+      fullCount: number;
+      metadataOnlyCount: number;
+      tunnelOnlyCount: number;
+      unavailableCount: number;
+      lastSeenIso: string;
+    }
+  >,
+  host: string,
+  status: CaptureStatus
+): void {
+  const key = host.toLowerCase();
+  const current = telemetry.get(key);
+  const next = current
+    ? {
+        ...current,
+        status,
+        totalCount: current.totalCount + 1,
+        fullCount: current.fullCount + (status === 'full' ? 1 : 0),
+        metadataOnlyCount: current.metadataOnlyCount + (status === 'metadata_only' ? 1 : 0),
+        tunnelOnlyCount: current.tunnelOnlyCount + (status === 'tunnel_only' ? 1 : 0),
+        unavailableCount: current.unavailableCount + (status === 'unavailable' ? 1 : 0),
+        lastSeenIso: new Date().toISOString()
+      }
+    : {
+        host,
+        status,
+        totalCount: 1,
+        fullCount: status === 'full' ? 1 : 0,
+        metadataOnlyCount: status === 'metadata_only' ? 1 : 0,
+        tunnelOnlyCount: status === 'tunnel_only' ? 1 : 0,
+        unavailableCount: status === 'unavailable' ? 1 : 0,
+        lastSeenIso: new Date().toISOString()
+      };
+
+  telemetry.set(key, next);
+}
+
+function buildProxyCapabilityReport(input: {
+  port: number;
+  retentionMs: number;
+  hostPatterns: RegExp[];
+  recentPairs: Map<string, StoredPair>;
+  capabilityTelemetry: Map<
+    string,
+    {
+      host: string;
+      status: CaptureStatus;
+      totalCount: number;
+      fullCount: number;
+      metadataOnlyCount: number;
+      tunnelOnlyCount: number;
+      unavailableCount: number;
+      lastSeenIso: string;
+    }
+  >;
+}): ProxyCapabilityReport {
+  let fullCaptures = 0;
+  let metadataOnlyCaptures = 0;
+  let tunnelOnlyCaptures = 0;
+  let unavailableCaptures = 0;
+
+  for (const entry of input.capabilityTelemetry.values()) {
+    fullCaptures += entry.fullCount;
+    metadataOnlyCaptures += entry.metadataOnlyCount;
+    tunnelOnlyCaptures += entry.tunnelOnlyCount;
+    unavailableCaptures += entry.unavailableCount;
+  }
+
+  return {
+    port: input.port,
+    retentionMs: input.retentionMs,
+    allowlist: input.hostPatterns.map((pattern) => pattern.toString()),
+    observedRequests: [...input.capabilityTelemetry.values()].reduce((sum, entry) => sum + entry.totalCount, 0),
+    capturedRequests: fullCaptures + metadataOnlyCaptures + tunnelOnlyCaptures,
+    fullCaptures,
+    metadataOnlyCaptures,
+    tunnelOnlyCaptures,
+    unavailableCaptures,
+    recentHosts: [...input.capabilityTelemetry.values()]
+      .sort((left, right) => right.lastSeenIso.localeCompare(left.lastSeenIso))
+      .slice(0, 12)
+      .map((entry) => ({
+        host: entry.host,
+        status: entry.status,
+        count: entry.totalCount,
+        lastSeenIso: entry.lastSeenIso
+      })),
+    notes: [
+      'Lightweight proxy captures full bodies for allowlisted POST requests and metadata only for other allowlisted methods.',
+      'CONNECT tunnels are recorded as tunnel_only metadata unless a dedicated interception sidecar is enabled.',
+      'Requests outside the allowlist are counted as unavailable.'
+    ]
+  };
 }

@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 DEFAULT_PGVECTOR_DIMENSION = 256
+DEFAULT_BACKEND_MODE = "basic"
 DISALLOWED_JWT_SECRETS = {
     "",
     "change-me",
@@ -13,12 +14,29 @@ DISALLOWED_JWT_SECRETS = {
     "secret",
     "password",
 }
+DISALLOWED_PRODUCTION_PASSWORDS = {
+    "",
+    "neo4j",
+    "neo4j_password",
+    "password",
+    "postgres",
+    "change-me",
+    "changeme",
+    "default",
+    "secret",
+    "admin",
+}
 
 
 class Settings(BaseSettings):
     app_env: str = Field(default="development", alias="APP_ENV")
     app_title: str = Field(default="AI Provenance Backend", alias="APP_TITLE")
     app_version: str = Field(default="0.1.0", alias="APP_VERSION")
+
+    backend_mode: str = Field(default=DEFAULT_BACKEND_MODE, alias="BACKEND_MODE")
+    neo4j_enabled: bool = Field(default=False, alias="NEO4J_ENABLED")
+    vector_search_enabled: bool = Field(default=False, alias="VECTOR_SEARCH_ENABLED")
+    lineage_strict_mode: bool = Field(default=False, alias="LINEAGE_STRICT_MODE")
 
     database_url: str = Field(
         default="postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/provenance",
@@ -51,6 +69,10 @@ class Settings(BaseSettings):
     backend_cors_origins: str = Field(
         default="http://127.0.0.1:3000,http://localhost:3000",
         alias="BACKEND_CORS_ORIGINS",
+    )
+    backend_trusted_hosts: str = Field(
+        default="",
+        alias="BACKEND_TRUSTED_HOSTS",
     )
 
     http_max_body_bytes: int = Field(default=2_000_000, alias="HTTP_MAX_BODY_BYTES")
@@ -87,12 +109,30 @@ class Settings(BaseSettings):
         return list(dict.fromkeys(origins))
 
     @property
+    def trusted_hosts(self) -> list[str]:
+        hosts = [entry.strip() for entry in self.backend_trusted_hosts.split(",") if entry.strip()]
+        return list(dict.fromkeys(hosts))
+
+    @property
     def required_scopes_set(self) -> set[str]:
         return {scope.strip() for scope in self.jwt_required_scopes.split() if scope.strip()}
 
     @property
     def refresh_secret_key(self) -> str:
         return self.jwt_refresh_secret_key or self.jwt_secret_key
+
+    @property
+    def product_mode(self) -> str:
+        return "enterprise" if self.backend_mode == "full" else "team"
+
+    @field_validator("backend_mode")
+    @classmethod
+    def validate_backend_mode(cls, value: str) -> str:
+        mode = value.strip().lower()
+        if mode not in {"basic", "full"}:
+            raise ValueError("BACKEND_MODE must be either 'basic' or 'full'.")
+
+        return mode
 
     @field_validator("jwt_secret_key")
     @classmethod
@@ -126,6 +166,28 @@ class Settings(BaseSettings):
     def validate_cors_for_environment(self) -> "Settings":
         if self.app_env.strip().lower() == "production" and not self.cors_origins:
             raise ValueError("BACKEND_CORS_ORIGINS must not be empty in production.")
+        if self.app_env.strip().lower() == "production" and any(
+            origin == "*" for origin in self.cors_origins
+        ):
+            raise ValueError("BACKEND_CORS_ORIGINS must not contain wildcard '*' in production.")
+        return self
+
+    @model_validator(mode="after")
+    def validate_secrets_for_environment(self) -> "Settings":
+        if self.app_env.strip().lower() != "production":
+            return self
+
+        if self.neo4j_enabled and self.neo4j_password.strip().lower() in DISALLOWED_PRODUCTION_PASSWORDS:
+            raise ValueError("NEO4J_PASSWORD must be set to a strong, non-default value in production.")
+
+        if self.jwt_refresh_secret_key is None or self.jwt_refresh_secret_key.strip() == "":
+            raise ValueError("JWT_REFRESH_SECRET_KEY must be set explicitly in production.")
+
+        if self.jwt_refresh_secret_key == self.jwt_secret_key:
+            raise ValueError(
+                "JWT_REFRESH_SECRET_KEY must differ from JWT_SECRET_KEY in production."
+            )
+
         return self
 
 

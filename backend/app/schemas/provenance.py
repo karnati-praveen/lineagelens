@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class CursorPosition(BaseModel):
@@ -58,6 +58,20 @@ class SearchRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
+    @field_validator("query", "keywords", mode="before")
+    @classmethod
+    def validate_query_length(cls, value: object) -> object:
+        if isinstance(value, str) and len(value) > 500:
+            raise ValueError("Search query must not exceed 500 characters.")
+        return value
+
+    @field_validator("limit", "top_k", mode="before")
+    @classmethod
+    def validate_limit(cls, value: object) -> object:
+        if isinstance(value, int) and value > 200:
+            raise ValueError("Result limit must not exceed 200.")
+        return value
+
 
 class SearchResultItem(BaseModel):
     uuid: str
@@ -74,6 +88,7 @@ class SearchResultItem(BaseModel):
 class SearchResponse(BaseModel):
     results: list[SearchResultItem]
     count: int
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ProvenanceResponse(BaseModel):
@@ -86,6 +101,7 @@ class IngestResponse(BaseModel):
     workspace_id: str = Field(alias="workspaceId")
     stored: bool = True
     lineage_node_id: str | None = Field(default=None, alias="lineageNodeId")
+    warnings: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(populate_by_name=True)
 

@@ -18,6 +18,9 @@ const REQUEST_TIMEOUT_MS = 12_000;
 const WEBSOCKET_CONFIRMATION_TIMEOUT_MS = 8_000;
 const RETRY_DELAY_BASE_MS = 300;
 
+const API_VERSION = 'v1';
+const MAX_PENDING_CONFIRMATIONS = 50;
+
 export type BackendIngestResult = {
   uuid: string;
   transport: 'websocket' | 'http';
@@ -48,6 +51,7 @@ export class BackendIngestClient implements vscode.Disposable {
   private websocketToken: string | undefined;
   private connectingPromise: Promise<WebSocket> | undefined;
   private readonly pendingConfirmations = new Map<string, PendingConfirmation>();
+  private readonly sessionTraceId: string = generateTraceId();
 
   public constructor(
     private readonly authSession: BackendAuthSession,
@@ -191,7 +195,9 @@ export class BackendIngestClient implements vscode.Disposable {
           {
             Authorization: authorizationHeader,
             'Content-Type': 'application/json',
-            Accept: 'application/json'
+            Accept: 'application/json',
+            'X-API-Version': API_VERSION,
+            'X-Trace-ID': this.sessionTraceId
           },
           payload
         );
@@ -426,6 +432,12 @@ export class BackendIngestClient implements vscode.Disposable {
   private waitForConfirmation(uuid: string, timeoutMs: number): Promise<void> {
     const normalizedUuid = uuid.toLowerCase();
 
+    if (this.pendingConfirmations.size >= MAX_PENDING_CONFIRMATIONS) {
+      return Promise.reject(
+        new Error('Too many pending WebSocket confirmations (' + String(MAX_PENDING_CONFIRMATIONS) + '); dropping ingest for ' + uuid + '.')
+      );
+    }
+
     return new Promise<void>((resolve, reject) => {
       const existing = this.pendingConfirmations.get(normalizedUuid);
       if (existing) {
@@ -495,6 +507,9 @@ export function toBackendIngestPayload(
     prompt: record.prompt,
     astSnapshot: record.astSnapshot,
     embeddings: record.embeddings,
+    schemaVersion: record.schemaVersion,
+    normalizedEvent: record.normalizedEvent,
+    rawData: record.rawData,
     requestUuid: record.requestUuid,
     workspaceId: workspaceId,
     metadata: record.metadata
@@ -705,4 +720,11 @@ function toErrorMessage(error: unknown): string {
   } catch {
     return String(error);
   }
+}
+
+function generateTraceId(): string {
+  const hex = Array.from({ length: 16 }, () =>
+    Math.floor(Math.random() * 256).toString(16).padStart(2, '0')
+  ).join('');
+  return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16);
 }

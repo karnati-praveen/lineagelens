@@ -1,0 +1,997 @@
+# LineageLens Current Implementation and Feature Reference
+
+Last reviewed from the local codebase: 2026-04-18
+
+## 1. What LineageLens Is
+
+LineageLens is an AI code provenance system. Its current implementation has two major parts:
+
+- A VS Code extension that detects qualifying code insertions, captures local context, correlates edits with nearby LLM traffic, builds provenance records, stores/searches/displays them, and optionally sends them to a backend.
+- A FastAPI backend that authenticates users, ingests provenance records, stores records in Postgres with pgvector embeddings, creates initial lineage nodes in Neo4j, provides search/explain/provenance APIs, and accepts real-time WebSocket capture ingest.
+
+The system is currently VS Code-first, but recent implementation work moved the data model toward a provider-agnostic provenance core. The VS Code extension now acts more like a shim that produces normalized records.
+
+## 2. High-Level Architecture
+
+Current layers:
+
+- IDE shim: `src/extension.ts`
+- Local LLM proxy: `src/proxy.ts`
+- Correlation engine: `src/correlation.ts`
+- Provider-agnostic event schema: `src/eventSchema.ts`
+- Provenance record and AST normalization: `src/provenance.ts`
+- Agent adapter registry and detectors: `src/agentAdapters/*`
+- Storage abstraction: `src/storage/StorageService.ts`
+- Local storage implementation: `src/storage/LocalStorageService.ts`
+- Backend storage/client implementation: `src/storage/BackendStorageService.ts`, `src/backend.ts`, `src/backendAuth.ts`
+- UI surfaces: `src/provenanceSidebar.ts`, `src/provenanceSearchSidebar.ts`, `src/insightsDashboard.ts`
+- Governance/risk analytics: `src/insights.ts`
+- Current-file reviewer: `src/reviewer.ts`
+- Backend API and services: `backend/app/*`
+- CI and PR provenance workflow: `.github/workflows/*`, `.github/scripts/provenance_pr_review.py`
+
+The core runtime flow is:
+
+1. VS Code opens/changes a file.
+2. The extension keeps a previous document snapshot.
+3. On text change, it computes inserted chunks and net added lines.
+4. If the change passes the configured line threshold, it captures surrounding context and a context snapshot.
+5. It correlates the insertion with recent local proxy captures.
+6. It detects the likely agent/tool using adapter plugins.
+7. It builds a `ProvenanceRecord` with normalized and raw data.
+8. It stores the record locally or sends it to the backend, depending on mode.
+9. Search, provenance sidebar, dashboard, explanations, and review features read from the active storage service.
+
+## 3. VS Code Extension Features
+
+Declared extension metadata and commands live in `package.json`.
+
+Current extension identity:
+
+- Name: `lineagelens`
+- Display name: `LineageLens`
+- Version: `0.0.3`
+- Main bundle: `dist/extension.js`
+- Activation: `onStartupFinished`
+- VS Code engine: `^1.90.0`
+- Node engine: `>=18.17.0`
+
+Current commands:
+
+- `lineagelens.start`: simple start/health command.
+- `aiInsertionDetector.toggleFeature`: toggles capture on/off at workspace level.
+- `aiInsertionDetector.showStatus`: shows current detection, mode, storage, proxy, and runtime status.
+- `aiInsertionDetector.showProvenance`: loads provenance for a selected or entered UUID.
+- `aiInsertionDetector.showAgentAdapterDiagnostics`: logs adapter match/correlation diagnostics for the last or selected record.
+- `aiInsertionDetector.openProvenanceSearch`: opens the provenance search view.
+- `aiInsertionDetector.openInsightsDashboard`: opens the governance dashboard.
+- `aiInsertionDetector.reviewCurrentFile`: runs the current-file review flow.
+- `aiInsertionDetector.configureReviewerApiKey`: stores reviewer API key in VS Code Secret Storage.
+- `aiInsertionDetector.backendLogin`: authenticates against the backend.
+- `aiInsertionDetector.switchToBackendMode`: switches storage mode to backend and derives backend websocket URL.
+- `aiInsertionDetector.refreshLocalLineage`: refreshes local lineage from the latest git commit.
+
+Current keybindings:
+
+- Toggle feature: `ctrl+alt+i`, macOS `cmd+alt+i`
+- Open search: `ctrl+alt+f`, macOS `cmd+alt+f`
+- Show provenance for selection: `ctrl+alt+u`, macOS `cmd+alt+u`
+
+Current sidebar views:
+
+- `aiInsertionDetector.provenanceSidebar`: AI Provenance
+- `aiInsertionDetector.provenanceSearchSidebar`: AI Provenance Search
+- `aiInsertionDetector.insightsDashboard`: AI Governance Dashboard
+
+## 4. Detection and Capture Flow
+
+Main implementation: `src/extension.ts`
+
+Important internal state:
+
+- `previousDocumentTexts`: stores previous file snapshots.
+- `lastPayload`: last detection payload.
+- `lastProvenanceRecord`: last built provenance record.
+- `localLlmProxy`: current local proxy runtime.
+- `activeStorageService`: local or backend storage service.
+
+Detection behavior:
+
+- Only file-backed documents are tracked.
+- On document change, the extension compares the old text with the change events.
+- Inserted chunks are extracted in `extractInsertedChunksFromDiff`.
+- Net added lines are counted using `countApproximateLines`.
+- The default qualifying threshold is 4 net added lines.
+- Surrounding context is captured using a 200-token before/after window.
+- Cursor position is captured from the active editor when possible.
+- Active git branch is captured using `simple-git`.
+- File paths are normalized through `getStoragePathForUri` so local storage can use portable workspace-relative paths.
+
+If the insertion qualifies, the extension builds:
+
+- A `DetectionPayload`
+- A `PromptCorrelationResult`
+- A `ContextSnapshot`
+- A `ProvenanceRecord`
+- Deterministic local embeddings
+- AST node-type sequence snapshot
+- Risk assessment metadata
+- Agent context metadata when detected
+- Provider-agnostic `normalizedEvent`
+- Original/raw `rawData`
+
+## 5. Local LLM Proxy
+
+Main implementation: `src/proxy.ts`
+
+Purpose:
+
+- Capture outbound LLM traffic locally so inserted code can be linked to a prompt/response.
+
+Default proxy behavior:
+
+- Default port: `8080`
+- Default retention: 5 minutes
+- Periodic cleanup: every 5 seconds
+- Sensitive headers are redacted.
+- Allowlisted hosts currently include OpenAI, Anthropic, GitHub Copilot, and OpenRouter patterns.
+
+Capture statuses:
+
+- `full`: allowlisted POST request body and response body are captured.
+- `metadata_only`: allowlisted non-POST request has metadata captured but no body.
+- `tunnel_only`: HTTPS CONNECT tunnel is recorded, but encrypted payload is not captured.
+- `unavailable`: request is outside the allowlist or cannot be captured.
+
+Proxy telemetry:
+
+- `getRecentPairs()` returns recent request/response pairs for correlation.
+- `getCapabilityReport()` returns counts by capture status, allowlist, recent hosts, and notes.
+
+Important detail:
+
+- CONNECT traffic is not decrypted. This is intentional. The system degrades to tunnel metadata instead of breaking network traffic.
+
+## 6. Correlation Engine
+
+Main implementation: `src/correlation.ts`
+
+Purpose:
+
+- Match a qualifying code insertion to a recent proxy request/response pair.
+
+Correlation inputs:
+
+- Insertion timestamp
+- File path
+- Inserted code
+- Local proxy runtime
+- Correlation window
+- Similarity threshold
+
+Defaults:
+
+- Correlation window: 15 seconds
+- Similarity threshold: 0.7
+- Ambiguous timing delta: 250 ms
+- Similarity comparison max input length: 4000 chars
+- Claimed request retention: 5 minutes
+
+Candidate selection:
+
+- Ignores unavailable captures.
+- Looks for captures within the configured time window.
+- Scores candidates by file-context match, capture-status priority, timing difference, and response timestamp.
+- Capture priority is `full` > `metadata_only` > `tunnel_only` > `unavailable`.
+- If timing is ambiguous, it applies Levenshtein similarity between model response and inserted code.
+- It marks a proxy request as claimed so one prompt is not reused by repeated insertions.
+
+Correlation output:
+
+- Captured result includes request UUID, model, parameters, headers, prompt messages, system prompt, response body, base64 response, target host, timing, confidence, and capture evidence.
+- Not-captured result includes a reason such as local proxy unavailable, invalid timestamp, no response in window, prompt already associated, metadata-only capture, or tunnel-only capture.
+
+## 7. Provider-Agnostic Event Schema
+
+Main implementation: `src/eventSchema.ts`
+
+Current schema version:
+
+- `lineagelens.provenance-event.v1`
+
+Purpose:
+
+- Provide one common event shape across VS Code, future JetBrains/Neovim shims, Cursor, Claude Code, Aider, Copilot-style traffic, and opaque tools.
+
+Top-level normalized event areas:
+
+- `schemaVersion`
+- `eventId`
+- `timestamps`
+- `source`
+- `capture`
+- `session`
+- `model`
+- `prompt`
+- `response`
+- `file`
+- `diff`
+- `context`
+- `correlation`
+- `confidence`
+- `extensions`
+
+Capability tracking:
+
+- `prompt-body`
+- `response-body`
+- `headers`
+- `request-id`
+- `session-id`
+- `model`
+- `user-agent`
+- `file-diff`
+- `file-context`
+- `workspace`
+
+Current behavior:
+
+- A full capture marks prompt/response/header/model capabilities as provided when present.
+- A tunnel-only or unavailable capture still marks `file-diff` as provided.
+- Unknown or missing data does not fail the event.
+- Extra data goes into `extensions`.
+
+## 8. Provenance Record Shape
+
+Main implementation: `src/provenance.ts`
+
+Current `ProvenanceRecord` includes:
+
+- `schemaVersion`
+- `uuid`
+- `requestUuid`
+- Timestamps
+- `promptStatus`
+- `prompt`
+- `insertion`
+- `file`
+- `repository`
+- `contextSnapshot`
+- `normalizedEvent`
+- `rawData`
+- `embeddings`
+- `astSnapshot`
+- `correlation`
+- `metadata`
+
+Important recent addition:
+
+- `normalizedEvent` stores the provider-agnostic event.
+- `rawData` stores the original detection payload and raw proxy request/response fragments.
+
+This means old records can be reinterpreted later if new adapters improve parsing.
+
+## 9. AST Normalization
+
+Main implementation: `src/provenance.ts`
+
+Supported language hints:
+
+- JavaScript
+- TypeScript
+- TSX/JSX
+- Python
+
+Implementation:
+
+- Uses Tree-sitter packages.
+- Detects language by explicit hint, file extension, or source heuristics.
+- Traverses named nodes and keeps structural node types.
+- Ignores identifiers, literal nodes, comments, tokens, numbers, strings, and escape sequences.
+- If parser loading or parsing fails, it returns an empty node list instead of crashing.
+
+AST output is used for:
+
+- Provenance record snapshots
+- Local lineage similarity
+- Backend AST tokens
+- Risk/search context
+
+## 10. Agent Adapter System
+
+Main implementation: `src/agentAdapters/*`
+
+Current adapters:
+
+- Cursor: `src/agentAdapters/cursor.ts`
+- Claude Code: `src/agentAdapters/claudeCode.ts`
+- Aider: `src/agentAdapters/aider.ts`
+- Legacy heuristic fallback: `src/agentAdapters/legacy.ts`
+
+Adapter interface:
+
+- `name`
+- `order`
+- `capabilities`
+- `detect(input)`
+
+Declared capabilities include:
+
+- Tool/provider/model metadata
+- Session/conversation/run IDs
+- Request ID
+- User agent
+- Headers
+- Prompt body
+- Response body
+- File context
+- File diff
+- Workspace
+
+Registry behavior:
+
+- `AgentAdapterRegistry` sorts adapters by order.
+- It runs all adapters and collects candidates.
+- It prefers higher confidence.
+- Ties are resolved by lower adapter order, then adapter name.
+- It exposes `getCompatibilityMatrix()` for contract checks and diagnostics.
+
+Detection evidence:
+
+- Adapters collect evidence from headers, user agent, payload, system prompt, routing, response, or heuristics.
+- Each evidence item has source, field, value, weight, and optional note.
+
+Session fields:
+
+- `toolName`
+- `provider`
+- `sessionId`
+- `conversationId`
+- `runId`
+- `modelName`
+- `userAgent`
+- `workspaceHint`
+- `operationType`
+- `confidence`
+- `sessionKind`
+- `host`
+- `sessionSignature`
+
+## 11. Context Snapshot
+
+Main implementation: `src/contextSnapshot.ts`
+
+Purpose:
+
+- Capture project context around the insertion.
+
+Current snapshot contents:
+
+- Language profile and hint
+- Manifest summaries from `package.json`, `requirements.txt`, and `pyproject.toml`
+- Dependency previews and version maps
+- Nearby/current-file imports
+- Non-secret environment variables from an allowlist
+
+Safety behavior:
+
+- Environment variables matching key/secret/password/token/auth are excluded.
+- Captured env values are truncated.
+- Manifest/dependency summaries are bounded to avoid huge payloads.
+
+## 12. Embeddings
+
+Extension local embeddings:
+
+- Implemented in `src/extension.ts`
+- Provider: `local-hash`
+- Model: `deterministic-hash-v1`
+- Dimensions: 128
+- Generated for inserted code, prompt, response, context snapshot, and surrounding context when available.
+
+Backend embeddings:
+
+- Implemented in `backend/app/services/embedding_service.py`
+- Model name from settings defaults to `deterministic-hash-v1`
+- Dimension is fixed at 256 by backend schema validation.
+- Stored in Postgres `pgvector` column for vector search.
+
+## 13. Storage Abstraction
+
+Main interface: `src/storage/StorageService.ts`
+
+Storage modes:
+
+- `local`
+- `backend`
+
+Shared storage capabilities:
+
+- Initialize and shutdown
+- React to configuration changes
+- Authenticate
+- Ingest provenance record
+- Fetch provenance by UUID
+- Get explanation
+- Search records
+- Build insights dashboard
+- Update lineage from latest commit
+- Return mode warnings
+
+## 14. Local Storage Mode
+
+Main implementation: `src/storage/LocalStorageService.ts`
+
+Storage locations:
+
+- VS Code global state by default
+- Optional workspace file: `.vscode/ai-provenance/records.json`
+
+Local store shape:
+
+- `schemaVersion: 1`
+- `records`
+- `updatedAtIso`
+
+Each local record entry stores:
+
+- UUID
+- Full `ProvenanceRecord`
+- Search text
+- Stored and updated timestamps
+- Local lineage metadata
+
+Local search:
+
+- Keyword query using local TF-IDF cosine scoring.
+- Filters by model, date range, and current file.
+- Uses path comparison helpers to handle relative and absolute paths.
+- Sorts by score, then timestamp, then UUID.
+
+Local explanation:
+
+- Default templated explanation.
+- Optional Ollama mode using `local.ollama.url`, `local.ollama.model`, and timeout settings.
+- Falls back to template if Ollama fails.
+
+Local lineage:
+
+- Infers parent record by previous record in the same file.
+- Relationship types: `INITIAL`, `EXTENDED`, `REFACTORED`, `MOVED`, `DELETED`, `UNKNOWN`.
+- Uses AST-token Jaccard similarity.
+- Can refresh from latest git commit.
+
+Local warnings:
+
+- Team sharing requires backend mode.
+- Neo4j lineage graph and vector similarity search are backend-only.
+
+## 15. Backend Storage Mode
+
+Main implementation:
+
+- `src/storage/BackendStorageService.ts`
+- `src/backend.ts`
+- `src/backendAuth.ts`
+
+Backend ingest behavior:
+
+- Uses WebSocket first.
+- Falls back to HTTP ingest if WebSocket fails.
+- Retries are configurable.
+- Sends `schemaVersion`, `normalizedEvent`, and `rawData` with the legacy-compatible ingest payload.
+
+Backend auth behavior:
+
+- Uses login/register/refresh endpoints.
+- Stores access and refresh tokens in VS Code Secret Storage.
+- Supports legacy JWT secret migration.
+- Proactively refreshes tokens before expiration using a configurable skew.
+- Extracts workspace ID from token when needed.
+
+Backend fetch/search/explain/dashboard:
+
+- Fetches provenance by UUID from `/provenance/{uuid}`.
+- Searches via `/search`.
+- Explains via `/explain`.
+- Fetches dashboard via `/insights/dashboard`.
+
+## 16. Provenance Sidebar
+
+Main implementation: `src/provenanceSidebar.ts`
+
+Purpose:
+
+- Display a provenance record and explanation in a VS Code webview.
+
+Main capabilities:
+
+- Load record by UUID.
+- Render model/prompt/file/insertion/correlation/context/metadata information.
+- Call storage service for explanation.
+- Handles backend/local source labels and warnings.
+- Provides UUID extraction from selected text.
+
+## 17. Provenance Search Sidebar
+
+Main implementation: `src/provenanceSearchSidebar.ts`
+
+Purpose:
+
+- Search stored provenance records.
+
+Search filters:
+
+- Keywords
+- Model
+- Date from
+- Date to
+- Current file only
+- Limit
+
+Result behavior:
+
+- Shows UUID, score, model, timestamp, file path, snippet, and mode.
+- Selecting a result opens the file if resolvable and shows provenance.
+
+## 18. Governance Insights Dashboard
+
+Main implementation:
+
+- Extension: `src/insights.ts`, `src/insightsDashboard.ts`
+- Backend mirror: `backend/app/services/insights_service.py`
+
+Dashboard payload includes:
+
+- Summary counts
+- Compliance controls
+- High-risk records
+- File hotspots
+- Model analytics
+- Risk trends
+- Agent sessions
+- Warnings
+
+Risk scoring:
+
+- Code signals include secrets, command execution, dynamic evaluation, dangerous HTTP/client behavior, unsafe SQL, auth/token patterns, file system operations, network calls, and broad exception swallowing.
+- Path signals include auth/security/middleware, CI/deployment, package/lock files, database/schema, and infrastructure.
+- Prompt/capture weakness also influences provenance risk.
+
+Risk levels:
+
+- Low
+- Medium
+- High
+- Critical
+
+Agent session analytics:
+
+- Groups records by native session ID, run ID, conversation ID, or computed session signature.
+- Uses a 20-minute session gap for inferred grouping.
+- Tracks prompt capture rate, high-risk count, total net added lines, files touched, and evidence.
+
+Compliance controls:
+
+- Prompt capture coverage
+- High-risk review pressure
+- Critical record count
+- Agentic session visibility
+- Correlation confidence
+- File hotspot concentration
+
+## 19. Current-File Reviewer
+
+Main implementation: `src/reviewer.ts`
+
+Providers:
+
+- `heuristic`
+- `openai-compatible`
+
+Default provider:
+
+- `heuristic`
+
+Current review flow:
+
+- Reads the active file.
+- Pulls relevant provenance records from storage.
+- Builds a review context.
+- Either runs deterministic heuristic review or calls an OpenAI-compatible chat completion endpoint.
+- Shows results in the governance dashboard.
+
+Heuristic review checks:
+
+- Provenance-linked risk signals.
+- Security-sensitive patterns.
+- Large generated changes.
+- Weak prompt capture/correlation signals.
+
+OpenAI-compatible mode:
+
+- Uses configured API URL/model/timeout.
+- API key is stored in VS Code Secret Storage.
+- Parses structured JSON response when possible.
+
+## 20. Backend API
+
+Main FastAPI app: `backend/app/main.py`
+
+Startup:
+
+- Loads settings.
+- Initializes database.
+- Creates rate limiter.
+- Initializes Neo4j service.
+- Ensures Neo4j constraints.
+
+Middleware:
+
+- CORS
+- HTTP payload size limit
+- HTTP rate limiting with `Retry-After` and rate limit headers
+
+Routes:
+
+- `GET /health`: health status.
+- `POST /auth/register`: create account and issue tokens.
+- `POST /auth/login`: authenticate and issue tokens.
+- `POST /auth/refresh`: refresh access token.
+- `GET /auth/me`: return authenticated user/workspace/scopes.
+- `POST /ingest`: HTTP provenance ingest.
+- `WS /ws/capture`: real-time websocket ingest.
+- `GET /provenance/{record_uuid}`: fetch record by UUID within workspace.
+- `POST /search`: vector or filtered search.
+- `POST /explain`: generate plain-English explanation.
+- `GET /explain/system-prompt`: returns explanation system prompt.
+- `POST /insights/dashboard`: backend dashboard payload.
+
+Authentication:
+
+- JWT access and refresh tokens.
+- Workspace ID is part of auth context.
+- Required scopes default to `provenance:write provenance:read`.
+- Workspace scope is enforced on ingest/search/explain/provenance/dashboard.
+
+Rate limiting:
+
+- In-memory.
+- Covers HTTP requests.
+- Covers WebSocket connection attempts.
+- Covers WebSocket messages.
+- Intended for single-process/simple deployment unless replaced with shared storage.
+
+## 21. Backend Database Model
+
+Main model: `backend/app/db/models.py`
+
+Tables:
+
+- `provenance_records`
+- `user_accounts`
+
+`provenance_records` stores:
+
+- UUID and workspace ID
+- Request UUID
+- File path/URI and cursor
+- Timestamp
+- Prompt messages, model name, parameters, raw model response
+- Inserted code
+- Surrounding context
+- Context snapshot
+- Embeddings JSON
+- AST snapshot
+- pgvector embedding vector
+- Embedding model
+- Neo4j lineage node ID
+- Full provenance payload JSON
+- Created/updated timestamps
+
+Indexes:
+
+- UUID
+- Workspace/timestamp
+- Workspace/model
+
+`user_accounts` stores:
+
+- User ID
+- Username
+- Password hash
+- Workspace ID
+- Active flag
+- Created/updated timestamps
+
+## 22. Backend Ingest Service
+
+Main implementation: `backend/app/services/provenance_service.py`
+
+Ingest steps:
+
+1. Resolve workspace ID from payload or auth context.
+2. Extract prompt/model/parameters/raw response from `prompt` or `provenance`.
+3. Infer language hint from file extension.
+4. Normalize AST tokens from inserted code.
+5. Generate deterministic backend embedding.
+6. Store record in Postgres.
+7. Create initial lineage version in Neo4j.
+8. Save Neo4j lineage node ID back to the record.
+9. Commit and return the record.
+
+Search behavior:
+
+- If query text exists, generate query embedding and use pgvector cosine distance.
+- If no query text, return recent records after filters.
+- Filters include workspace, model, file/current-file, date from, date to.
+
+Serialization:
+
+- Starts from stored `provenance_payload`.
+- Backfills UUID, workspace, timestamp, file, context, AST, embeddings, and lineage node ID.
+- Includes score when used in search.
+
+## 23. Backend Neo4j Lineage
+
+Main implementation: `backend/app/services/neo4j_service.py`
+
+Current graph behavior:
+
+- Ensures uniqueness constraints for AI block IDs and provenance version IDs.
+- Creates an `AIGeneratedBlock`.
+- Creates a `ProvenanceBlockVersion`.
+- Links block to version with `HAS_VERSION`.
+- Maintains `LATEST_VERSION`.
+
+Current backend lineage depth:
+
+- The backend currently creates initial lineage versions at ingest.
+- Rich relationship evolution such as extended/refactored/moved is more developed on the extension/local side and in `src/lineageBuilder.ts`.
+
+## 24. Backend Explanation
+
+Main implementation: `backend/app/services/explanation_service.py`
+
+Behavior:
+
+- Builds a provenance explanation prompt.
+- Uses configured OpenAI-compatible endpoint if `EXPLAIN_LLM_API_KEY` is available.
+- Falls back to a heuristic explanation when the LLM call is unavailable or not configured.
+- Returns explanation text, model name, and source.
+
+## 25. Backend Configuration
+
+Main implementation: `backend/app/core/config.py`
+
+Important environment settings:
+
+- `APP_ENV`
+- `APP_TITLE`
+- `APP_VERSION`
+- `DATABASE_URL`
+- `PGVECTOR_DIMENSION`
+- `NEO4J_URI`
+- `NEO4J_USERNAME`
+- `NEO4J_PASSWORD`
+- `NEO4J_DATABASE`
+- `JWT_SECRET_KEY`
+- `JWT_REFRESH_SECRET_KEY`
+- `JWT_ACCESS_TOKEN_TTL_MINUTES`
+- `JWT_REFRESH_TOKEN_TTL_MINUTES`
+- `JWT_REQUIRED_SCOPES`
+- `BACKEND_CORS_ORIGINS`
+- `HTTP_MAX_BODY_BYTES`
+- `WS_MAX_MESSAGE_BYTES`
+- Rate limit settings
+- Explanation LLM settings
+
+Validation:
+
+- JWT secret must be strong and non-default.
+- pgvector dimension must remain 256 to match schema.
+- Payload limits must be at least 8192 bytes.
+- Production CORS origins must not be empty.
+
+## 26. Security Features
+
+Extension-side:
+
+- Backend tokens and reviewer API key stored in VS Code Secret Storage.
+- Sensitive proxy headers are redacted.
+- Environment snapshot excludes secret-like env vars.
+
+Backend-side:
+
+- Password hashing and verification.
+- JWT access and refresh tokens.
+- Workspace-scoped authorization.
+- HTTP/WebSocket rate limits.
+- HTTP/WebSocket payload size limits.
+- Authenticated explanation system prompt endpoint.
+- CORS configuration.
+
+## 27. GitHub and CI
+
+CI workflow: `.github/workflows/ci.yml`
+
+CI jobs:
+
+- Extension build/test on Node 20:
+  - `npm ci`
+  - `npm run lint`
+  - `npm run test`
+  - `npm run compile`
+  - `npm run package:vsix`
+- Backend tests on Python 3.11:
+  - install requirements and dev requirements
+  - `pytest tests -q`
+
+PR provenance workflow: `.github/workflows/provenance-review.yml`
+
+Behavior:
+
+- Runs on pull request events and manual dispatch.
+- Uses `.github/scripts/provenance_pr_review.py`.
+- Requires backend URL and JWT secrets.
+- Skips gracefully when backend secrets are not configured.
+- Intended to comment provenance context on PRs.
+
+## 28. Current Test Coverage
+
+Extension tests:
+
+- `src/test/agentAdapters.test.ts`
+- `src/test/correlation.test.ts`
+- `src/test/eventSchema.test.ts`
+- `src/test/insights.test.ts`
+- `src/test/storagePath.test.ts`
+
+Covered behaviors:
+
+- Adapter priority and capability matrix.
+- Cursor, Claude Code, Aider, and legacy heuristic detection.
+- Levenshtein similarity behavior.
+- Proxy-unavailable correlation result.
+- Provider-agnostic event schema for full capture.
+- Provider-agnostic event schema for opaque/diff-only capture.
+- Risk assessment and dashboard grouping.
+- Portable storage path and file path matching.
+
+Backend tests:
+
+- `backend/tests/test_config.py`
+- `backend/tests/test_insights_service.py`
+- `backend/tests/test_security.py`
+
+Covered behaviors:
+
+- Settings validation.
+- Insights dashboard summary behavior.
+- Security/token behavior.
+
+Recently verified commands:
+
+- `npm run typecheck`
+- `npm test`
+- From `backend`: `$env:PYTHONPATH='.'; ..\.venv\Scripts\python.exe -m pytest tests`
+
+## 29. Current User-Facing Features
+
+Available now:
+
+- Detect AI-like large code insertions.
+- Capture inserted code chunks, cursor, surrounding context, git branch, and workspace path.
+- Run local proxy for prompt/response capture.
+- Correlate insertions with captured LLM traffic.
+- Store full prompt/response when proxy gets a full capture.
+- Store metadata-only or tunnel-only provenance when full capture is impossible.
+- Store file-diff-only value for opaque tools.
+- Normalize events into provider-agnostic schema.
+- Preserve raw detection/proxy payloads.
+- Detect agent context for Cursor, Claude Code, Aider, and legacy Copilot/provider-style signals.
+- Show adapter diagnostics.
+- Store records locally with zero backend setup.
+- Optionally store local data in workspace file.
+- Search local or backend records.
+- Show detailed provenance in a sidebar.
+- Generate local templated explanations.
+- Optionally use local Ollama explanations.
+- Switch to backend mode.
+- Authenticate to backend.
+- Ingest over WebSocket with HTTP fallback.
+- Use backend vector search.
+- View governance dashboard.
+- Review current file using heuristic or OpenAI-compatible reviewer.
+- Refresh local lineage from latest git commit.
+- Package as VSIX.
+
+## 30. Current Integration Status
+
+Native/explicit agent adapters:
+
+- Cursor
+- Claude Code
+- Aider
+
+Fallback support:
+
+- Legacy heuristic matching for Copilot/provider/model/prompt fingerprints.
+- Opaque traffic still records capture level and file diff when prompt/response cannot be captured.
+
+Not yet implemented as full IDE shims:
+
+- JetBrains plugin
+- Neovim plugin
+- Standalone CLI ingest command
+- Manual import UI
+- External adapter package loading
+
+The current architecture is ready for these because the record now has normalized, raw, capability, and extension fields.
+
+## 31. Important Configuration Defaults
+
+Extension defaults:
+
+- Mode: `local`
+- Detection enabled: `true`
+- Line threshold: `4`
+- Detection POST proxy port: `8787`
+- Local LLM proxy enabled: `true`
+- Local LLM proxy port: `8080`
+- Local proxy retention: `300000 ms`
+- Correlation window: `15000 ms`
+- Similarity threshold: `0.7`
+- Startup mode: `lazy`
+- Backend base URL: `http://127.0.0.1:8787`
+- Backend WebSocket URL: `ws://127.0.0.1:8787/ws/capture`
+- Backend ingest path: `/ingest`
+- Local explanation provider: `templated`
+- Local Ollama URL: `http://127.0.0.1:11434/api/generate`
+- Local Ollama model: `qwen2.5-coder:7b`
+- Reviewer provider: `heuristic`
+- Reviewer API URL: `https://api.openai.com/v1/chat/completions`
+- Reviewer model: `gpt-4o-mini`
+
+Backend defaults:
+
+- App title: `AI Provenance Backend`
+- App version: `0.1.0`
+- pgvector dimension: `256`
+- Neo4j URI: `bolt://127.0.0.1:7687`
+- Required scopes: `provenance:write provenance:read`
+- HTTP max body bytes: `2000000`
+- WebSocket max message bytes: `2000000`
+- Rate limiting enabled: `true`
+
+## 32. Known Limits and Current Gaps
+
+The current implementation is functional but not fully IDE-agent universal yet.
+
+Known limits:
+
+- VS Code is still the only implemented IDE shim.
+- The provider-agnostic core is represented as schema/types and storage payload, but capture/search/UI still live mostly inside the VS Code extension and backend service layers.
+- External plugin loading is not implemented; adapters are internal modules registered in code.
+- Manual import provenance is not implemented yet.
+- HTTPS CONNECT traffic is tunnel-only unless a separate trusted interception sidecar is added.
+- Backend lineage currently creates initial Neo4j lineage versions but does not yet perform full multi-version relationship evolution on ingest.
+- Backend tests focus on config/security/insights; backend ingest/search/Neo4j integration tests are not broad yet.
+- README currently summarizes the newer architecture but no full public docs set exists beyond this file and inline code.
+
+## 33. Practical Next Steps
+
+Best next implementation steps:
+
+1. Move core provenance construction into a VS Code-independent package/module boundary.
+2. Define a small shim interface for VS Code, JetBrains, Neovim, CLI, and manual import.
+3. Add a manual import command that accepts file diff plus optional prompt/session metadata.
+4. Add a contract test fixture per adapter covering normalized event, backend ingest payload, search result, and dashboard result.
+5. Add backend tests for ingest/search/explain/websocket with representative normalized events.
+6. Add an adapter plugin registry format with adapter versioning.
+7. Expose the compatibility matrix in UI or a command output, not just tests.
+8. Add migration/version handling for future `schemaVersion` values.
+
+## 34. One-Sentence Summary
+
+LineageLens currently captures AI-assisted code insertions in VS Code, correlates them with local LLM traffic when possible, normalizes them into a provider-agnostic provenance record, stores/searches/displays them locally or through a backend, and provides governance, risk, lineage, explanation, and review features while gracefully degrading for opaque tools.

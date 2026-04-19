@@ -4,9 +4,23 @@ import * as https from 'https';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import simpleGit from 'simple-git';
+import { buildInsightsDashboard } from '../insights';
+import {
+  LocalStorageLocation,
+  normalizeLocalStorageLocation,
+  resolveLocalStorageFilePath
+} from '../localStoragePath';
+import { pathsReferToSameFile } from '../pathUtils';
 import { normalizeAST, ProvenanceRecord } from '../provenance';
 import {
+  buildSearchText as buildLocalStoreSearchText,
+  createEmptyStore as createLocalStoreDocument,
+  sanitizeStoreDocument as sanitizeLocalStoreDocument
+} from './localStoreDocument';
+import {
   ExplanationResult,
+  InsightsDashboardPayload,
+  InsightsFilters,
   LineageUpdateResult,
   LoadedProvenancePayload,
   ProvenanceIngestResult,
@@ -16,14 +30,14 @@ import {
 } from './StorageService';
 
 const LOCAL_STORAGE_RELATIVE_PATH = path.join('.vscode', 'ai-provenance', 'records.json');
-const GLOBAL_STATE_KEY = 'aiInsertionDetector.localStorage.records.v1';
+const GLOBAL_STATE_KEY_PREFIX = 'aiInsertionDetector.localStorage.records.v1';
+const GLOBAL_STATE_KEY = GLOBAL_STATE_KEY_PREFIX; // fallback for no-workspace sessions
 const DEFAULT_LOCAL_STORAGE_LOCATION = 'globalState';
+const MAX_LOCAL_RECORDS = 2_000;
 const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434/api/generate';
 const DEFAULT_OLLAMA_MODEL = 'qwen2.5-coder:7b';
 const DEFAULT_OLLAMA_TIMEOUT_MS = 15_000;
 const MAX_SNIPPET_LENGTH = 700;
-
-type LocalStorageLocation = 'globalState' | 'workspaceFile';
 
 type LineageRelationshipType =
   | 'INITIAL'
@@ -70,11 +84,24 @@ type HttpResponse = {
 
 export class LocalStorageService implements ProvenanceStorageService {
   public readonly mode = 'local' as const;
+  private writeLock: Promise<void> = Promise.resolve();
 
   public constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly log: (message: string) => void
   ) {}
+
+  private getGlobalStateKey(resource?: vscode.Uri): string {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    const folder = resource
+      ? (vscode.workspace.getWorkspaceFolder(resource) ?? workspaceFolders?.[0])
+      : workspaceFolders?.[0];
+    if (folder) {
+      const hash = fnv1aHex(folder.uri.fsPath);
+      return GLOBAL_STATE_KEY_PREFIX + '.' + hash;
+    }
+    return GLOBAL_STATE_KEY;
+  }
 
   public async initialize(resource?: vscode.Uri): Promise<void> {
     await this.ensureStore(resource);
@@ -115,7 +142,7 @@ export class LocalStorageService implements ProvenanceStorageService {
       store.records[existingIndex] = {
         ...existing,
         record: normalizedRecord,
-        searchText: buildSearchText(normalizedRecord),
+        searchText: buildLocalStoreSearchText(normalizedRecord),
         updatedAtIso: nowIso
       };
     } else {
@@ -124,7 +151,7 @@ export class LocalStorageService implements ProvenanceStorageService {
       store.records.push({
         uuid,
         record: normalizedRecord,
-        searchText: buildSearchText(normalizedRecord),
+        searchText: buildLocalStoreSearchText(normalizedRecord),
         storedAtIso: nowIso,
         updatedAtIso: nowIso,
         lineage: {
@@ -135,6 +162,11 @@ export class LocalStorageService implements ProvenanceStorageService {
           updatedAtIso: nowIso
         }
       });
+    }
+
+    if (store.records.length > MAX_LOCAL_RECORDS) {
+      store.records.sort((a, b) => a.record.timestampIso.localeCompare(b.record.timestampIso));
+      store.records = store.records.slice(-MAX_LOCAL_RECORDS);
     }
 
     store.updatedAtIso = nowIso;
@@ -218,7 +250,7 @@ export class LocalStorageService implements ProvenanceStorageService {
     const normalizedModelFilter = filters.model.trim().toLowerCase();
     const dateFromEpoch = parseDateToEpoch(filters.dateFrom);
     const dateToEpoch = parseDateToEpoch(filters.dateTo);
-    const normalizedCurrentFilePath = normalizePath(filters.currentFilePath ?? '');
+    const currentFilePath = filters.currentFilePath ?? '';
 
     const candidateEntries: LocalRecordEntry[] = [];
 
@@ -237,9 +269,8 @@ export class LocalStorageService implements ProvenanceStorageService {
         continue;
       }
 
-      if (filters.currentFileOnly && normalizedCurrentFilePath.length > 0) {
-        const recordFilePath = normalizePath(entry.record.file.path);
-        if (recordFilePath !== normalizedCurrentFilePath) {
+      if (filters.currentFileOnly && currentFilePath.trim().length > 0) {
+        if (!pathsReferToSameFile(entry.record.file.path, currentFilePath)) {
           continue;
         }
       }
@@ -298,7 +329,18 @@ export class LocalStorageService implements ProvenanceStorageService {
       return left.uuid.localeCompare(right.uuid);
     });
 
-    return results;
+    const limit = Math.max(1, filters.limit ?? results.length);
+    return results.slice(0, limit);
+  }
+
+  public async getInsightsDashboard(
+    filters: InsightsFilters,
+    resource?: vscode.Uri
+  ): Promise<InsightsDashboardPayload> {
+    const store = await this.readStore(resource);
+    const records = store.records.map((entry) => cloneRecord(entry.record));
+
+    return buildInsightsDashboard(records, this.mode, filters, this.getModeWarnings());
   }
 
   public async updateLineageFromLatestCommit(resource?: vscode.Uri): Promise<LineageUpdateResult> {
@@ -378,11 +420,10 @@ export class LocalStorageService implements ProvenanceStorageService {
       : await git.show(['--name-only', '--pretty=format:', commitHash]);
 
     const changedFiles = parseChangedFileList(diffOutput)
-      .map((relativePath) => normalizePath(path.join(workspaceFolder.uri.fsPath, relativePath)))
       .filter((value) => value.length > 0);
 
-    const changedSet = new Set(changedFiles);
-    if (changedSet.size === 0) {
+    const uniqueChangedFiles = [...new Set(changedFiles.map((value) => value.replace(/\\/g, '/')))];
+    if (uniqueChangedFiles.length === 0) {
       return {
         mode: this.mode,
         commitHash,
@@ -394,7 +435,9 @@ export class LocalStorageService implements ProvenanceStorageService {
     }
 
     const grouped = groupByFile(
-      store.records.filter((entry) => changedSet.has(normalizePath(entry.record.file.path)))
+      store.records.filter((entry) =>
+        recordMatchesChangedFiles(entry.record.file.path, uniqueChangedFiles, workspaceFolder.uri.fsPath)
+      )
     );
 
     const nowIso = new Date().toISOString();
@@ -431,7 +474,7 @@ export class LocalStorageService implements ProvenanceStorageService {
       mode: this.mode,
       commitHash,
       parentCommitHash,
-      filesChanged: changedSet.size,
+      filesChanged: uniqueChangedFiles.length,
       recordsUpdated,
       message:
         'Local lineage refresh complete for commit ' +
@@ -540,9 +583,10 @@ export class LocalStorageService implements ProvenanceStorageService {
   private async ensureStore(resource?: vscode.Uri): Promise<void> {
     const storageFilePath = this.resolveStorageFilePath(resource);
     if (!storageFilePath) {
-      const existing = this.context.globalState.get<LocalStoreDocument>(GLOBAL_STATE_KEY);
+      const key = this.getGlobalStateKey(resource);
+      const existing = this.context.globalState.get<LocalStoreDocument>(key);
       if (!existing) {
-        await this.context.globalState.update(GLOBAL_STATE_KEY, createEmptyStore());
+        await this.context.globalState.update(key, createLocalStoreDocument());
       }
       return;
     }
@@ -552,7 +596,7 @@ export class LocalStorageService implements ProvenanceStorageService {
     try {
       await fs.stat(storageFilePath);
     } catch {
-      await fs.writeFile(storageFilePath, JSON.stringify(createEmptyStore(), null, 2), 'utf8');
+      await fs.writeFile(storageFilePath, JSON.stringify(createLocalStoreDocument(), null, 2), 'utf8');
     }
   }
 
@@ -560,8 +604,9 @@ export class LocalStorageService implements ProvenanceStorageService {
     const storageFilePath = this.resolveStorageFilePath(resource);
 
     if (!storageFilePath) {
-      const existing = this.context.globalState.get<LocalStoreDocument>(GLOBAL_STATE_KEY);
-      return sanitizeStoreDocument(existing);
+      const key = this.getGlobalStateKey(resource);
+      const existing = this.context.globalState.get<unknown>(key);
+      return migrateStoreDocument(sanitizeLocalStoreDocument(existing));
     }
 
     await this.ensureStore(resource);
@@ -569,19 +614,25 @@ export class LocalStorageService implements ProvenanceStorageService {
     try {
       const raw = await fs.readFile(storageFilePath, 'utf8');
       const parsed = safeJsonParse(raw);
-      return sanitizeStoreDocument(parsed);
+      return migrateStoreDocument(sanitizeLocalStoreDocument(parsed));
     } catch (error: unknown) {
       this.log('Failed to read local provenance store, using empty store: ' + toErrorMessage(error));
-      return createEmptyStore();
+      return createLocalStoreDocument();
     }
   }
 
   private async writeStore(resource: vscode.Uri | undefined, store: LocalStoreDocument): Promise<void> {
+    this.writeLock = this.writeLock.then(() => this.doWriteStore(resource, store));
+    return this.writeLock;
+  }
+
+  private async doWriteStore(resource: vscode.Uri | undefined, store: LocalStoreDocument): Promise<void> {
     const storageFilePath = this.resolveStorageFilePath(resource);
-    const normalizedStore = sanitizeStoreDocument(store);
+    const normalizedStore = sanitizeLocalStoreDocument(store);
 
     if (!storageFilePath) {
-      await this.context.globalState.update(GLOBAL_STATE_KEY, normalizedStore);
+      const key = this.getGlobalStateKey(resource);
+      await this.context.globalState.update(key, normalizedStore);
       return;
     }
 
@@ -590,27 +641,23 @@ export class LocalStorageService implements ProvenanceStorageService {
   }
 
   private resolveStorageFilePath(resource?: vscode.Uri): string | undefined {
-    if (this.getStorageLocation(resource) !== 'workspaceFile') {
-      return undefined;
-    }
-
+    const location = this.getStorageLocation(resource);
     const workspaceFolder = this.resolveWorkspaceFolder(resource);
-    if (!workspaceFolder) {
-      return undefined;
-    }
+    const config = vscode.workspace.getConfiguration('aiInsertionDetector', resource);
 
-    return path.join(workspaceFolder.uri.fsPath, LOCAL_STORAGE_RELATIVE_PATH);
+    return resolveLocalStorageFilePath({
+      location,
+      workspaceRoot: workspaceFolder?.uri.fsPath,
+      customFilePath: config.get<string>('local.storage.customFilePath', ''),
+      defaultWorkspaceRelativePath: LOCAL_STORAGE_RELATIVE_PATH
+    });
   }
 
   private getStorageLocation(resource?: vscode.Uri): LocalStorageLocation {
     const config = vscode.workspace.getConfiguration('aiInsertionDetector', resource);
-    const locationRaw =
-      config
-        .get<string>('local.storage.location', DEFAULT_LOCAL_STORAGE_LOCATION)
-        ?.trim()
-        .toLowerCase() ?? DEFAULT_LOCAL_STORAGE_LOCATION;
-
-    return locationRaw === 'workspacefile' ? 'workspaceFile' : 'globalState';
+    return normalizeLocalStorageLocation(
+      config.get<string>('local.storage.location', DEFAULT_LOCAL_STORAGE_LOCATION)
+    );
   }
 
   private resolveWorkspaceFolder(resource?: vscode.Uri): vscode.WorkspaceFolder | undefined {
@@ -882,6 +929,20 @@ function parseChangedFileList(diffOutput: string): string[] {
     .split(/\r\n|\r|\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
+}
+
+function recordMatchesChangedFiles(
+  recordFilePath: string,
+  changedRelativeFiles: readonly string[],
+  workspaceRoot: string
+): boolean {
+  return changedRelativeFiles.some((relativePath) => {
+    const absolutePath = path.join(workspaceRoot, relativePath);
+    return (
+      pathsReferToSameFile(recordFilePath, relativePath) ||
+      pathsReferToSameFile(recordFilePath, absolutePath)
+    );
+  });
 }
 
 function buildSearchText(record: ProvenanceRecord): string {
@@ -1222,4 +1283,21 @@ function toErrorMessage(error: unknown): string {
   } catch {
     return String(error);
   }
+}
+
+function fnv1aHex(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function migrateStoreDocument(store: LocalStoreDocument): LocalStoreDocument {
+  // v0 → v1: add missing schemaVersion field
+  if ((store as { schemaVersion?: unknown }).schemaVersion === undefined) {
+    return { ...store, schemaVersion: 1 };
+  }
+  return store;
 }

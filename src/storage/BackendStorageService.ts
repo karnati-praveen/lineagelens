@@ -6,6 +6,8 @@ import { BackendAuthSession } from '../backendAuth';
 import type { ProvenanceRecord } from '../provenance';
 import {
   ExplanationResult,
+  InsightsDashboardPayload,
+  InsightsFilters,
   LineageUpdateResult,
   LoadedProvenancePayload,
   ProvenanceIngestResult,
@@ -18,8 +20,10 @@ const CONFIG_SECTION = 'aiInsertionDetector';
 const DEFAULT_BACKEND_BASE_URL = 'http://127.0.0.1:8787';
 const DEFAULT_FALLBACK_PROXY_PORT = 8787;
 const DEFAULT_VECTOR_SEARCH_PATH = '/search';
+const DEFAULT_INSIGHTS_DASHBOARD_PATH = '/insights/dashboard';
 const REQUEST_TIMEOUT_MS = 12_000;
 const DEFAULT_LIMIT = 50;
+const API_VERSION = 'v1';
 
 type BackendResponse = {
   statusCode: number;
@@ -125,8 +129,8 @@ export class BackendStorageService implements ProvenanceStorageService {
         dateTo: filters.dateTo || undefined,
         filePath: currentFilePath
       },
-      limit: DEFAULT_LIMIT,
-      topK: DEFAULT_LIMIT
+      limit: Math.max(1, filters.limit ?? DEFAULT_LIMIT),
+      topK: Math.max(1, filters.limit ?? DEFAULT_LIMIT)
     };
 
     const primaryUrl = joinUrl(backendBaseUrl, vectorSearchPath);
@@ -165,6 +169,33 @@ export class BackendStorageService implements ProvenanceStorageService {
     throw new Error(
       'Vector similarity search failed at all configured endpoints: ' + attemptedUrls.join(', ')
     );
+  }
+
+  public async getInsightsDashboard(
+    filters: InsightsFilters,
+    resource?: vscode.Uri
+  ): Promise<InsightsDashboardPayload> {
+    const backendBaseUrl = this.getBackendBaseUrl(resource);
+    const dashboardUrl = joinUrl(backendBaseUrl, DEFAULT_INSIGHTS_DASHBOARD_PATH);
+    const response = await this.requestJson('POST', dashboardUrl, resource, {
+      dateFrom: filters.dateFrom || undefined,
+      dateTo: filters.dateTo || undefined,
+      currentFile: filters.currentFileOnly ? filters.currentFilePath || undefined : undefined,
+      filePath: filters.currentFileOnly ? filters.currentFilePath || undefined : undefined
+    });
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw new Error(
+        'Insights dashboard request failed with status ' + String(response.statusCode) + '.'
+      );
+    }
+
+    const parsed = parseJson(response.body);
+    if (!isRecord(parsed)) {
+      throw new Error('Insights dashboard response was not a JSON object.');
+    }
+
+    return parsed as InsightsDashboardPayload;
   }
 
   public async updateLineageFromLatestCommit(): Promise<LineageUpdateResult> {
@@ -272,7 +303,8 @@ export class BackendStorageService implements ProvenanceStorageService {
     const body = typeof payload === 'undefined' ? undefined : JSON.stringify(payload);
 
     const headers: Record<string, string> = {
-      Accept: 'application/json, text/plain;q=0.9,*/*;q=0.8'
+      Accept: 'application/json, text/plain;q=0.9,*/*;q=0.8',
+      'X-API-Version': API_VERSION
     };
 
     const authorizationHeader = await this.authSession.getAuthorizationHeader(resource, true);

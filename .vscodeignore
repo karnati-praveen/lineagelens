@@ -16,7 +16,17 @@ out/**
 # Workspace files not needed in the VSIX
 tsconfig.json
 docker-compose.yml
+docker-compose.team.yml
+docker-compose.enterprise.yml
 .gitignore
+.env.team.example
+.env.enterprise.example
+SHIP_PRODUCTS_COMMANDS.md
+file.md
+prafea
+releases/**
+scripts/**
+docs/shipping-modes.md
 
 # Exclude all node_modules by default, then allow required runtime native modules.
 node_modules/**
