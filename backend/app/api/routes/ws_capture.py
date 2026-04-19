@@ -3,15 +3,14 @@ import logging
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
-from pydantic import ValidationError
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.core.rate_limit import InMemoryRateLimiter, client_identifier
 from app.core.security import AuthError, authenticate_websocket, ensure_workspace_scope
 from app.db.session import AsyncSessionLocal
-from app.schemas.provenance import IngestRequest
+from app.services.ingest_normalizer import extract_workspace_id, normalize_ingest_payload
 from app.services.neo4j_service import Neo4jLineageService
 from app.services.provenance_service import ingest_provenance_event
 from app.services.websocket_manager import WebSocketConnectionManager
@@ -29,9 +28,9 @@ def get_ws_settings(websocket: WebSocket) -> Settings:
     return settings
 
 
-def get_ws_neo4j_service(websocket: WebSocket) -> Neo4jLineageService:
+def get_ws_neo4j_service(websocket: WebSocket) -> Neo4jLineageService | None:
     neo4j_service = getattr(websocket.app.state, "neo4j_service", None)
-    if not isinstance(neo4j_service, Neo4jLineageService):
+    if neo4j_service is not None and not isinstance(neo4j_service, Neo4jLineageService):
         raise RuntimeError("Neo4j service is not available for websocket capture route.")
     return neo4j_service
 
@@ -51,7 +50,7 @@ def get_ws_rate_limiter(websocket: WebSocket) -> InMemoryRateLimiter:
 async def ws_capture(
     websocket: WebSocket,
     settings: Annotated[Settings, Depends(get_ws_settings)],
-    neo4j_service: Annotated[Neo4jLineageService, Depends(get_ws_neo4j_service)],
+    neo4j_service: Annotated[Neo4jLineageService | None, Depends(get_ws_neo4j_service)],
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_ws_session_factory)],
     rate_limiter: Annotated[InMemoryRateLimiter, Depends(get_ws_rate_limiter)],
 ) -> None:
@@ -200,35 +199,34 @@ async def ws_capture(
                 continue
 
             try:
-                payload = IngestRequest.model_validate(raw_payload)
-            except ValidationError as error:
+                requested_workspace = extract_workspace_id(raw_payload)
+                ensure_workspace_scope(auth, requested_workspace)
+                payload = normalize_ingest_payload(raw_payload, workspace_id=auth.workspace_id)
+            except HTTPException as error:
+                logger.warning(
+                    "Workspace scope mismatch on websocket capture: workspace=%s payload_workspace=%s",
+                    auth.workspace_id,
+                    requested_workspace,
+                )
+                await send_error(
+                    websocket,
+                    error_message=str(error.detail),
+                    status_code=error.status_code,
+                )
+                continue
+            except ValueError as error:
                 logger.info("Invalid ingest payload received: %s", error)
                 await send_error(
                     websocket,
                     error_message="Invalid ingest payload.",
-                    details={"validation": error.errors()},
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                )
-                continue
-
-            try:
-                ensure_workspace_scope(auth, payload.workspace_id)
-            except Exception as error:
-                logger.warning(
-                    "Workspace scope mismatch on websocket capture: workspace=%s payload_workspace=%s",
-                    auth.workspace_id,
-                    payload.workspace_id,
-                )
-                await send_error(
-                    websocket,
-                    error_message=str(error),
-                    status_code=status.HTTP_403_FORBIDDEN,
+                    details={"validation": str(error)},
+                    status_code=status.HTTP_400_BAD_REQUEST,
                 )
                 continue
 
             try:
                 async with session_factory() as session:
-                    record = await ingest_provenance_event(
+                    outcome = await ingest_provenance_event(
                         session=session,
                         payload=payload,
                         auth=auth,
@@ -252,19 +250,20 @@ async def ws_capture(
             logger.info(
                 "WebSocket ingest stored: workspace=%s uuid=%s file=%s",
                 auth.workspace_id,
-                record.uuid,
-                record.file_path,
+                outcome.record.uuid,
+                outcome.record.file_path,
             )
 
             confirmation = {
                 "type": "capture.confirmed",
                 "workspaceId": auth.workspace_id,
-                "uuid": str(record.uuid),
-                "requestUuid": str(record.request_uuid) if record.request_uuid else None,
-                "filePath": record.file_path,
-                "timestampIso": record.timestamp_iso.isoformat(),
-                "lineageNodeId": record.lineage_node_id,
-                "embeddingModel": record.embedding_model,
+                "uuid": str(outcome.record.uuid),
+                "requestUuid": str(outcome.record.request_uuid) if outcome.record.request_uuid else None,
+                "filePath": outcome.record.file_path,
+                "timestampIso": outcome.record.timestamp_iso.isoformat(),
+                "lineageNodeId": outcome.record.lineage_node_id,
+                "embeddingModel": outcome.record.embedding_model,
+                "warnings": outcome.warnings,
                 "status": status.HTTP_201_CREATED,
             }
 

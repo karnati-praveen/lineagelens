@@ -58,6 +58,10 @@ services:
       neo4j:
         condition: service_healthy
     environment:
+      BACKEND_MODE: full
+      NEO4J_ENABLED: "true"
+      VECTOR_SEARCH_ENABLED: "true"
+      LINEAGE_STRICT_MODE: "false"
       APP_ENV: development
       APP_TITLE: AI Provenance Backend
       APP_VERSION: 0.1.0

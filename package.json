@@ -20,7 +20,7 @@
     "pgvector",
     "neo4j"
   ],
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "karnatipraveen",
   "icon": "media/icon.png",
   "repository": {
@@ -71,8 +71,24 @@
         "title": "AI Insertion Detector: Show Provenance"
       },
       {
+        "command": "aiInsertionDetector.showAgentAdapterDiagnostics",
+        "title": "AI Provenance: Show Adapter Diagnostics"
+      },
+      {
         "command": "aiInsertionDetector.openProvenanceSearch",
         "title": "AI Insertion Detector: Open Provenance Search"
+      },
+      {
+        "command": "aiInsertionDetector.openInsightsDashboard",
+        "title": "AI Provenance: Open Governance Dashboard"
+      },
+      {
+        "command": "aiInsertionDetector.reviewCurrentFile",
+        "title": "AI Provenance: Review Current File"
+      },
+      {
+        "command": "aiInsertionDetector.configureReviewerApiKey",
+        "title": "AI Provenance: Configure Reviewer API Key"
       },
       {
         "command": "aiInsertionDetector.backendLogin",
@@ -117,6 +133,11 @@
           "id": "aiInsertionDetector.provenanceSearchSidebar",
           "name": "AI Provenance Search",
           "icon": "media/icon.png"
+        },
+        {
+          "id": "aiInsertionDetector.insightsDashboard",
+          "name": "AI Governance Dashboard",
+          "icon": "media/icon.png"
         }
       ]
     },
@@ -132,7 +153,19 @@
           "command": "aiInsertionDetector.showProvenance"
         },
         {
+          "command": "aiInsertionDetector.showAgentAdapterDiagnostics"
+        },
+        {
           "command": "aiInsertionDetector.openProvenanceSearch"
+        },
+        {
+          "command": "aiInsertionDetector.openInsightsDashboard"
+        },
+        {
+          "command": "aiInsertionDetector.reviewCurrentFile"
+        },
+        {
+          "command": "aiInsertionDetector.configureReviewerApiKey"
         },
         {
           "command": "aiInsertionDetector.backendLogin"
@@ -196,7 +229,7 @@
         },
         "aiInsertionDetector.correlation.windowMs": {
           "type": "number",
-          "default": 15000,
+          "default": 30000,
           "minimum": 1000,
           "maximum": 120000,
           "description": "Maximum time gap (in milliseconds) allowed between an insertion and captured model response during prompt correlation."
@@ -221,10 +254,16 @@
           "type": "string",
           "enum": [
             "globalState",
-            "workspaceFile"
+            "workspaceFile",
+            "customFile"
           ],
           "default": "globalState",
-          "description": "Local mode storage location. globalState keeps records in VS Code user data; workspaceFile stores records in .vscode/ai-provenance/records.json."
+          "description": "Local mode storage location. globalState keeps records in VS Code user data; workspaceFile stores records in .vscode/ai-provenance/records.json; customFile stores records at local.storage.customFilePath."
+        },
+        "aiInsertionDetector.local.storage.customFilePath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom local JSON records file path used when local.storage.location is customFile. Supports absolute paths, relative workspace paths, ~, ${workspaceFolder}, and ${workspaceRoot}."
         },
         "aiInsertionDetector.backend.baseUrl": {
           "type": "string",
@@ -312,14 +351,42 @@
           "minimum": 2000,
           "maximum": 120000,
           "description": "Timeout in milliseconds for local Ollama explanation requests."
+        },
+        "aiInsertionDetector.reviewer.provider": {
+          "type": "string",
+          "enum": [
+            "heuristic",
+            "openai-compatible"
+          ],
+          "default": "heuristic",
+          "description": "Current-file reviewer mode: deterministic heuristic review or OpenAI-compatible LLM review."
+        },
+        "aiInsertionDetector.reviewer.apiUrl": {
+          "type": "string",
+          "default": "https://api.openai.com/v1/chat/completions",
+          "description": "OpenAI-compatible chat completions endpoint used by the current-file reviewer when reviewer.provider is openai-compatible."
+        },
+        "aiInsertionDetector.reviewer.model": {
+          "type": "string",
+          "default": "gpt-4o-mini",
+          "description": "Model name used by the current-file reviewer."
+        },
+        "aiInsertionDetector.reviewer.timeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 5000,
+          "maximum": 120000,
+          "description": "Timeout in milliseconds for reviewer API requests."
         }
       }
     }
   },
   "scripts": {
-    "typecheck": "tsc -p ./ --noEmit",
+    "typecheck": "tsc -p ./ --noEmit --strict",
     "bundle": "esbuild ./src/extension.ts --bundle --platform=node --format=cjs --target=node18 --outfile=dist/extension.js --external:vscode --external:tree-sitter --external:tree-sitter-javascript --external:tree-sitter-python --external:tree-sitter-typescript",
     "lint": "npm run typecheck",
+    "pretest": "npm run typecheck",
+    "ci": "npm run typecheck && npm run lint && npm run bundle",
     "compile": "npm run typecheck && npm run bundle",
     "test": "tsx --test src/test/**/*.test.ts",
     "watch": "tsc -watch -p ./ --noEmit",
@@ -329,6 +396,9 @@
     "package:win32-x64": "npm run compile && npx @vscode/vsce package --target win32-x64",
     "package:linux-x64": "npm run compile && npx @vscode/vsce package --target linux-x64",
     "package:darwin-arm64": "npm run compile && npx @vscode/vsce package --target darwin-arm64",
+    "ship:solo": "powershell -ExecutionPolicy Bypass -File ./scripts/package-solo.ps1",
+    "ship:team": "powershell -ExecutionPolicy Bypass -File ./scripts/package-team.ps1",
+    "ship:enterprise": "powershell -ExecutionPolicy Bypass -File ./scripts/package-enterprise.ps1",
     "publish": "npx @vscode/vsce publish",
     "publish:patch": "npx @vscode/vsce publish patch",
     "publish:minor": "npx @vscode/vsce publish minor",

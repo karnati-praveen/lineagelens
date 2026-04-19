@@ -1,6 +1,8 @@
 import * as path from 'path';
 import type { PromptCorrelationResult } from './correlation';
 import type { ContextSnapshot } from './contextSnapshot';
+import type { ProviderAgnosticProvenanceEvent } from './eventSchema';
+import type { NormalizedAgentContext } from './agentAdapters';
 
 type SupportedParserLanguage = 'javascript' | 'typescript' | 'tsx' | 'python';
 
@@ -97,6 +99,7 @@ export type ProvenanceAstSnapshot = {
 };
 
 export interface ProvenanceRecord {
+  schemaVersion: string;
   uuid: string;
   requestUuid: string | null;
   timestampIso: string;
@@ -129,6 +132,13 @@ export interface ProvenanceRecord {
     gitBranch: string | null;
   };
   contextSnapshot: ContextSnapshot | null;
+  normalizedEvent: ProviderAgnosticProvenanceEvent;
+  rawData: {
+    detectionPayload: Record<string, unknown>;
+    proxyRequest: unknown;
+    proxyResponse: unknown;
+    extensions?: Record<string, unknown>;
+  };
   embeddings: ProvenanceEmbeddingBundle;
   astSnapshot: ProvenanceAstSnapshot;
   correlation: PromptCorrelationResult;
@@ -137,6 +147,10 @@ export interface ProvenanceRecord {
     correlationWindowMs: number;
     timingDifferenceMs: number | null;
     featureVersion: string;
+    captureStatus?: 'full' | 'metadata_only' | 'tunnel_only' | 'hook' | 'unavailable';
+    proxyCapture?: Record<string, unknown> | null;
+    agentContext?: NormalizedAgentContext | null;
+    agentDiagnostics?: Record<string, unknown> | null;
     [key: string]: unknown;
   };
 }
@@ -159,16 +173,23 @@ export function normalizeAST(code: string, language?: string): string[] {
     const tree = parser.parse(sourceCode);
     const rootNode = tree?.rootNode;
     if (!rootNode) {
-      return [];
+      return astTokenFallback(sourceCode);
     }
 
     const normalizedNodeTypes: string[] = [];
     traverseTreeForNodeTypes(rootNode, normalizedNodeTypes);
 
-    return normalizedNodeTypes;
+    return normalizedNodeTypes.length > 0 ? normalizedNodeTypes : astTokenFallback(sourceCode);
   } catch {
-    return [];
+    return astTokenFallback(sourceCode);
   }
+}
+
+function astTokenFallback(code: string): string[] {
+  const keywords = code.match(
+    /\b(function|class|const|let|var|if|else|for|while|return|import|export|async|await|try|catch|def|self|type|interface|enum|switch|case|break|continue|new|this|super|yield|from|with|pass|raise|lambda)\b/g
+  ) ?? [];
+  return [...new Set(keywords)];
 }
 
 function loadParserConstructor(): new () => TreeSitterParser {

@@ -1,42 +1,68 @@
 import * as path from 'path';
-import { LocalLlmProxyRuntime, RequestResponsePair } from './proxy';
+import type { CaptureStatus, LocalLlmProxyRuntime, RequestResponsePair } from './proxy';
+import type { StoredHookEvent } from './hookListener';
+import { extractHookEventContent, extractHookEventFilePath } from './hookListener';
 
-const DEFAULT_CORRELATION_WINDOW_MS = 15_000;
+const DEFAULT_CORRELATION_WINDOW_MS = 30_000;
 const DEFAULT_SIMILARITY_THRESHOLD = 0.7;
-const AMBIGUOUS_TIMING_DELTA_MS = 250;
+const AMBIGUOUS_TIMING_DELTA_MS = 500;
 const MAX_SIMILARITY_INPUT_LENGTH = 4_000;
 const REQUEST_CLAIM_RETENTION_MS = 5 * 60_000;
+const MAX_CLAIMED_PROMPT_REQUEST_IDS = 1_024;
+const SAFE_CORRELATION_HEADER_KEYS = new Set([
+  'accept',
+  'content-type',
+  'user-agent',
+  'x-client-name',
+  'x-request-id'
+]);
 
 const claimedPromptRequestIds = new Map<string, number>();
+type CapturedCorrelationStatus = Extract<
+  CaptureStatus,
+  'full' | 'metadata_only' | 'tunnel_only' | 'hook'
+>;
+
+export function resetCorrelationState(): void {
+  claimedPromptRequestIds.clear();
+}
 
 export type PromptCorrelationResult =
   | {
       promptStatus: 'captured';
+      captureStatus: CapturedCorrelationStatus;
       requestUuid: string;
       timingDifferenceMs: number;
       correlationWindowMs: number;
-        similarityThreshold: number;
-        correlationConfidence: number;
+      similarityThreshold: number;
+      correlationConfidence: number;
       fileContextMatched: boolean;
       matchedFileContextTokens: string[];
-        contentSimilarityApplied: boolean;
-        ambiguityResolvedByContent: boolean;
-        contentSimilarityScore: number | null;
+      contentSimilarityApplied: boolean;
+      ambiguityResolvedByContent: boolean;
+      contentSimilarityScore: number | null;
       proxyResponseTimestampIso: string;
       proxyRequestTimestampIso: string;
       fullPromptMessages: unknown;
       modelName: unknown;
       parameters: Record<string, unknown> | undefined;
+      targetHost: string | null;
+      requestHeaders: Record<string, string | string[]> | null;
+      systemPrompt: unknown;
       rawModelResponse: string;
       rawModelResponseBase64: string;
+      captureEvidence: CaptureEvidence | null;
     }
   | {
       promptStatus: 'not-captured';
+      captureStatus: CaptureStatus;
       reason:
         | 'local-proxy-unavailable'
         | 'invalid-insertion-timestamp'
         | 'no-proxy-response-within-window'
-        | 'prompt-already-associated';
+        | 'prompt-already-associated'
+        | 'metadata-only-capture'
+        | 'tunnel-only-capture';
       requestUuid: null;
       timingDifferenceMs: null;
       correlationWindowMs: number;
@@ -52,15 +78,31 @@ export type PromptCorrelationResult =
       fullPromptMessages: null;
       modelName: null;
       parameters: null;
+      targetHost: null;
+      requestHeaders: null;
+      systemPrompt: null;
       rawModelResponse: null;
       rawModelResponseBase64: null;
+      captureEvidence: CaptureEvidence | null;
     };
+
+export type CaptureEvidence = {
+  requestId: string | null;
+  targetHost: string | null;
+  targetPort: number | null;
+  userAgent: string | null;
+  captureStatus: CaptureStatus;
+  tunnelDurationMs: number | null;
+  captureReason: string | null;
+};
 
 type NotCapturedReason =
   | 'local-proxy-unavailable'
   | 'invalid-insertion-timestamp'
   | 'no-proxy-response-within-window'
-  | 'prompt-already-associated';
+  | 'prompt-already-associated'
+  | 'metadata-only-capture'
+  | 'tunnel-only-capture';
 
 type CorrelationInput = {
   insertionTimestampIso: string;
@@ -77,6 +119,7 @@ type CorrelationCandidate = {
   fileContextMatched: boolean;
   matchedFileContextTokens: string[];
   responseTimestampMs: number;
+  captureStatus: CapturedCorrelationStatus;
   contentSimilarityScore: number | null;
   contentSimilarityQualified: boolean;
 };
@@ -112,7 +155,7 @@ export async function correlateInsertionWithProxyRequest(
   });
 
   const availableCandidates = allWindowCandidates.filter(
-    (candidate) => !claimedPromptRequestIds.has(candidate.pair.request.id)
+    (candidate) => !isClaimedPromptRequestId(candidate.pair.request.id)
   );
 
   if (availableCandidates.length === 0) {
@@ -140,6 +183,9 @@ export async function correlateInsertionWithProxyRequest(
       const similarityScore = calculateLevenshteinSimilarity(responseBody, insertedCode);
       candidate.contentSimilarityScore = similarityScore;
       candidate.contentSimilarityQualified = similarityScore >= similarityThreshold;
+      if (candidate.contentSimilarityQualified && similarityScore >= 0.95) {
+        break;
+      }
     }
 
     const hasQualifiedCandidate = availableCandidates.some(
@@ -172,13 +218,15 @@ export async function correlateInsertionWithProxyRequest(
     contentSimilarityApplied,
     ambiguityResolvedByContent,
     contentSimilarityScore: bestCandidate.contentSimilarityScore,
-    similarityThreshold
+    similarityThreshold,
+    captureStatus: bestCandidate.captureStatus
   });
 
-  claimedPromptRequestIds.set(bestCandidate.pair.request.id, Date.now());
+  rememberClaimedPromptRequestId(bestCandidate.pair.request.id);
 
   return {
     promptStatus: 'captured',
+    captureStatus: bestCandidate.captureStatus,
     requestUuid: bestCandidate.pair.request.id,
     timingDifferenceMs: bestCandidate.timingDifferenceMs,
     correlationWindowMs,
@@ -189,13 +237,20 @@ export async function correlateInsertionWithProxyRequest(
     contentSimilarityApplied,
     ambiguityResolvedByContent,
     contentSimilarityScore: bestCandidate.contentSimilarityScore,
-    proxyResponseTimestampIso: bestCandidate.pair.response?.timestampIso ?? new Date(0).toISOString(),
+    proxyResponseTimestampIso:
+      bestCandidate.pair.response?.timestampIso ??
+      bestCandidate.pair.request.tunnelMetadata?.endedAtIso ??
+      bestCandidate.pair.request.timestampIso,
     proxyRequestTimestampIso: bestCandidate.pair.request.timestampIso,
     fullPromptMessages: bestCandidate.pair.request.messages,
     modelName: bestCandidate.pair.request.model,
     parameters: bestCandidate.pair.request.parameters,
+    targetHost: bestCandidate.pair.request.targetHost,
+    requestHeaders: sanitizeCorrelationRequestHeaders(bestCandidate.pair.request.headers),
+    systemPrompt: bestCandidate.pair.request.systemPrompt,
     rawModelResponse: bestCandidate.pair.response?.rawBodyUtf8 ?? '',
-    rawModelResponseBase64: bestCandidate.pair.response?.rawBodyBase64 ?? ''
+    rawModelResponseBase64: bestCandidate.pair.response?.rawBodyBase64 ?? '',
+    captureEvidence: buildCaptureEvidence(bestCandidate)
   };
 }
 
@@ -208,11 +263,15 @@ function collectCandidates(input: {
   const candidates: CorrelationCandidate[] = [];
 
   for (const pair of input.pairs) {
-    if (!pair.response) {
+    if (pair.request.captureStatus === 'unavailable') {
       continue;
     }
 
-    const responseTimestampMs = Date.parse(pair.response.timestampIso);
+    const responseTimestampSource =
+      pair.response?.timestampIso ??
+      pair.request.tunnelMetadata?.endedAtIso ??
+      pair.request.timestampIso;
+    const responseTimestampMs = Date.parse(responseTimestampSource);
     if (Number.isNaN(responseTimestampMs)) {
       continue;
     }
@@ -230,6 +289,7 @@ function collectCandidates(input: {
       fileContextMatched: fileContext.fileContextMatched,
       matchedFileContextTokens: fileContext.matchedFileContextTokens,
       responseTimestampMs,
+      captureStatus: pair.request.captureStatus,
       contentSimilarityScore: null,
       contentSimilarityQualified: false
     });
@@ -263,11 +323,37 @@ function compareCandidatesBaseline(
     return left.fileContextMatched ? -1 : 1;
   }
 
+  const leftPriority = captureStatusPriority(left.captureStatus);
+  const rightPriority = captureStatusPriority(right.captureStatus);
+  if (leftPriority !== rightPriority) {
+    return rightPriority - leftPriority;
+  }
+
   if (left.timingDifferenceMs !== right.timingDifferenceMs) {
     return left.timingDifferenceMs - right.timingDifferenceMs;
   }
 
   return right.responseTimestampMs - left.responseTimestampMs;
+}
+
+function captureStatusPriority(status: CaptureStatus): number {
+  if (status === 'full') {
+    return 3;
+  }
+
+  if (status === 'hook') {
+    return 2.5;
+  }
+
+  if (status === 'metadata_only') {
+    return 2;
+  }
+
+  if (status === 'tunnel_only') {
+    return 1;
+  }
+
+  return 0;
 }
 
 function clampSimilarityThreshold(value: number): number {
@@ -286,6 +372,7 @@ function computeCorrelationConfidence(input: {
   ambiguityResolvedByContent: boolean;
   contentSimilarityScore: number | null;
   similarityThreshold: number;
+  captureStatus: CaptureStatus;
 }): number {
   const timingRatio =
     input.correlationWindowMs > 0
@@ -308,7 +395,99 @@ function computeCorrelationConfidence(input: {
     confidence = Math.min(1, Math.max(confidence, confidence + 0.1 + normalizedSimilarityBoost * 0.2));
   }
 
-  return Number(confidence.toFixed(4));
+  const captureMultiplier =
+    input.captureStatus === 'full'
+      ? 1
+      : input.captureStatus === 'hook'
+        ? 0.9
+      : input.captureStatus === 'metadata_only'
+        ? 0.78
+        : input.captureStatus === 'tunnel_only'
+          ? 0.62
+          : 0.35;
+
+  return Number((confidence * captureMultiplier).toFixed(4));
+}
+
+export type HookCorrelationInput = {
+  insertionTimestampIso: string;
+  filePath: string;
+  hookEvents: StoredHookEvent[];
+  correlationWindowMs?: number;
+};
+
+export function correlateInsertionWithHookEvents(
+  input: HookCorrelationInput
+): PromptCorrelationResult {
+  const correlationWindowMs =
+    input.correlationWindowMs && input.correlationWindowMs > 0
+      ? input.correlationWindowMs
+      : DEFAULT_CORRELATION_WINDOW_MS;
+
+  const insertionMs = new Date(input.insertionTimestampIso).getTime();
+  if (isNaN(insertionMs)) {
+    return buildNotCapturedResult('invalid-insertion-timestamp', correlationWindowMs, DEFAULT_SIMILARITY_THRESHOLD);
+  }
+
+  const normalizedInsertionPath = input.filePath.replace(/\\/g, '/').toLowerCase();
+
+  const candidates = input.hookEvents.filter((event) => {
+    const eventPath = extractHookEventFilePath(event).replace(/\\/g, '/').toLowerCase();
+    if (!eventPath || !normalizedInsertionPath.endsWith(eventPath) && !eventPath.endsWith(normalizedInsertionPath)) {
+      return false;
+    }
+    const timingDiff = insertionMs - event.capturedAtMs;
+    return timingDiff >= 0 && timingDiff <= correlationWindowMs;
+  });
+
+  if (candidates.length === 0) {
+    return buildNotCapturedResult('no-proxy-response-within-window', correlationWindowMs, DEFAULT_SIMILARITY_THRESHOLD);
+  }
+
+  // Pick the most recent matching event within the window
+  const best = candidates.reduce((prev, curr) =>
+    curr.capturedAtMs > prev.capturedAtMs ? curr : prev
+  );
+
+  const timingDifferenceMs = insertionMs - best.capturedAtMs;
+  const content = extractHookEventContent(best);
+  const requestUuid = (best.session_id ?? '') || ('hook-' + best.capturedAtMs.toString(16));
+
+  const captureEvidence: CaptureEvidence = {
+    requestId: requestUuid,
+    targetHost: 'cli',
+    targetPort: null,
+    userAgent: 'claude-code',
+    captureStatus: 'hook',
+    tunnelDurationMs: null,
+    captureReason: 'claude-code-hook'
+  };
+
+  return {
+    promptStatus: 'captured',
+    captureStatus: 'hook',
+    requestUuid,
+    timingDifferenceMs,
+    correlationWindowMs,
+    similarityThreshold: DEFAULT_SIMILARITY_THRESHOLD,
+    correlationConfidence: timingDifferenceMs < 5_000 ? 0.85 : 0.7,
+    fileContextMatched: true,
+    matchedFileContextTokens: [normalizedInsertionPath],
+    contentSimilarityApplied: false,
+    ambiguityResolvedByContent: false,
+    contentSimilarityScore: null,
+    proxyResponseTimestampIso: best.capturedAtIso,
+    proxyRequestTimestampIso: best.capturedAtIso,
+    fullPromptMessages: null,
+    modelName: null,
+    parameters: undefined,
+    targetHost: 'cli',
+    requestHeaders: null,
+    systemPrompt: null,
+    rawModelResponse: content,
+    rawModelResponseBase64: '',
+    captureEvidence
+  };
 }
 
 export function calculateLevenshteinSimilarity(
@@ -416,7 +595,7 @@ function matchFileContextTokens(
   const matchedFileContextTokens: string[] = [];
 
   for (const token of fileContextTokens) {
-    if (normalizedBlob.includes(token)) {
+    if (tokenAppearsInText(normalizedBlob, token)) {
       matchedFileContextTokens.push(token);
     }
   }
@@ -466,6 +645,15 @@ function pruneClaimedPromptRequestIds(): void {
       claimedPromptRequestIds.delete(requestId);
     }
   }
+
+  while (claimedPromptRequestIds.size > MAX_CLAIMED_PROMPT_REQUEST_IDS) {
+    const oldestRequestId = claimedPromptRequestIds.keys().next().value;
+    if (typeof oldestRequestId !== 'string') {
+      break;
+    }
+
+    claimedPromptRequestIds.delete(oldestRequestId);
+  }
 }
 
 function stringifyUnknown(value: unknown): string {
@@ -491,10 +679,13 @@ function stringifyUnknown(value: unknown): string {
 function buildNotCapturedResult(
   reason: NotCapturedReason,
   correlationWindowMs: number,
-  similarityThreshold: number
+  similarityThreshold: number,
+  captureStatus: CaptureStatus = 'unavailable',
+  captureEvidence: CaptureEvidence | null = null
 ): PromptCorrelationResult {
   return {
     promptStatus: 'not-captured',
+    captureStatus,
     reason,
     requestUuid: null,
     timingDifferenceMs: null,
@@ -511,7 +702,74 @@ function buildNotCapturedResult(
     fullPromptMessages: null,
     modelName: null,
     parameters: null,
+    targetHost: null,
+    requestHeaders: null,
+    systemPrompt: null,
     rawModelResponse: null,
-    rawModelResponseBase64: null
+    rawModelResponseBase64: null,
+    captureEvidence
+  };
+}
+
+function isClaimedPromptRequestId(requestId: string): boolean {
+  const claimedAtMs = claimedPromptRequestIds.get(requestId);
+  if (typeof claimedAtMs !== 'number') {
+    return false;
+  }
+
+  claimedPromptRequestIds.delete(requestId);
+  claimedPromptRequestIds.set(requestId, claimedAtMs);
+  return true;
+}
+
+function sanitizeCorrelationRequestHeaders(
+  headers: Record<string, string | string[]> | null
+): Record<string, string | string[]> | null {
+  if (!headers) {
+    return null;
+  }
+
+  const sanitized: Record<string, string | string[]> = {};
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (!SAFE_CORRELATION_HEADER_KEYS.has(key.toLowerCase())) {
+      continue;
+    }
+
+    sanitized[key] = Array.isArray(value) ? value.map((item) => String(item)) : String(value);
+  }
+
+  return Object.keys(sanitized).length > 0 ? sanitized : null;
+}
+
+function rememberClaimedPromptRequestId(requestId: string): void {
+  claimedPromptRequestIds.delete(requestId);
+  claimedPromptRequestIds.set(requestId, Date.now());
+  pruneClaimedPromptRequestIds();
+}
+
+function tokenAppearsInText(text: string, token: string): boolean {
+  if (!token || token.trim().length === 0) {
+    return false;
+  }
+
+  const escapedToken = escapeRegExp(token);
+  const pattern = new RegExp('(^|[^A-Za-z0-9_])' + escapedToken + '(?=$|[^A-Za-z0-9_])');
+  return pattern.test(text);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildCaptureEvidence(candidate: CorrelationCandidate): CaptureEvidence {
+  return {
+    requestId: candidate.pair.request.id,
+    targetHost: candidate.pair.request.targetHost ?? null,
+    targetPort: candidate.pair.request.targetPort ?? null,
+    userAgent: candidate.pair.request.requestMetadata?.userAgent ?? null,
+    captureStatus: candidate.captureStatus,
+    tunnelDurationMs: candidate.pair.request.tunnelMetadata?.durationMs ?? null,
+    captureReason: candidate.pair.request.captureReason ?? null
   };
 }

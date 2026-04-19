@@ -34,6 +34,7 @@ export type ProvenanceSearchFilters = {
   dateTo: string;
   currentFileOnly: boolean;
   currentFilePath?: string;
+  limit?: number;
 };
 
 export type ProvenanceSearchResultItem = {
@@ -55,6 +56,106 @@ export type LineageUpdateResult = {
   message: string;
 };
 
+export type InsightsFilters = {
+  dateFrom: string;
+  dateTo: string;
+  currentFileOnly: boolean;
+  currentFilePath?: string;
+};
+
+export type ComplianceControlStatus = {
+  id: string;
+  title: string;
+  status: 'pass' | 'warning' | 'fail';
+  summary: string;
+  metric: string;
+};
+
+export type DashboardRecordPreview = {
+  uuid: string;
+  filePath: string;
+  timestampIso: string;
+  model: string | null;
+  promptStatus: 'captured' | 'not-captured';
+  riskScore: number;
+  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  summary: string;
+  toolName: string | null;
+  provider: string | null;
+  adapterName: string | null;
+  adapterConfidence: number | null;
+  captureStatus: string | null;
+};
+
+export type DashboardFileHotspot = {
+  filePath: string;
+  recordCount: number;
+  highRiskCount: number;
+  avgRiskScore: number;
+  latestTimestampIso: string | null;
+};
+
+export type DashboardModelMetric = {
+  model: string;
+  recordCount: number;
+  promptCaptureRate: number;
+  avgRiskScore: number;
+  highRiskCount: number;
+};
+
+export type DashboardTrendPoint = {
+  bucketLabel: string;
+  recordCount: number;
+  highRiskCount: number;
+  avgRiskScore: number;
+  promptCaptureRate: number;
+};
+
+export type AgentSessionSummary = {
+  sessionId: string;
+  conversationId: string | null;
+  runId: string | null;
+  toolName: string | null;
+  provider: string | null;
+  modelName: string | null;
+  adapterName: string | null;
+  adapterConfidence: number | null;
+  sessionKind: 'agentic' | 'assistant' | 'cli' | 'unknown';
+  startedAtIso: string;
+  endedAtIso: string;
+  recordCount: number;
+  highRiskCount: number;
+  promptCaptureRate: number;
+  totalNetAddedLines: number;
+  files: string[];
+  evidence: string[];
+};
+
+export type InsightsDashboardPayload = {
+  mode: ProvenanceMode;
+  generatedAtIso: string;
+  summary: {
+    totalRecords: number;
+    promptCapturedRecords: number;
+    promptCaptureRate: number;
+    avgRiskScore: number;
+    highRiskRecords: number;
+    criticalRecords: number;
+    uniqueFiles: number;
+    uniqueModels: number;
+    uniqueAgentSessions: number;
+    agenticRecords: number;
+    totalNetAddedLines: number;
+  };
+  complianceControls: ComplianceControlStatus[];
+  highRiskRecords: DashboardRecordPreview[];
+  hotspots: DashboardFileHotspot[];
+  modelAnalytics: DashboardModelMetric[];
+  riskTrends: DashboardTrendPoint[];
+  agentSessions: AgentSessionSummary[];
+  warnings: string[];
+};
+
 export interface ProvenanceStorageService extends vscode.Disposable {
   readonly mode: ProvenanceMode;
 
@@ -74,6 +175,10 @@ export interface ProvenanceStorageService extends vscode.Disposable {
     filters: ProvenanceSearchFilters,
     resource?: vscode.Uri
   ): Promise<ProvenanceSearchResultItem[]>;
+  getInsightsDashboard(
+    filters: InsightsFilters,
+    resource?: vscode.Uri
+  ): Promise<InsightsDashboardPayload>;
 
   updateLineageFromLatestCommit(resource?: vscode.Uri): Promise<LineageUpdateResult>;
   getModeWarnings(): string[];

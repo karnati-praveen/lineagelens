@@ -1,4 +1,3 @@
-import uuid
 from datetime import datetime
 
 from neo4j import AsyncGraphDatabase
@@ -38,7 +37,7 @@ class Neo4jLineageService:
         timestamp: datetime,
     ) -> str:
         block_id = record_uuid
-        version_id = str(uuid.uuid4())
+        version_id = record_uuid
 
         query = """
         MERGE (b:AIGeneratedBlock {blockId: $blockId})
