@@ -23,6 +23,7 @@ class ProvenanceRecord(Base):
         nullable=False,
     )
     workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    user_id: Mapped[uuid_pkg.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
 
     request_uuid: Mapped[uuid_pkg.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
@@ -79,6 +80,7 @@ class UserAccount(Base):
     username: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
     workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="member")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(

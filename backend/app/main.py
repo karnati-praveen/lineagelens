@@ -12,6 +12,7 @@ from app.api.routes.provenance import router as provenance_router
 from app.api.routes.search import router as search_router
 from app.api.routes.explain import router as explain_router
 from app.api.routes.insights import router as insights_router
+from app.api.routes.team import router as team_router
 from app.api.routes.ws_capture import router as ws_capture_router
 from app.core.config import Settings, get_settings
 from app.core.rate_limit import InMemoryRateLimiter, client_identifier
@@ -173,6 +174,7 @@ app.include_router(provenance_router)
 app.include_router(search_router)
 app.include_router(explain_router)
 app.include_router(insights_router)
+app.include_router(team_router)
 app.include_router(ws_capture_router)
 
 

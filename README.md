@@ -20,7 +20,8 @@ Simple team sharing without complexity.
 - Connects to your FastAPI backend for shared/team workflows.
 - Enables backend ingest, auth, search, and shared provenance storage.
 - Runs without Neo4j or vector search.
-- Use `docker-compose.team.yml` plus `.env.team.example` when shipping it separately.
+- Docker is optional. Use the native Python path in [docs/native-backend.md](docs/native-backend.md) if you do not want Docker Desktop.
+- Use `deploy/docker-compose.team.yml` plus `deploy/.env.team.example` when shipping it separately.
 
 ### Enterprise Mode (`backend full`)
 
@@ -29,7 +30,8 @@ Complete provenance intelligence and auditability.
 - Enables backend ingest, auth, search, and lineage graph capabilities.
 - Uses Neo4j lineage and vector search.
 - Best for the complete production setup.
-- Use `docker-compose.enterprise.yml` plus `.env.enterprise.example` when shipping it separately.
+- Docker is optional. Use the native Python path in [docs/native-backend.md](docs/native-backend.md) if you want to run the backend without Docker Desktop.
+- Use `deploy/docker-compose.enterprise.yml` plus `deploy/.env.enterprise.example` when shipping it separately.
 
 See [docs/lightweight-adapters.md](docs/lightweight-adapters.md) for the lightweight adapter contract.
 See [docs/shipping-modes.md](docs/shipping-modes.md) for the release layout and [SHIP_PRODUCTS_COMMANDS.md](SHIP_PRODUCTS_COMMANDS.md) for exact ship commands.
@@ -41,6 +43,15 @@ See [docs/shipping-modes.md](docs/shipping-modes.md) for the release layout and 
 3. Run `AI Provenance: Switch to Backend Mode`.
 4. Run `AI Insertion Detector: Backend Login` and authenticate.
 5. Optional: set backend endpoints in Settings if different from defaults.
+
+## Native Python Backend (No Docker Desktop)
+
+If you want Team or Enterprise mode without Docker Desktop, run the backend in your local Python environment and point it at a PostgreSQL instance you already have.
+
+- Team mode needs PostgreSQL only.
+- Enterprise mode needs PostgreSQL plus Neo4j.
+- Use [docs/native-backend.md](docs/native-backend.md) for the full setup and the PowerShell launch scripts.
+- The native test command is `npm run native:test`.
 
 ### Settings JSON Example
 
@@ -124,3 +135,9 @@ Mode-specific release helpers:
 - `npm run ship:solo`
 - `npm run ship:team`
 - `npm run ship:enterprise`
+
+Native backend helpers:
+
+- `npm run native:team`
+- `npm run native:enterprise`
+- `npm run native:test`

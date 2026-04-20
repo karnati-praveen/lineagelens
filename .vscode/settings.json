@@ -55,5 +55,8 @@
   "C_Cpp_Runner.useLeakSanitizer": false,
   "C_Cpp_Runner.showCompilationTime": false,
   "C_Cpp_Runner.useLinkTimeOptimization": false,
-  "C_Cpp_Runner.msvcSecureNoWarnings": false
+  "C_Cpp_Runner.msvcSecureNoWarnings": false,
+  "aiCodeProvenance.mode": "backend",
+  "aiInsertionDetector.backend.baseUrl": "http://127.0.0.1:8787",
+  "aiInsertionDetector.backend.websocketUrl": "ws://127.0.0.1:8787/ws/capture"
 }

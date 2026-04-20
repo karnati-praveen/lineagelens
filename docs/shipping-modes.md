@@ -21,9 +21,12 @@ Artifact target:
 
 Artifacts:
 
-- `lineagelens-team-<version>.vsix`
-- `docker-compose.team.yml`
-- `.env.team.example`
+- `lineagelens-team-<version>.zip`
+- `deploy/docker-compose.team.yml`
+- `deploy/.env.team.example`
+- `docs/native-backend.md`
+- `scripts/run-backend-native.ps1`
+- `scripts/test-backend-native.ps1`
 
 ## Enterprise
 
@@ -32,9 +35,12 @@ Artifacts:
 
 Artifacts:
 
-- `lineagelens-enterprise-<version>.vsix`
-- `docker-compose.enterprise.yml`
-- `.env.enterprise.example`
+- `lineagelens-enterprise-<version>.zip`
+- `deploy/docker-compose.enterprise.yml`
+- `deploy/.env.enterprise.example`
+- `docs/native-backend.md`
+- `scripts/run-backend-native.ps1`
+- `scripts/test-backend-native.ps1`
 
 ## Release Helpers
 

@@ -86,7 +86,14 @@ class Settings(BaseSettings):
     rate_limit_ws_max_connections: int = Field(default=30, alias="RATE_LIMIT_WS_MAX_CONNECTIONS")
     rate_limit_max_tracked_keys: int = Field(default=50000, alias="RATE_LIMIT_MAX_TRACKED_KEYS")
 
-    embedding_model_name: str = "deterministic-hash-v1"
+    embedding_provider: str = Field(default="hash", alias="EMBEDDING_PROVIDER")
+    embedding_api_url: str = Field(
+        default="https://api.openai.com/v1/embeddings", alias="EMBEDDING_API_URL"
+    )
+    embedding_api_key: str | None = Field(default=None, alias="EMBEDDING_API_KEY")
+    embedding_model_name: str = Field(
+        default="text-embedding-3-small", alias="EMBEDDING_MODEL_NAME"
+    )
     search_default_limit: int = 20
 
     explain_llm_api_url: str = Field(

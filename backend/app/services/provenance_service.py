@@ -87,15 +87,21 @@ async def ingest_provenance_event(
     ast_snapshot.setdefault("normalizedTokenCount", len(ast_tokens))
 
     embedding_text = compose_embedding_text(payload)
-    embedding_vector = await generate_embedding(embedding_text, settings.pgvector_dimension)
+    embedding_vector = await generate_embedding(embedding_text, settings.pgvector_dimension, settings)
 
     embeddings = dict(payload.embeddings or {})
     embeddings.setdefault("vectorDimension", settings.pgvector_dimension)
     embeddings.setdefault("vectorModel", settings.embedding_model_name)
 
+    try:
+        stored_user_id = uuid_pkg.UUID(auth.subject)
+    except (ValueError, AttributeError):
+        stored_user_id = None
+
     record = ProvenanceRecord(
         uuid=payload.record_uuid,
         workspace_id=payload.workspace_id or auth.workspace_id,
+        user_id=stored_user_id,
         request_uuid=payload.request_uuid,
         file_path=payload.file_path,
         file_uri=payload.file_uri,
@@ -221,7 +227,7 @@ async def search_provenance_records(
     filters = build_workspace_record_filters(search, workspace_id)
 
     if query_text and settings.vector_search_enabled:
-        query_embedding = await generate_embedding(query_text, settings.pgvector_dimension)
+        query_embedding = await generate_embedding(query_text, settings.pgvector_dimension, settings)
         distance_expr = ProvenanceRecord.embedding_vector.cosine_distance(query_embedding).label(
             "distance"
         )
