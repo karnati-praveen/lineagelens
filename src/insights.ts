@@ -215,6 +215,14 @@ export type AgentSessionSummary = {
   evidence: string[];
 };
 
+export type DashboardMemberMetric = {
+  id: string;
+  username: string;
+  role: string;
+  recordCount: number;
+  joinedAtIso: string;
+};
+
 export type InsightsDashboardPayload = {
   mode: ProvenanceMode;
   generatedAtIso: string;
@@ -237,6 +245,7 @@ export type InsightsDashboardPayload = {
   modelAnalytics: DashboardModelMetric[];
   riskTrends: DashboardTrendPoint[];
   agentSessions: AgentSessionSummary[];
+  memberStats: DashboardMemberMetric[];
   warnings: string[];
 };
 
@@ -317,6 +326,7 @@ export function buildInsightsDashboard(
     modelAnalytics: buildModelAnalytics(recordSummaries),
     riskTrends: buildRiskTrends(recordSummaries),
     agentSessions,
+    memberStats: [],
     warnings
   };
 }

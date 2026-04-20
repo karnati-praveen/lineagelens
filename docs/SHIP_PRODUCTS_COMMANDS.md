@@ -23,7 +23,7 @@ Code Name: Process Scheduler
 Solo ships as an extension-only artifact.
 
 ```powershell
-Copy-Item .env.docker.example .env -ErrorAction SilentlyContinue
+Copy-Item .\deploy\.env.docker.example .env -ErrorAction SilentlyContinue
 npm run ship:solo
 ```
 
@@ -48,8 +48,8 @@ Output:
 Team ships as the extension plus the backend-basic deployment bundle.
 
 ```powershell
-Copy-Item .env.team.example .env
-docker compose -f .\docker-compose.team.yml config
+Copy-Item .\deploy\.env.team.example .env
+docker compose -f .\deploy\docker-compose.team.yml config
 npm run ship:team
 ```
 
@@ -68,7 +68,7 @@ Code Name: Memory Manager
 Bring the Team backend up locally:
 
 ```powershell
-docker compose -f .\docker-compose.team.yml up -d
+docker compose -f .\deploy\docker-compose.team.yml up -d
 Invoke-RestMethod http://127.0.0.1:8787/health
 ```
 
@@ -77,17 +77,21 @@ Code Name: Network Stack
 
 Output:
 
-- `releases\team\lineagelens-team-<version>.vsix`
-- `releases\team\docker-compose.team.yml`
-- `releases\team\.env.team.example`
+- `releases\team\lineagelens-team-<version>.zip`
+- `releases\team\lineagelens-team-<version>\backend\`
+- `releases\team\lineagelens-team-<version>\deploy\docker-compose.team.yml`
+- `releases\team\lineagelens-team-<version>\deploy\.env.team.example`
+- `releases\team\lineagelens-team-<version>\docs\native-backend.md`
+- `releases\team\lineagelens-team-<version>\scripts\run-backend-native.ps1`
+- `releases\team\lineagelens-team-<version>\scripts\test-backend-native.ps1`
 
 ## 4. Enterprise mode
 
 Enterprise ships as the extension plus the backend-full deployment bundle.
 
 ```powershell
-Copy-Item .env.enterprise.example .env
-docker compose -f .\docker-compose.enterprise.yml config
+Copy-Item .\deploy\.env.enterprise.example .env
+docker compose -f .\deploy\docker-compose.enterprise.yml config
 npm run ship:enterprise
 ```
 
@@ -106,7 +110,7 @@ Code Name: Buffer Cache
 Bring the Enterprise backend up locally:
 
 ```powershell
-docker compose -f .\docker-compose.enterprise.yml up -d
+docker compose -f .\deploy\docker-compose.enterprise.yml up -d
 Invoke-RestMethod http://127.0.0.1:8787/health
 ```
 
@@ -115,9 +119,13 @@ Code Name: Packet Filter
 
 Output:
 
-- `releases\enterprise\lineagelens-enterprise-<version>.vsix`
-- `releases\enterprise\docker-compose.enterprise.yml`
-- `releases\enterprise\.env.enterprise.example`
+- `releases\enterprise\lineagelens-enterprise-<version>.zip`
+- `releases\enterprise\lineagelens-enterprise-<version>\backend\`
+- `releases\enterprise\lineagelens-enterprise-<version>\deploy\docker-compose.enterprise.yml`
+- `releases\enterprise\lineagelens-enterprise-<version>\deploy\.env.enterprise.example`
+- `releases\enterprise\lineagelens-enterprise-<version>\docs\native-backend.md`
+- `releases\enterprise\lineagelens-enterprise-<version>\scripts\run-backend-native.ps1`
+- `releases\enterprise\lineagelens-enterprise-<version>\scripts\test-backend-native.ps1`
 
 ## 5. Optional publish step
 

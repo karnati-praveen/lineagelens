@@ -513,6 +513,11 @@ export class InsightsDashboardViewProvider
     </section>
 
     <section class="card">
+      <h3>Team Members</h3>
+      <div id="members" class="table"></div>
+    </section>
+
+    <section class="card">
       <h3>Reviewer Output</h3>
       <pre id="review-output">Run a provenance-aware review for the current file.</pre>
     </section>
@@ -528,6 +533,7 @@ export class InsightsDashboardViewProvider
     const modelsView = document.getElementById('models');
     const trendsView = document.getElementById('trends');
     const sessionsView = document.getElementById('sessions');
+    const membersView = document.getElementById('members');
     const reviewOutput = document.getElementById('review-output');
     const statusView = document.getElementById('status');
     const dateFromInput = document.getElementById('date-from');
@@ -627,6 +633,9 @@ export class InsightsDashboardViewProvider
       }
 
       const summary = dashboard.summary || {};
+      const memberStats = Array.isArray(dashboard.memberStats) ? dashboard.memberStats : [];
+      const adminCount = memberStats.filter((item) => String(item.role || '').toLowerCase() === 'admin').length;
+      const activeContributors = memberStats.filter((item) => Number(item.recordCount || 0) > 0).length;
       const summaryItems = [
         ['Records', summary.totalRecords || 0],
         ['Prompt Capture', percent(summary.promptCaptureRate)],
@@ -637,7 +646,10 @@ export class InsightsDashboardViewProvider
         ['Models', summary.uniqueModels || 0],
         ['Agent Sessions', summary.uniqueAgentSessions || 0],
         ['Agentic Records', summary.agenticRecords || 0],
-        ['AI Net Lines', summary.totalNetAddedLines || 0]
+        ['AI Net Lines', summary.totalNetAddedLines || 0],
+        ['Team Members', memberStats.length],
+        ['Admins', adminCount],
+        ['Active Contributors', activeContributors]
       ];
 
       summaryGrid.innerHTML = summaryItems
@@ -717,6 +729,20 @@ export class InsightsDashboardViewProvider
         );
       }, 'No agent sessions detected in the selected scope.');
 
+      renderRows(membersView, memberStats, (item) => {
+        return (
+          '<div class="row">' +
+            '<div class="title">' + escapeHtml(item.username || 'Unknown Member') + '</div>' +
+            '<div class="meta">' +
+              '<span class="pill ' + escapeHtml(String(item.role || 'member')) + '">' + escapeHtml(String(item.role || 'member')) + '</span>' +
+              '<span>records=' + escapeHtml(String(item.recordCount || 0)) + '</span>' +
+              '<span>joined=' + escapeHtml(item.joinedAtIso || 'n/a') + '</span>' +
+            '</div>' +
+            '<div class="muted">id=' + escapeHtml(item.id || 'n/a') + '</div>' +
+          '</div>'
+        );
+      }, 'No team member data available.');
+
       const warnings = Array.isArray(dashboard.warnings) ? dashboard.warnings : [];
       setStatus(
         'Dashboard refreshed at ' + escapeHtml(dashboard.generatedAtIso || 'unknown') +
@@ -795,6 +821,9 @@ function renderDashboardMarkdown(
   review?: CodeReviewResult
 ): string {
   const lines: string[] = [];
+  const memberStats = Array.isArray(dashboard.memberStats) ? dashboard.memberStats : [];
+  const adminCount = memberStats.filter((item) => String(item.role || '').toLowerCase() === 'admin').length;
+  const activeContributors = memberStats.filter((item) => Number(item.recordCount || 0) > 0).length;
 
   lines.push('# AI Governance Dashboard Report');
   lines.push('');
@@ -813,6 +842,9 @@ function renderDashboardMarkdown(
   lines.push('- Unique agent sessions: ' + String(dashboard.summary.uniqueAgentSessions));
   lines.push('- Agentic records: ' + String(dashboard.summary.agenticRecords));
   lines.push('- AI net added lines: ' + String(dashboard.summary.totalNetAddedLines));
+  lines.push('- Team members: ' + String(memberStats.length));
+  lines.push('- Admins: ' + String(adminCount));
+  lines.push('- Active contributors: ' + String(activeContributors));
   lines.push('');
   lines.push('## Compliance Controls');
   lines.push('');
@@ -909,6 +941,29 @@ function renderDashboardMarkdown(
         ', files=' +
         session.files.join(', ')
     );
+  }
+
+  lines.push('');
+  lines.push('## Team Members');
+  lines.push('');
+  if (Array.isArray(dashboard.memberStats) && dashboard.memberStats.length > 0) {
+    for (const member of dashboard.memberStats) {
+      lines.push(
+        '- ' +
+          member.username +
+          ' [' +
+          member.role.toUpperCase() +
+          '] records=' +
+          String(member.recordCount) +
+          ' joined=' +
+          String(member.joinedAtIso) +
+          ' (id=' +
+          member.id +
+          ')'
+      );
+    }
+  } else {
+    lines.push('- No team member data available.');
   }
 
   if (review) {

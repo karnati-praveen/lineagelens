@@ -50,10 +50,14 @@ async def register_user(
 
     workspace_id = normalize_workspace_id(payload.workspace_id) or create_default_workspace_id(username)
 
+    workspace_count = await get_workspace_user_count(session, workspace_id)
+    role = "admin" if workspace_count == 0 else "member"
+
     user = UserAccount(
         username=username,
         password_hash=hash_password(payload.password),
         workspace_id=workspace_id,
+        role=role,
         is_active=True,
     )
 
@@ -160,6 +164,7 @@ async def get_authenticated_user(
         "id": str(user.id),
         "username": user.username,
         "workspaceId": user.workspace_id,
+        "role": user.role,
         "scopes": sorted(auth.scopes),
     }
 
@@ -172,14 +177,14 @@ def issue_token_response(user: UserAccount, settings: Settings) -> AuthTokenResp
         workspace_id=user.workspace_id,
         scopes=scopes,
         settings=settings,
-        extra_claims={"username": user.username},
+        extra_claims={"username": user.username, "role": user.role},
     )
 
     refresh_token, _ = create_refresh_token(
         subject=str(user.id),
         workspace_id=user.workspace_id,
         settings=settings,
-        extra_claims={"username": user.username},
+        extra_claims={"username": user.username, "role": user.role},
     )
 
     now_utc = datetime.now(tz=UTC)
@@ -204,6 +209,17 @@ async def get_user_by_username(session: AsyncSession, username: str) -> UserAcco
     statement = select(UserAccount).where(UserAccount.username == username)
     result = await session.execute(statement)
     return result.scalar_one_or_none()
+
+
+async def get_workspace_user_count(session: AsyncSession, workspace_id: str) -> int:
+    from sqlalchemy import func as sa_func
+    statement = (
+        select(sa_func.count())
+        .select_from(UserAccount)
+        .where(UserAccount.workspace_id == workspace_id, UserAccount.is_active.is_(True))
+    )
+    result = await session.execute(statement)
+    return result.scalar_one() or 0
 
 
 async def get_user_by_id(session: AsyncSession, user_id: str) -> UserAccount | None:

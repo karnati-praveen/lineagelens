@@ -7,15 +7,16 @@ This file is a compact guide to the repository layout so an AI can quickly under
 ```text
 LineageLens/
   README.md              # User-facing overview and operating modes
-  file.md                # This repo map
   prafea                 # Long-form architecture and feature reference
   package.json           # VS Code extension manifest, commands, settings, scripts
   tsconfig.json          # TypeScript compiler settings
-  docker-compose.yml     # Backend stack for local development
+  deploy/                # Backend stack and release compose bundles
   backend/               # FastAPI backend application
   src/                   # VS Code extension source
-  docs/                  # Supporting documentation
+  docs/                  # All project documentation
   media/                 # Icons and other static assets
+  scripts/               # PowerShell build and deployment scripts
+  releases/              # Packaged release artifacts (.vsix, .zip)
   dist/                  # Built extension output
   out/                   # TypeScript build output
   node_modules/          # Installed Node dependencies
@@ -70,9 +71,16 @@ backend/
 ```
 
 ### `docs/`
-Documentation for the architecture and adapter strategy.
+All project documentation lives here.
 
-- `docs/lightweight-adapters.md` explains the lightweight CLI boundary and backend mode behavior.
+- `docs/repo-map.md` — this file; compact guide to the repository layout.
+- `docs/architecture.md` — full architecture overview with data flow diagrams.
+- `docs/lightweight-adapters.md` — lightweight CLI boundary and backend mode behavior.
+- `docs/native-backend.md` — native Python backend setup (no Docker Desktop required).
+- `docs/shipping-modes.md` — release structure and packaging modes (solo, team, enterprise).
+- `docs/CHANGELOG.md` — version history.
+- `docs/SUPPORT.md` — support information and issue tracking.
+- `docs/SHIP_PRODUCTS_COMMANDS.md` — build and deployment commands for all three modes.
 
 ### `media/`
 Static assets for the extension, such as the icon used in the VS Code UI.
@@ -102,7 +110,7 @@ Generated dependency directories.
 
 If you want the shortest path to understanding the system, read in this order:
 
-1. `README.md` for the user-facing mode split.
+1. `README.md` for the user-facing mode split; `docs/architecture.md` for the full architecture overview.
 2. `src/extension.ts` for the extension entry point.
 3. `src/eventSchema.ts` and `src/lightweightRecord.ts` for the shared provenance contract.
 4. `src/storage/StorageService.ts` and the files under `src/storage/` for local versus backend behavior.

@@ -9,16 +9,13 @@ try {
     $package = Get-Content $packageJson | ConvertFrom-Json
     $version = $package.version
     $artifactName = "lineagelens-solo-$version.vsix"
-    $artifactPath = Join-Path $repoRoot $artifactName
+    $artifactPath = Join-Path $releaseDir $artifactName
 
-    Remove-Item $artifactPath -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 
     npm run compile
     npm test
-    npx @vscode/vsce package --out $artifactName
-
-    Copy-Item $artifactPath (Join-Path $releaseDir $artifactName) -Force
+    npx @vscode/vsce package --out $artifactPath
     Write-Host "Solo package ready: $artifactPath"
 }
 finally {

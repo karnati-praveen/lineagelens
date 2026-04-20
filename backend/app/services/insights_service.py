@@ -5,15 +5,16 @@ from datetime import UTC, datetime
 import re
 from typing import Any
 
-from sqlalchemy import and_, desc, select
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ProvenanceRecord
+from app.db.models import ProvenanceRecord, UserAccount
 from app.schemas.provenance import SearchRequest
 from app.services.provenance_service import (
     build_workspace_record_filters,
     serialize_provenance_record,
 )
+from app.services.team_service import build_team_member_stats
 
 
 HIGH_RISK_THRESHOLD = 65
@@ -36,7 +37,35 @@ async def get_insights_dashboard_payload(
     rows = result.scalars().all()
     records = [serialize_provenance_record(row) for row in rows]
 
-    return build_insights_dashboard(records)
+    member_stats = await build_member_stats(session, workspace_id)
+    payload = build_insights_dashboard(records)
+    payload["memberStats"] = [member.model_dump(by_alias=True) for member in member_stats]
+    return payload
+
+
+async def build_member_stats(session: AsyncSession, workspace_id: str) -> list[Any]:
+    users_stmt = (
+        select(UserAccount)
+        .where(UserAccount.workspace_id == workspace_id, UserAccount.is_active.is_(True))
+        .order_by(UserAccount.created_at)
+    )
+    users_result = await session.execute(users_stmt)
+    users = users_result.scalars().all()
+
+    if not users:
+        return []
+
+    counts_stmt = (
+        select(ProvenanceRecord.user_id, func.count(ProvenanceRecord.id).label("cnt"))
+        .where(ProvenanceRecord.workspace_id == workspace_id)
+        .group_by(ProvenanceRecord.user_id)
+    )
+    counts_result = await session.execute(counts_stmt)
+    record_counts: dict[str, int] = {
+        str(row.user_id): row.cnt for row in counts_result if row.user_id is not None
+    }
+
+    return build_team_member_stats(users, record_counts)
 
 
 def build_insights_dashboard(records: list[dict[str, Any]]) -> dict[str, Any]:

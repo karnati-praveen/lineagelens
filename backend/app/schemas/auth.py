@@ -27,6 +27,7 @@ class AuthUserResponse(BaseModel):
     id: str
     username: str
     workspace_id: str = Field(alias="workspaceId")
+    role: str
 
     model_config = ConfigDict(populate_by_name=True)
 
