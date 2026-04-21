@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes.auth import normalize_username, validate_password_strength
 from app.core.config import Settings, get_settings
+from app.core.mode_guard import require_non_solo
 from app.core.security import AuthContext, get_current_auth_context, hash_password
 from app.db.models import ProvenanceRecord, UserAccount
 from app.db.session import get_db_session
@@ -14,7 +16,7 @@ from app.services.team_service import build_team_member_stats
 router = APIRouter(prefix="/team", tags=["team"])
 
 
-@router.get("/members", response_model=TeamMembersResponse)
+@router.get("/members", response_model=TeamMembersResponse, dependencies=[Depends(require_non_solo)])
 async def list_team_members(
     session: AsyncSession = Depends(get_db_session),
     auth: AuthContext = Depends(get_current_auth_context),
@@ -42,14 +44,21 @@ async def list_team_members(
     return TeamMembersResponse(workspaceId=auth.workspace_id, members=members)
 
 
-@router.post("/invite", response_model=InviteMemberResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/invite", response_model=InviteMemberResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_non_solo)])
 async def invite_team_member(
     payload: InviteMemberRequest,
     session: AsyncSession = Depends(get_db_session),
     auth: AuthContext = Depends(get_current_auth_context),
     settings: Settings = Depends(get_settings),
 ) -> InviteMemberResponse:
-    caller_stmt = select(UserAccount).where(UserAccount.id == _parse_uuid(auth.subject))
+    caller_id = _parse_uuid(auth.subject)
+    if caller_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication subject.",
+        )
+
+    caller_stmt = select(UserAccount).where(UserAccount.id == caller_id)
     caller_result = await session.execute(caller_stmt)
     caller = caller_result.scalar_one_or_none()
 
@@ -77,8 +86,15 @@ async def invite_team_member(
         is_active=True,
     )
     session.add(new_user)
-    await session.commit()
-    await session.refresh(new_user)
+    try:
+        await session.commit()
+        await session.refresh(new_user)
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username is already registered.",
+        )
 
     return InviteMemberResponse(
         id=str(new_user.id),

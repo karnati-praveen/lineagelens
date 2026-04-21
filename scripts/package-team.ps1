@@ -35,6 +35,11 @@ try {
     Copy-Item (Join-Path $repoRoot "docs\native-backend.md") (Join-Path $bundleRoot "docs\native-backend.md") -Force
     Copy-Item (Join-Path $repoRoot "scripts\run-backend-native.ps1") (Join-Path $bundleRoot "scripts\run-backend-native.ps1") -Force
     Copy-Item (Join-Path $repoRoot "scripts\test-backend-native.ps1") (Join-Path $bundleRoot "scripts\test-backend-native.ps1") -Force
+    Copy-Item (Join-Path $repoRoot "scripts\debug.sh") (Join-Path $bundleRoot "debug.sh") -Force
+    Copy-Item (Join-Path $repoRoot "scripts\debug.ps1") (Join-Path $bundleRoot "debug.ps1") -Force
+    Copy-Item (Join-Path $repoRoot "scripts\quickstart-team.sh") (Join-Path $bundleRoot "quickstart.sh") -Force
+    Copy-Item (Join-Path $repoRoot "scripts\reset-team.sh") (Join-Path $bundleRoot "reset.sh") -Force
+    Copy-Item (Join-Path $repoRoot "scripts\commands-team.md") (Join-Path $bundleRoot "COMMANDS.md") -Force
 
     if (Test-Path $artifactPath) {
         Remove-Item $artifactPath -Force

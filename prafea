@@ -4,18 +4,18 @@ Last reviewed from the local codebase: 2026-04-20
 
 ## 1. What LineageLens Is
 
-LineageLens is an AI code provenance system. Its current implementation has two major parts:
+LineageLens is a provenance system for AI-generated code. It captures insertions produced by any AI coding tool — Claude Code, Cursor, Aider, Copilot-style traffic, or anything that writes files. The current implementation has two major parts:
 
-- A VS Code extension that detects qualifying code insertions, captures local context, correlates edits with nearby LLM traffic, builds provenance records, stores/searches/displays them, and optionally sends them to a backend.
+- A detection host (currently a VS Code extension) that observes file changes, correlates edits with nearby LLM traffic, identifies the originating tool, builds provider-agnostic provenance records, and stores or forwards them.
 - A FastAPI backend that authenticates users, ingests provenance records, stores records in Postgres with pgvector embeddings, creates initial lineage nodes in Neo4j, provides search/explain/provenance APIs, and accepts real-time WebSocket capture ingest.
 
-The system is currently VS Code-first, but recent implementation work moved the data model toward a provider-agnostic provenance core. The VS Code extension now acts more like a shim that produces normalized records.
+VS Code is the current observation surface, not the product's identity. The data model is provider-agnostic and the detection host is designed to be swappable — the extension acts as a thin shim that produces normalized records from whatever tool wrote the code.
 
 ## 2. High-Level Architecture
 
 Current layers:
 
-- IDE shim: `src/extension.ts`
+- Detection host (currently VS Code): `src/extension.ts`
 - Local LLM proxy: `src/proxy.ts`
 - Correlation engine: `src/correlation.ts`
 - Provider-agnostic event schema: `src/eventSchema.ts`
@@ -46,11 +46,11 @@ The core runtime flow is:
 8. It stores the record locally or sends it to the backend, depending on mode.
 9. Search, provenance sidebar, dashboard, explanations, and review features read from the active storage service.
 
-## 3. VS Code Extension Features
+## 3. Detection Host Features
 
-Declared extension metadata and commands live in `package.json`.
+The current detection host is a VS Code extension. Its metadata and commands live in `package.json`.
 
-Current extension identity:
+Current host identity:
 
 - Name: `lineagelens`
 - Display name: `LineageLens`
@@ -102,7 +102,7 @@ Important internal state:
 Detection behavior:
 
 - Only file-backed documents are tracked.
-- On document change, the extension compares the old text with the change events.
+- On any file change (regardless of which tool wrote it), the host compares the old text with the change events.
 - Inserted chunks are extracted in `extractInsertedChunksFromDiff`.
 - Net added lines are counted using `countApproximateLines`.
 - The default qualifying threshold is 4 net added lines.
@@ -130,7 +130,7 @@ Main implementation: `src/proxy.ts`
 
 Purpose:
 
-- Capture outbound LLM traffic locally so inserted code can be linked to a prompt/response.
+- Capture outbound LLM traffic locally so code inserted by any tool can be linked to a prompt/response.
 
 Default proxy behavior:
 
@@ -385,7 +385,7 @@ Safety behavior:
 
 ## 12. Embeddings
 
-Extension local embeddings:
+Detection-host embeddings:
 
 - Implemented in `src/extension.ts`
 - Provider: `local-hash`
@@ -426,7 +426,7 @@ Shared storage capabilities:
 
 Main implementation: `src/storage/LocalStorageService.ts`
 
-Storage locations:
+Storage locations (current host: VS Code):
 
 - VS Code global state by default
 - Optional workspace file: `.vscode/ai-provenance/records.json`
@@ -488,7 +488,7 @@ Backend ingest behavior:
 Backend auth behavior:
 
 - Uses login/register/refresh endpoints.
-- Stores access and refresh tokens in VS Code Secret Storage.
+- Stores access and refresh tokens in the host's secure storage (VS Code Secret Storage in the current host).
 - Supports legacy JWT secret migration.
 - Proactively refreshes tokens before expiration using a configurable skew.
 - Extracts workspace ID from token when needed.
@@ -837,9 +837,9 @@ Validation:
 
 ## 27. Security Features
 
-Extension-side:
+Detection-host side:
 
-- Backend tokens and reviewer API key stored in VS Code Secret Storage.
+- Backend tokens and reviewer API key stored in the host's secure storage (VS Code Secret Storage).
 - Sensitive proxy headers are redacted.
 - Environment snapshot excludes secret-like env vars.
 
@@ -1012,12 +1012,12 @@ Backend defaults:
 
 ## 33. Known Limits and Current Gaps
 
-The current implementation is functional but not fully IDE-agent universal yet.
+The current implementation is functional but not yet multi-host.
 
 Known limits:
 
-- VS Code is still the only implemented IDE shim.
-- The provider-agnostic core is represented as schema/types and storage payload, but capture/search/UI still live mostly inside the VS Code extension and backend service layers.
+- VS Code is the only implemented detection host; JetBrains, Neovim, and a standalone CLI ingest are not yet built.
+- The provider-agnostic core is defined at the schema/types level, but capture, search, and UI still live inside the VS Code host and backend service layers.
 - External plugin loading is not implemented; adapters are internal modules registered in code.
 - Manual import provenance is not implemented yet.
 - HTTPS CONNECT traffic is tunnel-only unless a separate trusted interception sidecar is added.
@@ -1031,8 +1031,8 @@ Known limits:
 
 Best next implementation steps:
 
-1. Move core provenance construction into a VS Code-independent package/module boundary.
-2. Define a small shim interface for VS Code, JetBrains, Neovim, CLI, and manual import.
+1. Move core provenance construction into a host-independent package/module boundary.
+2. Define a small detection-host interface for VS Code, JetBrains, Neovim, CLI, and manual import.
 3. Add a manual import command that accepts file diff plus optional prompt/session metadata.
 4. Add a contract test fixture per adapter covering normalized event, backend ingest payload, search result, and dashboard result.
 5. Add backend tests for ingest/search/explain/websocket with representative normalized events.
@@ -1042,4 +1042,4 @@ Best next implementation steps:
 
 ## 35. One-Sentence Summary
 
-LineageLens currently captures AI-assisted code insertions in VS Code, correlates them with local LLM traffic when possible, normalizes them into a provider-agnostic provenance record, stores/searches/displays them locally or through a backend, and provides governance, risk, lineage, explanation, and review features while gracefully degrading for opaque tools.
+LineageLens captures AI-assisted code insertions from any tool — Claude Code, Cursor, Aider, or any agent that writes files — using VS Code as the current observation host, correlates them with local LLM traffic when possible, normalizes them into a provider-agnostic provenance record, stores/searches/displays them locally or through a backend, and provides governance, risk, lineage, explanation, and review features while gracefully degrading for opaque tools.

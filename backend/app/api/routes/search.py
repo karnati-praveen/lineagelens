@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.mode_guard import require_non_solo
 from app.core.security import AuthContext, ensure_workspace_scope, get_current_auth_context
 from app.db.session import get_db_session
 from app.schemas.provenance import SearchRequest, SearchResponse, SearchResultItem
@@ -11,7 +12,7 @@ from app.services.provenance_service import search_provenance_records, serialize
 router = APIRouter(tags=["search"])
 
 
-@router.post("/search", response_model=SearchResponse)
+@router.post("/search", response_model=SearchResponse, dependencies=[Depends(require_non_solo)])
 async def search_provenance(
     payload: SearchRequest,
     session: AsyncSession = Depends(get_db_session),

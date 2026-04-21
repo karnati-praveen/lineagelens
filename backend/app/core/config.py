@@ -129,15 +129,19 @@ class Settings(BaseSettings):
         return self.jwt_refresh_secret_key or self.jwt_secret_key
 
     @property
+    def is_solo_mode(self) -> bool:
+        return self.backend_mode == "solo"
+
+    @property
     def product_mode(self) -> str:
-        return "enterprise" if self.backend_mode == "full" else "team"
+        return {"solo": "solo", "full": "enterprise"}.get(self.backend_mode, "team")
 
     @field_validator("backend_mode")
     @classmethod
     def validate_backend_mode(cls, value: str) -> str:
         mode = value.strip().lower()
-        if mode not in {"basic", "full"}:
-            raise ValueError("BACKEND_MODE must be either 'basic' or 'full'.")
+        if mode not in {"solo", "basic", "full"}:
+            raise ValueError("BACKEND_MODE must be 'solo', 'basic', or 'full'.")
 
         return mode
 

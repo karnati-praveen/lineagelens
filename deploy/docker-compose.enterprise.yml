@@ -48,7 +48,7 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile
     container_name: lineagelens-enterprise-backend
     restart: unless-stopped
@@ -98,6 +98,10 @@ services:
       EXPLAIN_LLM_API_KEY: ${EXPLAIN_LLM_API_KEY:-}
       EXPLAIN_LLM_MODEL: gpt-4o-mini
       EXPLAIN_LLM_TIMEOUT_SECONDS: 25
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-hash}
+      EMBEDDING_API_URL: ${EMBEDDING_API_URL:-https://api.openai.com/v1/embeddings}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-text-embedding-3-small}
     ports:
       - "8787:8787"
 

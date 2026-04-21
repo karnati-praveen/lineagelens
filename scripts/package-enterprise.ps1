@@ -20,21 +20,36 @@ try {
     }
 
     New-Item -ItemType Directory -Force -Path $bundleRoot | Out-Null
+
+    # Backend
     Copy-Item (Join-Path $repoRoot "backend") (Join-Path $bundleRoot "backend") -Recurse -Force
     Get-ChildItem (Join-Path $bundleRoot "backend") -Directory -Recurse -Force |
         Where-Object { $_.Name -in @('.pytest_cache', '__pycache__') } |
         Remove-Item -Recurse -Force
+
+    # Deploy
     New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "deploy") | Out-Null
-    New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "scripts") | Out-Null
+    Copy-Item $composeFile (Join-Path $bundleRoot "deploy\docker-compose.enterprise.yml") -Force
+    Copy-Item $envExample (Join-Path $bundleRoot "deploy\.env.enterprise.example") -Force
+
+    # Docs
     New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "docs") | Out-Null
+    Copy-Item (Join-Path $repoRoot "docs\native-backend.md") (Join-Path $bundleRoot "docs\native-backend.md") -Force
+    Copy-Item (Join-Path $repoRoot "docs\architecture.md") (Join-Path $bundleRoot "docs\architecture.md") -Force
+    Copy-Item (Join-Path $repoRoot "docs\shipping-modes.md") (Join-Path $bundleRoot "docs\shipping-modes.md") -Force
+
+    # Scripts
+    New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "scripts") | Out-Null
+    Copy-Item (Join-Path $repoRoot "scripts\run-backend-native.ps1") (Join-Path $bundleRoot "scripts\run-backend-native.ps1") -Force
+    Copy-Item (Join-Path $repoRoot "scripts\test-backend-native.ps1") (Join-Path $bundleRoot "scripts\test-backend-native.ps1") -Force
+    Copy-Item (Join-Path $repoRoot "scripts\debug.sh") (Join-Path $bundleRoot "debug.sh") -Force
+    Copy-Item (Join-Path $repoRoot "scripts\debug.ps1") (Join-Path $bundleRoot "debug.ps1") -Force
 
     npm run compile
     npm test
-    Copy-Item $composeFile (Join-Path $bundleRoot "deploy\docker-compose.enterprise.yml") -Force
-    Copy-Item $envExample (Join-Path $bundleRoot "deploy\.env.enterprise.example") -Force
-    Copy-Item (Join-Path $repoRoot "docs\native-backend.md") (Join-Path $bundleRoot "docs\native-backend.md") -Force
-    Copy-Item (Join-Path $repoRoot "scripts\run-backend-native.ps1") (Join-Path $bundleRoot "scripts\run-backend-native.ps1") -Force
-    Copy-Item (Join-Path $repoRoot "scripts\test-backend-native.ps1") (Join-Path $bundleRoot "scripts\test-backend-native.ps1") -Force
+    Copy-Item (Join-Path $repoRoot "scripts\quickstart-enterprise.sh") (Join-Path $bundleRoot "quickstart.sh") -Force
+    Copy-Item (Join-Path $repoRoot "scripts\reset-enterprise.sh") (Join-Path $bundleRoot "reset.sh") -Force
+    Copy-Item (Join-Path $repoRoot "scripts\commands-enterprise.md") (Join-Path $bundleRoot "COMMANDS.md") -Force
 
     if (Test-Path $artifactPath) {
         Remove-Item $artifactPath -Force

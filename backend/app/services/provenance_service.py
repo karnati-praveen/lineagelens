@@ -122,6 +122,7 @@ async def ingest_provenance_event(
         provenance_payload=payload.provenance_payload,
     )
 
+    lineage_version_id: str | None = None
     try:
         session.add(record)
         await session.flush()
@@ -149,7 +150,19 @@ async def ingest_provenance_event(
                 )
                 warnings.append(f"Neo4j lineage creation failed: {error}")
 
-        await session.commit()
+        try:
+            await session.commit()
+        except Exception:
+            # If the Postgres commit fails after a Neo4j node was written, the
+            # graph node has no matching provenance record. Clean it up to avoid
+            # a zombie node that the UI would hit as a dead-end.
+            if lineage_version_id is not None and neo4j_service is not None:
+                try:
+                    await neo4j_service.delete_lineage_record(record_uuid=lineage_version_id)
+                except Exception:
+                    pass  # cleanup failure; original commit error is re-raised below
+            raise
+
         await session.refresh(record)
     except IntegrityError:
         await session.rollback()

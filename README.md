@@ -1,6 +1,6 @@
 # LineageLens
 
-LineageLens tracks AI-assisted code insertions and links them to provenance context.
+LineageLens is a provenance system for AI-generated code. It tracks code inserted by any AI coding tool — Claude Code, Cursor, Aider, Copilot, or anything else that writes files — and links each insertion to its prompt, model, session, and context. VS Code is the current observation host; the provenance record and backend are tool-agnostic.
 
 ## Operating Modes
 
@@ -34,7 +34,7 @@ Complete provenance intelligence and auditability.
 - Use `deploy/docker-compose.enterprise.yml` plus `deploy/.env.enterprise.example` when shipping it separately.
 
 See [docs/lightweight-adapters.md](docs/lightweight-adapters.md) for the lightweight adapter contract.
-See [docs/shipping-modes.md](docs/shipping-modes.md) for the release layout and [SHIP_PRODUCTS_COMMANDS.md](SHIP_PRODUCTS_COMMANDS.md) for exact ship commands.
+See [docs/shipping-modes.md](docs/shipping-modes.md) for the release layout and [docs/SHIP_PRODUCTS_COMMANDS.md](docs/SHIP_PRODUCTS_COMMANDS.md) for exact ship commands.
 
 ## Switch from Pure Local to Backend Mode
 
@@ -91,7 +91,7 @@ When a native adapter cannot confidently match a record, LineageLens falls back 
 
 ## Provider-Agnostic Provenance Core
 
-The VS Code extension is now treated as a thin shim over a shared provenance event contract. Each stored record includes:
+The VS Code extension is a thin observation shim, not the product. The underlying provenance contract works the same regardless of which tool wrote the code. Each stored record includes:
 
 - `schemaVersion` for versioned compatibility (`lineagelens.provenance-event.v1`)
 - `normalizedEvent` for IDE/provider-neutral capture, session, model, file, diff, context, and confidence fields

@@ -26,7 +26,7 @@ LineageLens/
 ## What Each Main Folder Does
 
 ### `src/`
-VS Code extension source code. This is where the editor integration, local storage, adapter detection, provenance record building, search UI, dashboard UI, and backend client live.
+Detection host source code (currently a VS Code extension). This is where editor integration, local storage, adapter detection for Claude Code/Cursor/Aider, provenance record building, search UI, dashboard UI, and backend client live.
 
 Important subfolders and files:
 
@@ -119,8 +119,9 @@ If you want the shortest path to understanding the system, read in this order:
 
 ## Notes For AI Readers
 
-- The repo is a VS Code extension plus a FastAPI backend.
-- Local mode should work without backend dependencies.
-- Backend basic mode should work without Neo4j or vector search.
+- The product is a provenance system for AI-generated code. VS Code is the current observation host, not the product's identity.
+- Any tool that writes files (Claude Code, Cursor, Aider, Copilot, etc.) can have its insertions tracked. The adapter layer identifies which tool wrote the code from traffic, headers, and payload fingerprints.
+- Local mode works without backend dependencies.
+- Backend basic mode works without Neo4j or vector search.
 - Backend full mode enables the graph/vector features.
-- Claude Code, Cursor, and Aider are supported through the adapter layer, but terminal-only CLI support still needs a dedicated executable entry point if you want a standalone `.exe`.
+- A standalone CLI ingest path (no VS Code) is not yet built but the architecture supports it.

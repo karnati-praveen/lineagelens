@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -24,6 +25,7 @@ from app.schemas.auth import (
     AuthTokenResponse,
     AuthUserResponse,
     LoginRequest,
+    LogoutResponse,
     RefreshRequest,
     RegisterRequest,
 )
@@ -62,8 +64,15 @@ async def register_user(
     )
 
     session.add(user)
-    await session.commit()
-    await session.refresh(user)
+    try:
+        await session.commit()
+        await session.refresh(user)
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username is already registered.",
+        )
 
     return issue_token_response(user, settings)
 
@@ -144,7 +153,28 @@ async def refresh_access_token(
             detail="Refresh token workspace mismatch.",
         )
 
+    # Verify token_version to support stateless revocation: logout and password
+    # changes increment user.token_version, making all prior tokens invalid.
+    token_version_claim = int(refresh_auth.token_payload.get("token_version", 0))
+    if token_version_claim != user.token_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has been revoked.",
+        )
+
     return issue_token_response(user, settings)
+
+
+@router.post("/logout", response_model=LogoutResponse)
+async def logout_user(
+    auth: AuthContext = Depends(get_current_auth_context),
+    session: AsyncSession = Depends(get_db_session),
+) -> LogoutResponse:
+    user = await get_user_by_id(session, auth.subject)
+    if user is not None:
+        user.token_version = (user.token_version or 0) + 1
+        await session.commit()
+    return LogoutResponse(loggedOut=True)
 
 
 @router.get("/me")
@@ -164,27 +194,29 @@ async def get_authenticated_user(
         "id": str(user.id),
         "username": user.username,
         "workspaceId": user.workspace_id,
-        "role": user.role,
+        "role": user.role or "member",
         "scopes": sorted(auth.scopes),
     }
 
 
 def issue_token_response(user: UserAccount, settings: Settings) -> AuthTokenResponse:
     scopes = sorted(settings.required_scopes_set)
+    role = user.role or "member"
+    token_version = user.token_version or 0
 
     access_token, access_expires_at = create_access_token(
         subject=str(user.id),
         workspace_id=user.workspace_id,
         scopes=scopes,
         settings=settings,
-        extra_claims={"username": user.username, "role": user.role},
+        extra_claims={"username": user.username, "role": role, "token_version": token_version},
     )
 
     refresh_token, _ = create_refresh_token(
         subject=str(user.id),
         workspace_id=user.workspace_id,
         settings=settings,
-        extra_claims={"username": user.username, "role": user.role},
+        extra_claims={"username": user.username, "role": role, "token_version": token_version},
     )
 
     now_utc = datetime.now(tz=UTC)
@@ -201,6 +233,7 @@ def issue_token_response(user: UserAccount, settings: Settings) -> AuthTokenResp
             id=str(user.id),
             username=user.username,
             workspaceId=user.workspace_id,
+            role=role,
         ),
     )
 
