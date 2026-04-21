@@ -32,6 +32,12 @@ class AuthUserResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class LogoutResponse(BaseModel):
+    logged_out: bool = Field(default=True, alias="loggedOut")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class AuthTokenResponse(BaseModel):
     access_token: str = Field(alias="accessToken")
     refresh_token: str = Field(alias="refreshToken")

@@ -238,6 +238,11 @@ def normalize_ingest_payload(
     )
 
     warnings: list[str] = []
+    if not _first_string_from_keys(raw_payload, ["id", "eventId", "uuid"]):
+        warnings.append(
+            "Payload missing a client-provided UUID; a random UUID was assigned. "
+            "HTTP retries for this event will create duplicate provenance records."
+        )
     if capture_status == "file_diff":
         warnings.append("Captured file-diff-only provenance without prompt or response evidence.")
 

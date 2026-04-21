@@ -9,9 +9,9 @@ TeamRole = Literal["admin", "member"]
 class TeamMemberStats(BaseModel):
     id: str
     username: str
-    role: TeamRole
+    role: str
     record_count: int = Field(alias="recordCount")
-    joined_at_iso: str = Field(alias="joinedAtIso")
+    joined_at_iso: str | None = Field(alias="joinedAtIso")
 
     model_config = ConfigDict(populate_by_name=True)
 

@@ -4,7 +4,7 @@ Last reviewed from the local codebase: 2026-04-19
 
 ## 1. What The System Does
 
-LineageLens is a provenance system that has a VS Code extension plus agent-aware capture logic. It detects AI-like code insertions, captures surrounding context, correlates those edits with nearby LLM traffic when possible, normalizes the result into a provider-agnostic provenance event, and stores or searches the record locally or through a backend.
+LineageLens is a provenance system for AI-generated code. It works with any tool that writes files — Claude Code, Cursor, Aider, Copilot, or anything else. The current detection host is a VS Code extension, but the provenance event contract, backend, and agent adapter system are all tool-agnostic. The extension detects file changes, correlates them with nearby LLM traffic, identifies the originating tool, and produces normalized provenance records.
 
 The current implementation supports three operating modes:
 
@@ -30,8 +30,8 @@ For Team and Enterprise usage, the important part is the agent traffic and backe
 
 ## 3. End-to-End Capture Flow
 
-1. VS Code opens or changes a document.
-2. The extension keeps the previous document snapshot for that URI.
+1. A file is opened or changed in the editor (the change can come from any tool — Claude Code, Aider, manual edits, etc.).
+2. The detection host keeps the previous document snapshot for that URI.
 3. On change, it extracts inserted chunks and calculates net added lines.
 4. If the insertion passes the configured threshold, it captures cursor position, surrounding text, current git branch, and a normalized storage path.
 5. The local proxy runtime contributes recent request/response pairs for correlation.
@@ -244,4 +244,4 @@ The native backend test path runs through the local `.venv` and exercises the Py
 
 ## 13. One-Sentence Summary
 
-LineageLens currently detects AI-assisted insertions in VS Code and agent traffic from Claude Code, Cursor, Aider, or legacy heuristic sources, correlates them with local or backend capture sources, normalizes them into a portable provenance record, stores and searches them in local or backend mode, and exposes provenance, review, dashboard, and lineage views with different capabilities in Solo, Team, and Enterprise modes.
+LineageLens uses VS Code as its current observation host to detect AI-assisted code insertions from Claude Code, Cursor, Aider, or any tool that writes files, correlates them with local or backend capture sources, normalizes them into a portable provenance record, and exposes provenance, review, dashboard, and lineage views across Solo, Team, and Enterprise modes.

@@ -30,6 +30,7 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 async def initialize_database() -> None:
     async with engine.begin() as connection:
         await connection.execute(text("SELECT 1"))
+
         migration_table = await connection.execute(
             text("SELECT to_regclass('public.alembic_version')")
         )
@@ -37,11 +38,39 @@ async def initialize_database() -> None:
 
         if not has_migration_table:
             raise RuntimeError(
-                "Database migrations have not been applied. Run 'alembic upgrade head' before starting the API."
+                "Database migrations have not been applied. "
+                "Run 'alembic upgrade head' before starting the API."
             )
 
-        revision = await connection.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
+        revision = await connection.execute(
+            text("SELECT version_num FROM alembic_version LIMIT 1")
+        )
         if not revision.scalar_one_or_none():
             raise RuntimeError(
-                "Database migration history is empty. Run 'alembic upgrade head' before starting the API."
+                "Database migration history is empty. "
+                "Run 'alembic upgrade head' before starting the API."
+            )
+
+        role_check = await connection.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'user_accounts' AND column_name = 'role'"
+            )
+        )
+        if role_check.scalar_one_or_none() is None:
+            raise RuntimeError(
+                "Database schema is out of date: 'role' column is missing from "
+                "user_accounts. Run 'alembic upgrade head' to apply all pending migrations."
+            )
+
+        token_version_check = await connection.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'user_accounts' AND column_name = 'token_version'"
+            )
+        )
+        if token_version_check.scalar_one_or_none() is None:
+            raise RuntimeError(
+                "Database schema is out of date: 'token_version' column is missing from "
+                "user_accounts. Run 'alembic upgrade head' to apply all pending migrations."
             )

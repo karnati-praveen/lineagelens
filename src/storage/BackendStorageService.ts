@@ -115,6 +115,7 @@ export class BackendStorageService implements ProvenanceStorageService {
     const vectorSearchPath = this.getVectorSearchPath(resource);
     const currentFilePath = filters.currentFileOnly ? filters.currentFilePath : undefined;
 
+    const clampedLimit = Math.min(200, Math.max(1, filters.limit ?? DEFAULT_LIMIT));
     const bodyPayload = {
       query: filters.keywords,
       keywords: filters.keywords,
@@ -129,45 +130,25 @@ export class BackendStorageService implements ProvenanceStorageService {
         dateTo: filters.dateTo || undefined,
         filePath: currentFilePath
       },
-      limit: Math.max(1, filters.limit ?? DEFAULT_LIMIT),
-      topK: Math.max(1, filters.limit ?? DEFAULT_LIMIT)
+      limit: clampedLimit,
+      topK: clampedLimit
     };
 
-    const primaryUrl = joinUrl(backendBaseUrl, vectorSearchPath);
-    const fallbackUrls = [
-      joinUrl(backendBaseUrl, '/vector-search'),
-      joinUrl(backendBaseUrl, '/search/similarity'),
-      joinUrl(backendBaseUrl, '/provenance/search')
-    ];
+    const searchUrl = joinUrl(backendBaseUrl, vectorSearchPath);
+    const response = await this.requestJson('POST', searchUrl, resource, bodyPayload);
 
-    const attemptedUrls: string[] = [];
-
-    for (const endpointUrl of [primaryUrl, ...fallbackUrls]) {
-      if (attemptedUrls.includes(endpointUrl)) {
-        continue;
-      }
-
-      attemptedUrls.push(endpointUrl);
-      const response = await this.requestJson('POST', endpointUrl, resource, bodyPayload);
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        return parseSearchResults(response.body).map((item) => ({
-          ...item,
-          mode: this.mode
-        }));
-      }
-
-      this.log(
-        'Provenance search endpoint ' +
-          endpointUrl +
-          ' returned status ' +
-          String(response.statusCode) +
-          '.'
-      );
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return parseSearchResults(response.body).map((item) => ({
+        ...item,
+        mode: this.mode
+      }));
     }
 
+    this.log(
+      'Provenance search endpoint ' + searchUrl + ' returned status ' + String(response.statusCode) + '.'
+    );
     throw new Error(
-      'Vector similarity search failed at all configured endpoints: ' + attemptedUrls.join(', ')
+      'Vector similarity search failed with status ' + String(response.statusCode) + ' at ' + searchUrl + '.'
     );
   }
 
@@ -268,22 +249,8 @@ export class BackendStorageService implements ProvenanceStorageService {
       };
     }
 
-    const getFallbackUrl = joinUrl(baseUrl, '/explain?uuid=' + encodeURIComponent(uuid));
-    const getResponse = await this.requestJson('GET', getFallbackUrl, resource);
-
-    if (getResponse.statusCode >= 200 && getResponse.statusCode < 300) {
-      return {
-        explanation: extractExplanationText(getResponse.body),
-        explanationError: null
-      };
-    }
-
     const errorMessage =
-      'Explanation endpoint unavailable with status codes ' +
-      String(postResponse.statusCode) +
-      ' and ' +
-      String(getResponse.statusCode) +
-      '.';
+      'Explanation endpoint returned status ' + String(postResponse.statusCode) + ' at ' + explainUrl + '.';
 
     this.log('Provenance explanation error: ' + errorMessage);
 

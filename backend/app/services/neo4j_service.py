@@ -143,6 +143,20 @@ class Neo4jLineageService:
 
         return new_version_id
 
+    async def delete_lineage_record(self, *, record_uuid: str) -> None:
+        """Remove block and version nodes whose ID matches record_uuid.
+
+        Called when a Postgres commit fails after Neo4j write to prevent
+        orphaned graph nodes that have no corresponding provenance record.
+        """
+        query = """
+        OPTIONAL MATCH (b:AIGeneratedBlock {blockId: $recordUuid})
+        OPTIONAL MATCH (v:ProvenanceBlockVersion {versionId: $recordUuid})
+        DETACH DELETE b, v
+        """
+        async with self._driver.session(database=self._database) as session:
+            await session.run(query, {"recordUuid": record_uuid})
+
     async def soft_delete_block(self, *, block_id: str, timestamp: datetime) -> None:
         """Mark a block and its latest version as deleted (e.g. file was removed)."""
         query = """

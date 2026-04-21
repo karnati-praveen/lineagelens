@@ -92,10 +92,12 @@ async def enforce_http_payload_size(request: Request, call_next):
     if request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
         return await call_next(request)
 
+    max_bytes = current_settings.http_max_body_bytes
+
     content_length = request.headers.get("content-length")
     if content_length:
         try:
-            if int(content_length) > current_settings.http_max_body_bytes:
+            if int(content_length) > max_bytes:
                 return JSONResponse(
                     status_code=413,
                     content={"detail": "Request body too large."},
@@ -106,12 +108,20 @@ async def enforce_http_payload_size(request: Request, call_next):
                 content={"detail": "Invalid Content-Length header."},
             )
 
-    body = await request.body()
-    if len(body) > current_settings.http_max_body_bytes:
-        return JSONResponse(
-            status_code=413,
-            content={"detail": "Request body too large."},
-        )
+    # Stream the body chunk-by-chunk so chunked-encoded requests without a
+    # Content-Length header cannot exhaust worker memory before the size check.
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > max_bytes:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "Request body too large."},
+            )
+        chunks.append(chunk)
+
+    body = b"".join(chunks)
 
     async def receive() -> dict[str, object]:
         return {
@@ -184,12 +194,14 @@ async def health() -> dict[str, object]:
         "status": "ok",
         "app": settings.app_title,
         "version": settings.app_version,
+        # productMode is always included so the VS Code extension can detect
+        # which tier is running and hide unavailable UI controls accordingly.
+        "productMode": settings.product_mode,
     }
     if settings.app_env.strip().lower() != "production":
         body.update(
             {
                 "environment": settings.app_env,
-                "productMode": settings.product_mode,
                 "backendMode": settings.backend_mode,
                 "features": {
                     "neo4j": settings.neo4j_enabled,

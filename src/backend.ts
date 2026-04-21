@@ -217,8 +217,16 @@ export class BackendIngestClient implements vscode.Disposable {
           };
         }
 
+        // Extract FastAPI's "detail" field so the log shows the actual reason
+        // (e.g. "422: Result limit must not exceed 200") instead of just a status code.
+        const errorBody = safeJsonParse(response.body);
+        const backendDetail =
+          errorBody !== undefined && 'detail' in errorBody
+            ? String(errorBody.detail)
+            : response.body.slice(0, 300).trim() || 'no detail from backend';
+
         lastErrorMessage =
-          'HTTP status ' + String(response.statusCode) + ' from backend ingest endpoint.';
+          'HTTP ' + String(response.statusCode) + ' from ingest endpoint: ' + backendDetail;
       } catch (error: unknown) {
         lastErrorMessage = toErrorMessage(error);
       }
