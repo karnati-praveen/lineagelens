@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from urllib import error as url_error
@@ -7,6 +8,8 @@ from urllib import request as url_request
 
 from app.core.config import Settings
 
+
+logger = logging.getLogger(__name__)
 
 EXPLANATION_SYSTEM_PROMPT = """You are an expert software provenance analyst.
 Your task is to explain, in plain English, why a generated code change was likely written this way.
@@ -51,7 +54,10 @@ def _safe_json(value: Any, max_chars: int = 4500) -> str:
 def _build_prompt_context(record: dict[str, Any]) -> dict[str, Any]:
     prompt_messages = (
         _pick_nested(record, ["prompt", "fullMessages"])
+        or _pick_nested(record, ["prompt", "messages"])
         or _pick_nested(record, ["provenance", "fullPromptMessages"])
+        or _pick_nested(record, ["provenance", "messages"])
+        or _pick_nested(record, ["correlation", "messages"])
         or record.get("messages")
     )
 
@@ -163,7 +169,8 @@ async def _try_generate_with_llm(record: dict[str, Any], settings: Settings) -> 
             request_body,
             settings.explain_llm_timeout_seconds,
         )
-    except Exception:
+    except Exception as error:
+        logger.warning("LLM explanation generation failed, falling back to heuristic: %s", error)
         return None
 
 
@@ -219,19 +226,21 @@ def _extract_llm_text(response_payload: dict[str, Any]) -> str | None:
         return text if text else None
 
     if isinstance(content, list):
-        chunks: list[str] = []
-        for chunk in content:
-            if isinstance(chunk, dict):
-                text_part = chunk.get("text")
-                if isinstance(text_part, str) and text_part.strip():
-                    chunks.append(text_part.strip())
-            elif isinstance(chunk, str) and chunk.strip():
-                chunks.append(chunk.strip())
-
-        if chunks:
-            return "\n".join(chunks)
+        return _join_text_content_list(content)
 
     return None
+
+
+def _join_text_content_list(content: list[Any]) -> str | None:
+    chunks: list[str] = []
+    for chunk in content:
+        if isinstance(chunk, dict):
+            text_part = chunk.get("text")
+            if isinstance(text_part, str) and text_part.strip():
+                chunks.append(text_part.strip())
+        elif isinstance(chunk, str) and chunk.strip():
+            chunks.append(chunk.strip())
+    return "\n".join(chunks) if chunks else None
 
 
 def _heuristic_explanation(record: dict[str, Any]) -> str:

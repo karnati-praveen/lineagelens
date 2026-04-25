@@ -174,15 +174,12 @@ export class BackendIngestClient implements vscode.Disposable {
     config: BackendIngestConfig
   ): Promise<BackendIngestResult> {
     const ingestUrl = joinUrl(config.baseUrl, config.ingestPath);
-
     let lastErrorMessage = 'unknown error';
 
     for (let attempt = 1; attempt <= config.httpRetryAttempts; attempt += 1) {
       try {
         const authorizationHeader = await this.authSession.getAuthorizationHeader(
-          resource,
-          true,
-          attempt > 1
+          resource, true, attempt > 1
         );
 
         if (!authorizationHeader) {
@@ -190,8 +187,7 @@ export class BackendIngestClient implements vscode.Disposable {
         }
 
         const response = await requestJson(
-          'POST',
-          ingestUrl,
+          'POST', ingestUrl,
           {
             Authorization: authorizationHeader,
             'Content-Type': 'application/json',
@@ -202,31 +198,11 @@ export class BackendIngestClient implements vscode.Disposable {
           payload
         );
 
-        if (response.statusCode >= 200 && response.statusCode < 300) {
-          const responsePayload = safeJsonParse(response.body);
-          const responseUuid =
-            toStringValue(readPath(responsePayload, ['uuid'])) ?? String(payload.id ?? '').trim();
-
-          if (!responseUuid) {
-            throw new Error('HTTP ingest succeeded but returned no UUID.');
-          }
-
-          return {
-            uuid: responseUuid,
-            transport: 'http'
-          };
+        const result = extractIngestResult(response, payload);
+        if (result.success) {
+          return result.value;
         }
-
-        // Extract FastAPI's "detail" field so the log shows the actual reason
-        // (e.g. "422: Result limit must not exceed 200") instead of just a status code.
-        const errorBody = safeJsonParse(response.body);
-        const backendDetail =
-          errorBody !== undefined && 'detail' in errorBody
-            ? String(errorBody.detail)
-            : response.body.slice(0, 300).trim() || 'no detail from backend';
-
-        lastErrorMessage =
-          'HTTP ' + String(response.statusCode) + ' from ingest endpoint: ' + backendDetail;
+        lastErrorMessage = result.errorMessage;
       } catch (error: unknown) {
         lastErrorMessage = toErrorMessage(error);
       }
@@ -728,6 +704,37 @@ function toErrorMessage(error: unknown): string {
   } catch {
     return String(error);
   }
+}
+
+type IngestResultOutcome =
+  | { success: true; value: BackendIngestResult }
+  | { success: false; errorMessage: string };
+
+function extractIngestResult(
+  response: { statusCode: number; body: string },
+  payload: Record<string, unknown>
+): IngestResultOutcome {
+  if (response.statusCode >= 200 && response.statusCode < 300) {
+    const responsePayload = safeJsonParse(response.body);
+    const responseUuid =
+      toStringValue(readPath(responsePayload, ['uuid'])) ?? String(payload.id ?? '').trim();
+    if (!responseUuid) {
+      throw new Error('HTTP ingest succeeded but returned no UUID.');
+    }
+    return { success: true, value: { uuid: responseUuid, transport: 'http' } };
+  }
+
+  // Extract FastAPI's "detail" field so the log shows the actual reason.
+  const errorBody = safeJsonParse(response.body);
+  const backendDetail =
+    errorBody !== undefined && 'detail' in errorBody
+      ? String(errorBody.detail)
+      : response.body.slice(0, 300).trim() || 'no detail from backend';
+
+  return {
+    success: false,
+    errorMessage: 'HTTP ' + String(response.statusCode) + ' from ingest endpoint: ' + backendDetail
+  };
 }
 
 function generateTraceId(): string {

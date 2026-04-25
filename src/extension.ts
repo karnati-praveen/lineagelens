@@ -1,4 +1,4 @@
-import * as http from 'http';
+﻿import * as http from 'http';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { StructuredLogger } from './logger';
@@ -235,8 +235,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeTextDocument((event) => {
       void queueDocumentChangeProcessing(event);
     }),
-    vscode.commands.registerCommand('lineagelens.start', function () {
-      vscode.window.showInformationMessage('LineageLens working!');
+    vscode.commands.registerCommand('lineagelens.start', async () => {
+      await initializeStorageService(context, vscode.window.activeTextEditor?.document.uri);
+      vscode.window.showInformationMessage('LineageLens is active.');
     }),
     vscode.commands.registerCommand('aiInsertionDetector.toggleFeature', async () => {
       await toggleFeature();
@@ -364,6 +365,30 @@ function trackDocumentSnapshot(document: vscode.TextDocument): void {
   previousDocumentTexts.set(document.uri.toString(), document.getText());
 }
 
+async function persistProvenanceRecord(
+  provenanceRecord: ProvenanceRecord,
+  document: vscode.TextDocument,
+  storageService: ProvenanceStorageService
+): Promise<void> {
+  try {
+    const ingestResult = await storageService.ingest(provenanceRecord, document.uri);
+    telemetry.insertionsIngested += 1;
+    const statusMessage =
+      'AI provenance stored: ' + ingestResult.uuid + ' (' + ingestResult.mode + ', ' + ingestResult.transport + ').';
+    vscode.window.setStatusBarMessage(statusMessage, 6000);
+    log(statusMessage);
+    for (const warning of ingestResult.warnings ?? []) {
+      log('Storage warning: ' + warning);
+    }
+  } catch (error: unknown) {
+    telemetry.ingestErrors += 1;
+    const message =
+      'Provenance persistence failed for ' + provenanceRecord.uuid + ': ' + toErrorMessage(error);
+    log(message);
+    vscode.window.showWarningMessage(message);
+  }
+}
+
 async function handleTextDocumentChange(event: vscode.TextDocumentChangeEvent): Promise<void> {
   const document = event.document;
   const key = document.uri.toString();
@@ -457,43 +482,12 @@ async function handleTextDocumentChange(event: vscode.TextDocumentChangeEvent): 
     log('Qualifying insertion detected: ' + payload.id, { filePath: payload.filePath, netAddedLines: payload.netAddedLines });
 
     const storageService = activeStorageService;
-    const shouldPersistRecord =
-      storageService !== undefined &&
-      (storageService.mode === 'local' || provenanceRecord.correlation.promptStatus === 'captured');
-
-    if (storageService && shouldPersistRecord) {
-      try {
-        const ingestResult = await storageService.ingest(provenanceRecord, document.uri);
-        telemetry.insertionsIngested += 1;
-
-        const statusMessage =
-          'AI provenance stored: ' +
-          ingestResult.uuid +
-          ' (' +
-          ingestResult.mode +
-          ', ' +
-          ingestResult.transport +
-          ').';
-        vscode.window.setStatusBarMessage(statusMessage, 6000);
-        log(statusMessage);
-
-        for (const warning of ingestResult.warnings ?? []) {
-          log('Storage warning: ' + warning);
-        }
-      } catch (error: unknown) {
-        telemetry.ingestErrors += 1;
-        const message =
-          'Provenance persistence failed for ' + provenanceRecord.uuid + ': ' + toErrorMessage(error);
-        log(message);
-        void vscode.window.showWarningMessage(message);
-      }
-    } else if (!storageService) {
+    if (!storageService) {
       log('No active storage service is available; persistence skipped for ' + provenanceRecord.uuid + '.');
-    } else if (provenanceRecord.correlation.promptStatus !== 'captured' && storageService.mode === 'backend') {
-      log('Backend ingest skipped for ' + provenanceRecord.uuid + ' because correlation was not captured.');
+    } else {
+      await persistProvenanceRecord(provenanceRecord, document, storageService);
     }
 
-    await postPayloadToProxy(config.proxyPort, payload);
   } catch (error: unknown) {
     log('Error while processing change event: ' + toErrorMessage(error));
   } finally {
@@ -948,7 +942,7 @@ async function syncLocalProxyLifecycle(): Promise<void> {
     const message =
       'AI Insertion Detector could not start the local LLM proxy: ' + toErrorMessage(error);
     log(message);
-    void vscode.window.showErrorMessage(message);
+    vscode.window.showErrorMessage(message);
   }
 }
 
@@ -1199,7 +1193,7 @@ function logAgentDiagnostics(record: Record<string, unknown>, uuid: string): voi
 
   const text = JSON.stringify(payload, null, 2);
   log('Agent adapter diagnostics for ' + uuid + ': ' + text);
-  void vscode.window.showInformationMessage(
+  vscode.window.showInformationMessage(
     'Adapter diagnostics logged for ' + uuid + ' (' + String(captureStatus) + ').'
   );
 }
@@ -1413,11 +1407,11 @@ async function refreshLocalLineage(): Promise<void> {
     );
 
     log(result.message);
-    void vscode.window.showInformationMessage(result.message);
+    vscode.window.showInformationMessage(result.message);
   } catch (error: unknown) {
     const message = 'Failed to refresh local lineage: ' + toErrorMessage(error);
     log(message);
-    void vscode.window.showWarningMessage(message);
+    vscode.window.showWarningMessage(message);
   }
 }
 
@@ -1451,7 +1445,7 @@ async function handleShowProvenanceCommand(
   }
 
   if (!uuid) {
-    void vscode.window.showErrorMessage('No valid provenance UUID found.');
+    vscode.window.showErrorMessage('No valid provenance UUID found.');
     return;
   }
 
@@ -1460,7 +1454,7 @@ async function handleShowProvenanceCommand(
   } catch (error: unknown) {
     const message = 'Unable to open provenance sidebar: ' + toErrorMessage(error);
     log(message);
-    void vscode.window.showErrorMessage(message);
+    vscode.window.showErrorMessage(message);
   }
 }
 

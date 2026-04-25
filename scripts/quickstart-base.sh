@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# LineageLens Team — Quick Start
-# Run once after unzipping: bash quickstart.sh
+# LineageLens Base — Quick Start
+# Run once after unzipping: bash quickstart-base.sh
 
 set -euo pipefail
 
@@ -14,8 +14,8 @@ RESET='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_DIR="$SCRIPT_DIR/deploy"
 ENV_FILE="$DEPLOY_DIR/.env"
-COMPOSE_FILE="$DEPLOY_DIR/docker-compose.team.yml"
-PROJECT_NAME="lineagelens-team"
+COMPOSE_FILE="$DEPLOY_DIR/docker-compose.base.yml"
+PROJECT_NAME="lineagelens-base"
 BACKEND_URL="http://localhost:8787"
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -25,13 +25,11 @@ ok()   { echo -e "  ${GREEN}✓${RESET}  $*"; }
 info() { echo -e "  ${YELLOW}→${RESET}  $*"; }
 die()  { echo -e "\n  ${RED}✗  ERROR:${RESET} $*\n" >&2; exit 1; }
 
-# Print the command then run it
 cmd() {
     echo -e "  ${YELLOW}\$${RESET}  $*"
     "$@"
 }
 
-# Compose shorthand — always includes project name and env file
 compose() {
     $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
 }
@@ -40,7 +38,7 @@ compose() {
 
 echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════╗${RESET}"
-echo -e "${BOLD}║   LineageLens Team  —  Quick Start       ║${RESET}"
+echo -e "${BOLD}║   LineageLens Base  —  Quick Start       ║${RESET}"
 echo -e "${BOLD}╚══════════════════════════════════════════╝${RESET}"
 
 # ── 1. Prerequisites ──────────────────────────────────────────────────────────
@@ -67,8 +65,6 @@ ok "All prerequisites met."
 # ── 2. Clean up any leftover containers ───────────────────────────────────────
 step "2/7" "Cleaning up any existing containers"
 
-# Stop and remove containers (but NOT volumes — keeps existing data safe).
-# This prevents 'container name already in use' errors.
 if $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" ps -q 2>/dev/null | grep -q .; then
     info "Found existing containers. Stopping them first..."
     echo -e "  ${YELLOW}\$${RESET}  $COMPOSE --project-name $PROJECT_NAME -f $COMPOSE_FILE down --remove-orphans"
@@ -81,19 +77,16 @@ fi
 # ── 3. Generate secrets & write .env ─────────────────────────────────────────
 step "3/7" "Generating secrets"
 
-if [ -f "$ENV_FILE" ]; then
+if [[ -f "$ENV_FILE" ]]; then
     info ".env already exists — reusing existing secrets."
-    # Verify that all required secrets are present and non-empty.
-    # A partially-written .env (e.g. from a failed first run) will cause silent
-    # Postgres auth failures or JWT signing errors that are hard to diagnose.
     for required_key in POSTGRES_PASSWORD JWT_SECRET_KEY JWT_REFRESH_SECRET_KEY; do
         key_value=$(grep -E "^${required_key}=.+" "$ENV_FILE" | head -1 | cut -d= -f2-)
-        if [ -z "$key_value" ]; then
-            die "Required secret '${required_key}' is missing or empty in $ENV_FILE. Delete the file and re-run to regenerate secrets, or run bash reset.sh."
+        if [[ -z "$key_value" ]]; then
+            die "Required secret '${required_key}' is missing or empty in $ENV_FILE. Delete the file and re-run to regenerate secrets, or run bash reset-base.sh."
         fi
     done
     ok "All required secrets present."
-    info "Run bash reset.sh first if you want a completely fresh setup."
+    info "Run bash reset-base.sh first if you want a completely fresh setup."
 else
     POSTGRES_PASSWORD=$(openssl rand -hex 32)
     JWT_SECRET_KEY=$(openssl rand -hex 48)
@@ -111,6 +104,7 @@ EXPLAIN_LLM_API_KEY=
 EOF
 
     ok "Written to: $ENV_FILE"
+    info "Tip: set EXPLAIN_LLM_API_KEY in $ENV_FILE to enable AI explanations."
 fi
 
 # ── 4. Start PostgreSQL ───────────────────────────────────────────────────────
@@ -131,7 +125,7 @@ while true; do
         ok "PostgreSQL is ready."
         break
     fi
-    if [ "$WAITED" -ge "$MAX_WAIT" ]; then
+    if [[ "$WAITED" -ge "$MAX_WAIT" ]]; then
         echo ""
         echo -e "\n  ${YELLOW}Logs from postgres:${RESET}"
         $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" logs --tail 20 postgres
@@ -164,12 +158,12 @@ WAITED=0
 printf "  "
 while true; do
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BACKEND_URL/health" 2>/dev/null || echo "000")
-    if [ "$HTTP_CODE" = "200" ]; then
+    if [[ "$HTTP_CODE" = "200" ]]; then
         echo ""
         ok "Backend is up."
         break
     fi
-    if [ "$WAITED" -ge "$MAX_WAIT" ]; then
+    if [[ "$WAITED" -ge "$MAX_WAIT" ]]; then
         echo ""
         echo -e "\n  ${YELLOW}Logs from backend:${RESET}"
         $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" logs --tail 30 backend
@@ -189,24 +183,25 @@ curl -s "$BACKEND_URL/health" | python3 -m json.tool
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════╗${RESET}"
-echo -e "${BOLD}${GREEN}║   LineageLens Team is ready!             ║${RESET}"
+echo -e "${BOLD}${GREEN}║   LineageLens Base is ready!             ║${RESET}"
 echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════╝${RESET}"
 echo ""
 echo -e "  API:    ${CYAN}$BACKEND_URL${RESET}"
 echo -e "  Health: ${CYAN}$BACKEND_URL/health${RESET}"
 echo ""
-echo -e "  ${BOLD}Register your first admin user:${RESET}"
+echo -e "  ${BOLD}Register your user:${RESET}"
 echo ""
 echo -e "  ${YELLOW}\$${RESET}  curl -s -X POST $BACKEND_URL/auth/register \\"
 echo       "       -H 'Content-Type: application/json' \\"
-echo       "       -d '{\"username\":\"admin\",\"password\":\"YourPassword123!\",\"workspace_id\":\"my-workspace\"}' \\"
+echo       "       -d '{\"username\":\"you\",\"password\":\"YourPassword123!\",\"workspace_id\":\"my-workspace\"}' \\"
 echo       "       | python3 -m json.tool"
+echo ""
+echo -e "  ${BOLD}Base mode includes:${RESET} provenance capture, WebSocket ingest, LLM explain"
+echo -e "  ${BOLD}Not available:${RESET}     semantic search, insights dashboard, team management"
 echo ""
 echo -e "  ${BOLD}Stop the backend:${RESET}"
 echo -e "  ${YELLOW}\$${RESET}  $COMPOSE --project-name $PROJECT_NAME -f $COMPOSE_FILE down"
 echo ""
 echo -e "  ${BOLD}Full reset (deletes all data):${RESET}"
-echo -e "  ${YELLOW}\$${RESET}  bash reset.sh"
-echo ""
-echo "  See docs/native-backend.md for the full API reference."
+echo -e "  ${YELLOW}\$${RESET}  bash reset-base.sh"
 echo ""

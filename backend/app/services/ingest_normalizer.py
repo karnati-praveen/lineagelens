@@ -63,6 +63,45 @@ def extract_workspace_id(payload: object) -> str | None:
     return None
 
 
+def _patch_normalized_event_defaults(
+    normalized_event: dict[str, Any],
+    *,
+    schema_version: str,
+    event_id: str,
+    capture_status: str,
+    prompt_status: str,
+    file_path: str,
+    file_uri: str | None,
+    language_id: str | None,
+    workspace_id: str,
+    inserted_text: str,
+    net_added_lines: int,
+    context_snapshot: dict[str, Any] | None,
+) -> None:
+    normalized_event.setdefault("schemaVersion", schema_version)
+    normalized_event.setdefault("eventId", event_id)
+    normalized_event.setdefault("capture", {})
+    if isinstance(normalized_event["capture"], dict):
+        normalized_event["capture"].setdefault("level", capture_status)
+        normalized_event["capture"].setdefault("promptStatus", prompt_status)
+    normalized_event.setdefault("file", {})
+    if isinstance(normalized_event["file"], dict):
+        normalized_event["file"].setdefault("path", file_path)
+        normalized_event["file"].setdefault("uri", file_uri)
+        normalized_event["file"].setdefault("languageId", language_id or "unknown")
+        normalized_event["file"].setdefault("workspace", workspace_id)
+    normalized_event.setdefault("diff", {})
+    if isinstance(normalized_event["diff"], dict):
+        normalized_event["diff"].setdefault("insertedText", inserted_text)
+        normalized_event["diff"].setdefault("netAddedLines", net_added_lines)
+    normalized_event.setdefault("context", {})
+    if isinstance(normalized_event["context"], dict):
+        normalized_event["context"].setdefault("snapshot", context_snapshot)
+    normalized_event.setdefault("confidence", {})
+    if isinstance(normalized_event["confidence"], dict):
+        normalized_event["confidence"].setdefault("correlation", 0.0)
+
+
 def normalize_ingest_payload(
     payload: object,
     *,
@@ -73,7 +112,7 @@ def normalize_ingest_payload(
 
     raw_payload = deepcopy(payload)
     record_uuid = _parse_uuid(
-        _first_string_from_keys(payload, ["id", "eventId", "uuid", "requestUuid"])
+        _first_string_from_keys(payload, ["id", "eventId", "uuid"])
     ) or uuid_pkg.uuid4()
     request_uuid = _parse_uuid(_first_string(payload, ["requestUuid"]) or None)
 
@@ -177,28 +216,20 @@ def normalize_ingest_payload(
     )
 
     if isinstance(normalized_event, dict):
-        normalized_event.setdefault("schemaVersion", raw_payload.get("schemaVersion") or PROVENANCE_EVENT_SCHEMA_VERSION)
-        normalized_event.setdefault("eventId", str(record_uuid))
-        normalized_event.setdefault("capture", {})
-        if isinstance(normalized_event["capture"], dict):
-            normalized_event["capture"].setdefault("level", capture_status)
-            normalized_event["capture"].setdefault("promptStatus", prompt_status)
-        normalized_event.setdefault("file", {})
-        if isinstance(normalized_event["file"], dict):
-            normalized_event["file"].setdefault("path", file_path)
-            normalized_event["file"].setdefault("uri", file_uri)
-            normalized_event["file"].setdefault("languageId", language_id or "unknown")
-            normalized_event["file"].setdefault("workspace", workspace_id)
-        normalized_event.setdefault("diff", {})
-        if isinstance(normalized_event["diff"], dict):
-            normalized_event["diff"].setdefault("insertedText", inserted_text)
-            normalized_event["diff"].setdefault("netAddedLines", net_added_lines)
-        normalized_event.setdefault("context", {})
-        if isinstance(normalized_event["context"], dict):
-            normalized_event["context"].setdefault("snapshot", context_snapshot)
-        normalized_event.setdefault("confidence", {})
-        if isinstance(normalized_event["confidence"], dict):
-            normalized_event["confidence"].setdefault("correlation", 0.0)
+        _patch_normalized_event_defaults(
+            normalized_event,
+            schema_version=raw_payload.get("schemaVersion") or PROVENANCE_EVENT_SCHEMA_VERSION,
+            event_id=str(record_uuid),
+            capture_status=capture_status,
+            prompt_status=prompt_status,
+            file_path=file_path,
+            file_uri=file_uri,
+            language_id=language_id,
+            workspace_id=workspace_id,
+            inserted_text=inserted_text,
+            net_added_lines=net_added_lines,
+            context_snapshot=context_snapshot,
+        )
 
     provenance_payload = _build_legacy_provenance_payload(
         payload=raw_payload,
@@ -729,6 +760,16 @@ def _extract_net_added_lines(payload: dict[str, Any], inserted_text: str) -> int
         if value is not None:
             return value
 
+    inserted_chunks = _get_path(payload, ["insertion", "insertedChunks"])
+    if isinstance(inserted_chunks, list):
+        total = sum(
+            _to_int(c.get("addedLines")) or 0
+            for c in inserted_chunks
+            if isinstance(c, dict)
+        )
+        if total > 0:
+            return total
+
     if inserted_text.strip():
         newline_count = inserted_text.count("\n")
         return max(1, newline_count + 1)
@@ -741,40 +782,59 @@ def _extract_prompt_payload(
 ) -> tuple[object | None, str | None, dict[str, Any] | None, str | None, str | None]:
     prompt = _extract_mapping(payload, ["prompt"])
     provenance = _extract_mapping(payload, ["provenance"])
+    correlation = _extract_mapping(payload, ["correlation"]) or {}
     source = _extract_mapping(payload, ["source"]) or {}
     model = _extract_mapping(payload, ["model"]) or {}
     response = _extract_mapping(payload, ["response"]) or {}
 
     prompt_messages = (
+        # Structured nested paths (most specific first)
         _get_path(payload, ["prompt", "fullMessages"])
         or _get_path(payload, ["prompt", "body"])
         or _get_path(payload, ["provenance", "fullPromptMessages"])
         or _get_path(payload, ["normalizedEvent", "prompt", "body"])
+        # Correlation object (re-ingestion / proxy path)
+        or _get_path(payload, ["correlation", "fullPromptMessages"])
+        # Top-level alternatives sent by extensions
+        or _get_path(payload, ["messages"])
+        or _get_path(payload, ["promptMessages"])
+        or _get_path(payload, ["prompt_messages"])
     )
 
+    # model.name when model is a dict; fall back to plain string payload.model / payload.modelName
+    _model_str = payload.get("model") if isinstance(payload.get("model"), str) else None
     model_name = (
         _first_string(prompt or {}, ["modelName"])
         or _first_string(provenance or {}, ["modelName"])
         or _first_string(model, ["name"])
         or _first_string(source, ["modelName"])
+        or _first_string(correlation, ["modelName"])
+        or _model_str
+        or _first_string(payload, ["modelName"])
+        or _first_string(payload, ["model_name"])
     )
 
     model_parameters = (
         _extract_mapping(prompt or {}, ["parameters"])
         or _extract_mapping(provenance or {}, ["parameters"])
         or _extract_mapping(model, ["parameters"])
+        or _extract_mapping(correlation, ["parameters"])
     )
 
     raw_model_response = (
         _first_string(prompt or {}, ["rawModelResponse"])
         or _first_string(provenance or {}, ["rawModelResponse"])
         or _first_string(response, ["body"])
+        or _first_string(correlation, ["rawModelResponse"])
+        or _first_string(payload, ["rawModelResponse"])
+        or _first_string(payload, ["raw_model_response"])
     )
 
     raw_model_response_base64 = (
         _first_string(prompt or {}, ["rawModelResponseBase64"])
         or _first_string(provenance or {}, ["rawModelResponseBase64"])
         or _first_string(response, ["bodyBase64"])
+        or _first_string(correlation, ["rawModelResponseBase64"])
     )
 
     return prompt_messages, model_name, model_parameters, raw_model_response, raw_model_response_base64
@@ -819,12 +879,15 @@ def _extract_chunks(payload: dict[str, Any], inserted_text: str) -> list[dict[st
     if not inserted_text:
         return []
 
+    lines = inserted_text.split("\n")
+    last_line_len = len(lines[-1])
+    end_line = len(lines)
     return [
         {
             "text": inserted_text,
             "start": {"line": 1, "column": 1},
-            "end": {"line": 1, "column": 1 + len(inserted_text)},
-            "addedLines": max(1, inserted_text.count("\n") + 1),
+            "end": {"line": end_line, "column": 1 + last_line_len},
+            "addedLines": max(1, end_line),
             "removedLines": 0,
         }
     ]

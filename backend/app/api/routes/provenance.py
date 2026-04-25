@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,11 +12,11 @@ from app.services.provenance_service import get_provenance_by_uuid, serialize_pr
 router = APIRouter(tags=["provenance"])
 
 
-@router.get("/provenance/{record_uuid}", response_model=ProvenanceResponse)
+@router.get("/provenance/{record_uuid}")
 async def get_provenance_record(
     record_uuid: str,
-    session: AsyncSession = Depends(get_db_session),
-    auth: AuthContext = Depends(get_current_auth_context),
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> ProvenanceResponse:
     record = await get_provenance_by_uuid(
         session=session,

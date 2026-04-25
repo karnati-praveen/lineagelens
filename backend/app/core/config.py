@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 DEFAULT_PGVECTOR_DIMENSION = 256
-DEFAULT_BACKEND_MODE = "basic"
+DEFAULT_BACKEND_MODE = "team"
 DISALLOWED_JWT_SECRETS = {
     "",
     "change-me",
@@ -134,14 +134,17 @@ class Settings(BaseSettings):
 
     @property
     def product_mode(self) -> str:
-        return {"solo": "solo", "full": "enterprise"}.get(self.backend_mode, "team")
+        return {"solo": "base", "enterprise": "max", "full": "max"}.get(self.backend_mode, "plus")
 
     @field_validator("backend_mode")
     @classmethod
     def validate_backend_mode(cls, value: str) -> str:
         mode = value.strip().lower()
-        if mode not in {"solo", "basic", "full"}:
-            raise ValueError("BACKEND_MODE must be 'solo', 'basic', or 'full'.")
+        # "basic" and "full" are legacy aliases kept for backward compatibility
+        aliases = {"basic": "team", "full": "enterprise"}
+        mode = aliases.get(mode, mode)
+        if mode not in {"solo", "team", "enterprise"}:
+            raise ValueError("BACKEND_MODE must be 'solo', 'team', or 'enterprise'.")
 
         return mode
 

@@ -13,22 +13,24 @@ from app.db import models  # noqa: F401
 from app.db.base import Base
 
 
+_SQLALCHEMY_URL_KEY = "sqlalchemy.url"
+
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-database_url = os.getenv("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+database_url = os.getenv("DATABASE_URL") or config.get_main_option(_SQLALCHEMY_URL_KEY)
 if not database_url:
     raise RuntimeError("DATABASE_URL must be set for Alembic migrations.")
 
-config.set_main_option("sqlalchemy.url", database_url)
+config.set_main_option(_SQLALCHEMY_URL_KEY, database_url)
 
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
+    url = config.get_main_option(_SQLALCHEMY_URL_KEY)
     context.configure(
         url=url,
         target_metadata=target_metadata,

@@ -18,6 +18,8 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
+_NOW_SQL = sa.text("now()")
+
 
 def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
@@ -46,8 +48,8 @@ def upgrade() -> None:
         sa.Column("embedding_model", sa.String(length=128), nullable=True),
         sa.Column("lineage_node_id", sa.String(length=128), nullable=True),
         sa.Column("provenance_payload", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=_NOW_SQL, nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=_NOW_SQL, nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
 
@@ -75,8 +77,8 @@ def upgrade() -> None:
         sa.Column("password_hash", sa.String(length=512), nullable=False),
         sa.Column("workspace_id", sa.String(length=128), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=_NOW_SQL, nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=_NOW_SQL, nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
 

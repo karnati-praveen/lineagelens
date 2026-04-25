@@ -9,16 +9,16 @@ $envFile = Join-Path $deployDir '.env'
 $backendUrl = 'http://localhost:8787'
 $failedSteps = New-Object System.Collections.Generic.List[string]
 
-if (Test-Path (Join-Path $deployDir 'docker-compose.team.yml')) {
+if (Test-Path (Join-Path $deployDir 'docker-compose.plus.yml')) {
     $bundleMode = 'team'
-    $composeFile = Join-Path $deployDir 'docker-compose.team.yml'
-    $projectName = 'lineagelens-team'
-} elseif (Test-Path (Join-Path $deployDir 'docker-compose.enterprise.yml')) {
+    $composeFile = Join-Path $deployDir 'docker-compose.plus.yml'
+    $projectName = 'lineagelens-plus'
+} elseif (Test-Path (Join-Path $deployDir 'docker-compose.max.yml')) {
     $bundleMode = 'enterprise'
-    $composeFile = Join-Path $deployDir 'docker-compose.enterprise.yml'
-    $projectName = 'lineagelens-enterprise'
+    $composeFile = Join-Path $deployDir 'docker-compose.max.yml'
+    $projectName = 'lineagelens-max'
 } else {
-    throw "Could not detect Team or Enterprise bundle contents under $deployDir."
+    throw "Could not detect Plus or Max bundle contents under $deployDir."
 }
 
 if (Get-Command docker -ErrorAction SilentlyContinue) {

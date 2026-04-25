@@ -3,7 +3,7 @@ version: "3.9"
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: lineagelens-team-postgres
+    container_name: lineagelens-plus-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: provenance
@@ -23,18 +23,18 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
-    container_name: lineagelens-team-backend
+    container_name: lineagelens-plus-backend
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      BACKEND_MODE: basic
+      BACKEND_MODE: team
       NEO4J_ENABLED: "false"
       VECTOR_SEARCH_ENABLED: "false"
       LINEAGE_STRICT_MODE: "false"
       APP_ENV: development
-      APP_TITLE: LineageLens Team Backend
+      APP_TITLE: LineageLens Plus Backend
       APP_VERSION: 0.1.0
       DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/provenance
       PGVECTOR_DIMENSION: 256
@@ -71,6 +71,23 @@ services:
       EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-text-embedding-3-small}
     ports:
       - "8787:8787"
+
+  proxy:
+    build:
+      context: ../proxy
+      dockerfile: Dockerfile
+    container_name: lineagelens-plus-proxy
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      UPSTREAM_URL: ${PROXY_UPSTREAM_URL:-https://api.anthropic.com}
+      BACKEND_URL: http://backend:8787
+      BACKEND_INGEST_TOKEN: ${PROXY_INGEST_TOKEN:-}
+      PROXY_WORKSPACE_ID: ${PROXY_WORKSPACE_ID:-proxy-capture}
+      PROXY_PORT: 8788
+    ports:
+      - "8788:8788"
 
 volumes:
   postgres_team_data:

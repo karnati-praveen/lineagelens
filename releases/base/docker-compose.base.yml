@@ -2,8 +2,8 @@ version: "3.9"
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16
-    container_name: lineagelens-solo-postgres
+    image: postgres:16
+    container_name: lineagelens-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: provenance
@@ -12,7 +12,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_solo_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d provenance"]
       interval: 10s
@@ -20,24 +20,20 @@ services:
       retries: 10
 
   backend:
-    build:
-      context: ../backend
-      dockerfile: Dockerfile
-    container_name: lineagelens-solo-backend
+    image: ghcr.io/lineagelens/backend:base
+    container_name: lineagelens-backend
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      BACKEND_MODE: solo
+      BACKEND_MODE: base
       NEO4J_ENABLED: "false"
       VECTOR_SEARCH_ENABLED: "false"
-      LINEAGE_STRICT_MODE: "false"
-      APP_ENV: development
-      APP_TITLE: LineageLens Solo Backend
-      APP_VERSION: 0.1.0
+      APP_ENV: production
+      APP_TITLE: LineageLens Base
+      APP_VERSION: 0.0.3
       DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/provenance
-      PGVECTOR_DIMENSION: 256
       DB_POOL_SIZE: 3
       DB_MAX_OVERFLOW: 5
       DB_POOL_TIMEOUT_SECONDS: 30
@@ -52,24 +48,14 @@ services:
       JWT_REQUIRED_SCOPES: provenance:write provenance:read
       AUTH_PASSWORD_MIN_LENGTH: 8
       BACKEND_CORS_ORIGINS: http://127.0.0.1:3000,http://localhost:3000
-      HTTP_MAX_BODY_BYTES: 2000000
-      WS_MAX_MESSAGE_BYTES: 2000000
+      HTTP_MAX_BODY_BYTES: 1000000
+      WS_MAX_MESSAGE_BYTES: 1000000
       RATE_LIMIT_ENABLED: "true"
       RATE_LIMIT_WINDOW_SECONDS: 60
-      RATE_LIMIT_MAX_REQUESTS: 120
-      RATE_LIMIT_WS_WINDOW_SECONDS: 60
-      RATE_LIMIT_WS_MAX_MESSAGES: 120
+      RATE_LIMIT_MAX_REQUESTS: 60
       RATE_LIMIT_WS_MAX_CONNECTIONS: 5
-      RATE_LIMIT_MAX_TRACKED_KEYS: 10000
-      EXPLAIN_LLM_API_URL: https://api.openai.com/v1/chat/completions
-      EXPLAIN_LLM_API_KEY: ${EXPLAIN_LLM_API_KEY:-}
-      EXPLAIN_LLM_MODEL: gpt-4o-mini
-      EXPLAIN_LLM_TIMEOUT_SECONDS: 25
-      # Embedding provider is hash-only in solo — no OpenAI embedding key needed.
-      EMBEDDING_PROVIDER: hash
-      EMBEDDING_MODEL_NAME: hash-256
     ports:
       - "8787:8787"
 
 volumes:
-  postgres_solo_data:
+  postgres_data:

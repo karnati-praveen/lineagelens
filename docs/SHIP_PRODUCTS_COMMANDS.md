@@ -18,13 +18,13 @@ Set-Location ..
 ---
 Code Name: Process Scheduler
 
-## 2. Solo mode
+## 2. LineageLens Base
 
-Solo ships as an extension-only artifact.
+LineageLens Base ships as an extension-only artifact.
 
 ```powershell
 Copy-Item .\deploy\.env.docker.example .env -ErrorAction SilentlyContinue
-npm run ship:solo
+npm run ship:base
 ```
 
 ---
@@ -33,7 +33,7 @@ Code Name: File System Driver
 Direct script alternative:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\package-solo.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\package-base.ps1
 ```
 
 ---
@@ -41,16 +41,16 @@ Code Name: I/O Scheduler
 
 Output:
 
-- `releases\solo\lineagelens-solo-<version>.vsix`
+- `releases\base\lineagelens-base-<version>.zip`
 
-## 3. Team mode
+## 3. LineageLens Plus
 
-Team ships as the extension plus the backend-basic deployment bundle.
+LineageLens Plus ships as the extension plus the backend-basic deployment bundle.
 
 ```powershell
-Copy-Item .\deploy\.env.team.example .env
-docker compose -f .\deploy\docker-compose.team.yml config
-npm run ship:team
+Copy-Item .\deploy\.env.plus.example .env
+docker compose -f .\deploy\docker-compose.plus.yml config
+npm run ship:plus
 ```
 
 ---
@@ -59,16 +59,16 @@ Code Name: Kernel Dispatcher
 Direct script alternative:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\package-team.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\package-plus.ps1
 ```
 
 ---
 Code Name: Memory Manager
 
-Bring the Team backend up locally:
+Bring the LineageLens Plus backend up locally:
 
 ```powershell
-docker compose -f .\deploy\docker-compose.team.yml up -d
+docker compose -f .\deploy\docker-compose.plus.yml up -d
 Invoke-RestMethod http://127.0.0.1:8787/health
 ```
 
@@ -77,22 +77,22 @@ Code Name: Network Stack
 
 Output:
 
-- `releases\team\lineagelens-team-<version>.zip`
-- `releases\team\lineagelens-team-<version>\backend\`
-- `releases\team\lineagelens-team-<version>\deploy\docker-compose.team.yml`
-- `releases\team\lineagelens-team-<version>\deploy\.env.team.example`
-- `releases\team\lineagelens-team-<version>\docs\native-backend.md`
-- `releases\team\lineagelens-team-<version>\scripts\run-backend-native.ps1`
-- `releases\team\lineagelens-team-<version>\scripts\test-backend-native.ps1`
+- `releases\plus\lineagelens-plus-<version>.zip`
+- `releases\plus\lineagelens-plus-<version>\backend\`
+- `releases\plus\lineagelens-plus-<version>\deploy\docker-compose.plus.yml`
+- `releases\plus\lineagelens-plus-<version>\deploy\.env.example`
+- `releases\plus\lineagelens-plus-<version>\docs\native-backend.md`
+- `releases\plus\lineagelens-plus-<version>\scripts\run-backend-native.ps1`
+- `releases\plus\lineagelens-plus-<version>\scripts\test-backend-native.ps1`
 
-## 4. Enterprise mode
+## 4. LineageLens Max
 
-Enterprise ships as the extension plus the backend-full deployment bundle.
+LineageLens Max ships as the extension plus the backend-full deployment bundle.
 
 ```powershell
-Copy-Item .\deploy\.env.enterprise.example .env
-docker compose -f .\deploy\docker-compose.enterprise.yml config
-npm run ship:enterprise
+Copy-Item .\deploy\.env.max.example .env
+docker compose -f .\deploy\docker-compose.max.yml config
+npm run ship:max
 ```
 
 ---
@@ -101,16 +101,16 @@ Code Name: Device Driver
 Direct script alternative:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\package-enterprise.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\package-max.ps1
 ```
 
 ---
 Code Name: Buffer Cache
 
-Bring the Enterprise backend up locally:
+Bring the LineageLens Max backend up locally:
 
 ```powershell
-docker compose -f .\deploy\docker-compose.enterprise.yml up -d
+docker compose -f .\deploy\docker-compose.max.yml up -d
 Invoke-RestMethod http://127.0.0.1:8787/health
 ```
 
@@ -119,13 +119,13 @@ Code Name: Packet Filter
 
 Output:
 
-- `releases\enterprise\lineagelens-enterprise-<version>.zip`
-- `releases\enterprise\lineagelens-enterprise-<version>\backend\`
-- `releases\enterprise\lineagelens-enterprise-<version>\deploy\docker-compose.enterprise.yml`
-- `releases\enterprise\lineagelens-enterprise-<version>\deploy\.env.enterprise.example`
-- `releases\enterprise\lineagelens-enterprise-<version>\docs\native-backend.md`
-- `releases\enterprise\lineagelens-enterprise-<version>\scripts\run-backend-native.ps1`
-- `releases\enterprise\lineagelens-enterprise-<version>\scripts\test-backend-native.ps1`
+- `releases\max\lineagelens-max-<version>.zip`
+- `releases\max\lineagelens-max-<version>\backend\`
+- `releases\max\lineagelens-max-<version>\deploy\docker-compose.max.yml`
+- `releases\max\lineagelens-max-<version>\deploy\.env.example`
+- `releases\max\lineagelens-max-<version>\docs\native-backend.md`
+- `releases\max\lineagelens-max-<version>\scripts\run-backend-native.ps1`
+- `releases\max\lineagelens-max-<version>\scripts\test-backend-native.ps1`
 
 ## 5. Optional publish step
 
@@ -140,7 +140,7 @@ Code Name: Interrupt Handler
 
 ## 6. Health expectations
 
-Expected `GET /health` mode values:
+Expected `GET /health` mode values (non-production only):
 
-- Team: `"productMode": "team"`, `"backendMode": "basic"`
-- Enterprise: `"productMode": "enterprise"`, `"backendMode": "full"`
+- LineageLens Plus: `"productMode": "plus"`, `"backendMode": "team"`
+- LineageLens Max: `"productMode": "max"`, `"backendMode": "enterprise"`

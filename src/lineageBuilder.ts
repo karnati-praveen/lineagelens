@@ -890,62 +890,46 @@ function parseNameStatusOutput(output: string): CommitFileChange[] {
   const changes: CommitFileChange[] = [];
 
   for (const rawLine of lines) {
-    if (!rawLine || rawLine.trim().length === 0) {
-      continue;
+    const change = parseNameStatusLine(rawLine);
+    if (change) {
+      changes.push(change);
     }
-
-    const parts = rawLine.split('\t');
-    if (parts.length === 0) {
-      continue;
-    }
-
-    const rawStatus = parts[0].trim();
-    if (rawStatus.length === 0) {
-      continue;
-    }
-
-    const statusCode = rawStatus.charAt(0) as CommitFileChangeStatus;
-
-    if ((statusCode === 'R' || statusCode === 'C') && parts.length >= 3) {
-      changes.push({
-        status: statusCode,
-        oldPath: parts[1],
-        newPath: parts[2]
-      });
-      continue;
-    }
-
-    const filePath = parts.length >= 2 ? parts[1] : null;
-    if (!filePath) {
-      continue;
-    }
-
-    if (statusCode === 'A') {
-      changes.push({
-        status: statusCode,
-        oldPath: null,
-        newPath: filePath
-      });
-      continue;
-    }
-
-    if (statusCode === 'D') {
-      changes.push({
-        status: statusCode,
-        oldPath: filePath,
-        newPath: null
-      });
-      continue;
-    }
-
-    changes.push({
-      status: statusCode,
-      oldPath: filePath,
-      newPath: filePath
-    });
   }
 
   return changes;
+}
+
+function parseNameStatusLine(rawLine: string): CommitFileChange | null {
+  if (!rawLine || rawLine.trim().length === 0) {
+    return null;
+  }
+
+  const parts = rawLine.split('\t');
+  const rawStatus = parts[0]?.trim() ?? '';
+  if (rawStatus.length === 0) {
+    return null;
+  }
+
+  const statusCode = rawStatus.charAt(0) as CommitFileChangeStatus;
+
+  if ((statusCode === 'R' || statusCode === 'C') && parts.length >= 3) {
+    return { status: statusCode, oldPath: parts[1], newPath: parts[2] };
+  }
+
+  const filePath = parts.length >= 2 ? parts[1] : null;
+  if (!filePath) {
+    return null;
+  }
+
+  if (statusCode === 'A') {
+    return { status: statusCode, oldPath: null, newPath: filePath };
+  }
+
+  if (statusCode === 'D') {
+    return { status: statusCode, oldPath: filePath, newPath: null };
+  }
+
+  return { status: statusCode, oldPath: filePath, newPath: filePath };
 }
 
 function collectUniqueChangedPaths(changes: readonly CommitFileChange[]): string[] {

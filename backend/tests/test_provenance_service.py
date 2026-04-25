@@ -111,7 +111,7 @@ def test_search_provenance_records_keyword_fallback_returns_warnings() -> None:
 
     rows, warnings = asyncio.run(
         search_provenance_records(
-            session=session,
+            session=session,  # type: ignore[arg-type]
             search=search,
             workspace_id='workspace-alpha',
             settings=settings,
@@ -161,9 +161,9 @@ def test_ingest_provenance_event_is_idempotent_for_duplicate_request_uuid(monkey
 
     outcome = asyncio.run(
         ingest_provenance_event(
-            session=session,
+            session=session,  # type: ignore[arg-type]
             payload=payload,
-            auth=SimpleNamespace(workspace_id=workspace_id),
+            auth=SimpleNamespace(workspace_id=workspace_id),  # type: ignore[arg-type]
             settings=build_settings(VECTOR_SEARCH_ENABLED=False, BACKEND_MODE='basic'),
             neo4j_service=None,
         )

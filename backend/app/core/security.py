@@ -5,17 +5,21 @@ import os
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from uuid import UUID as PyUUID
 
 from fastapi import Depends, HTTPException, WebSocket, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import ExpiredSignatureError, JWTError, jwt
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
+from app.db.session import get_db_session
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
-PASSWORD_HASH_PREFIX = "pbkdf2_sha256"
-PASSWORD_HASH_ITERATIONS = 390000
+_PBKDF2_SCHEME = "pbkdf2_sha256"
+_PBKDF2_ITERATIONS = 390000
 
 
 @dataclass(slots=True)
@@ -35,10 +39,13 @@ class TokenExpiredError(AuthError):
     pass
 
 
-def get_current_auth_context(
+async def get_current_auth_context(
     token: str | None = Depends(oauth2_scheme),
     settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_db_session),
 ) -> AuthContext:
+    from app.db.models import UserAccount  # local import to avoid circular dependency at module load
+
     if token is None or token.strip() == "":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -46,7 +53,7 @@ def get_current_auth_context(
         )
 
     try:
-        return decode_token(
+        auth = decode_token(
             token.strip(),
             settings,
             expected_token_type="access",
@@ -59,8 +66,25 @@ def get_current_auth_context(
             detail=str(error),
         ) from error
 
+    # Verify token_version to prevent use of tokens revoked on logout or password change.
+    token_version_claim = int(auth.token_payload.get("token_version", -1))
+    if token_version_claim >= 0:
+        try:
+            user_id = PyUUID(auth.subject)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.")
 
-async def authenticate_websocket(websocket: WebSocket, settings: Settings) -> AuthContext:
+        result = await session.execute(
+            select(UserAccount.token_version).where(UserAccount.id == user_id)
+        )
+        db_token_version = result.scalar_one_or_none()
+        if db_token_version is None or db_token_version != token_version_claim:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked.")
+
+    return auth
+
+
+def authenticate_websocket(websocket: WebSocket, settings: Settings) -> AuthContext:
     token = extract_websocket_token(websocket)
 
     if not token:
@@ -209,13 +233,13 @@ def hash_password(password: str) -> str:
         "sha256",
         password.encode("utf-8"),
         salt,
-        PASSWORD_HASH_ITERATIONS,
+        _PBKDF2_ITERATIONS,
     )
 
     return "$".join(
         [
-            PASSWORD_HASH_PREFIX,
-            str(PASSWORD_HASH_ITERATIONS),
+            _PBKDF2_SCHEME,
+            str(_PBKDF2_ITERATIONS),
             base64.urlsafe_b64encode(salt).decode("ascii"),
             base64.urlsafe_b64encode(digest).decode("ascii"),
         ]
@@ -228,7 +252,7 @@ def verify_password(password: str, stored_hash: str) -> bool:
     except ValueError:
         return False
 
-    if scheme != PASSWORD_HASH_PREFIX:
+    if scheme != _PBKDF2_SCHEME:
         return False
 
     try:
@@ -278,25 +302,24 @@ def extract_token_from_subprotocol_header(raw_subprotocols: str) -> str | None:
         return None
 
     for index, protocol in enumerate(protocols):
-        normalized = protocol.strip()
-        lower = normalized.lower()
+        token = _match_protocol_to_token(protocol, index, protocols)
+        if token:
+            return token
 
-        if lower.startswith("bearer ") and len(normalized) > 7:
-            return normalized[7:].strip()
+    return None
 
-        if lower.startswith("bearer.") and len(normalized) > 7:
-            return normalized[7:].strip()
 
-        if lower.startswith("token.") and len(normalized) > 6:
-            return normalized[6:].strip()
+def _match_protocol_to_token(protocol: str, index: int, protocols: list[str]) -> str | None:
+    normalized = protocol.strip()
+    lower = normalized.lower()
 
-        if lower.startswith("jwt.") and len(normalized) > 4:
-            return normalized[4:].strip()
+    for prefix, offset in (("bearer ", 7), ("bearer.", 7), ("token.", 6), ("jwt.", 4)):
+        if lower.startswith(prefix) and len(normalized) > offset:
+            return normalized[offset:].strip()
 
-        if lower == "bearer" and index + 1 < len(protocols):
-            fallback_token = protocols[index + 1].strip()
-            if fallback_token:
-                return fallback_token
+    if lower == "bearer" and index + 1 < len(protocols):
+        fallback_token = protocols[index + 1].strip()
+        return fallback_token if fallback_token else None
 
     return None
 

@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("team", "enterprise")]
-    [string]$Mode = "team",
+    [ValidateSet("plus", "max", "team", "enterprise")]
+    [string]$Mode = "plus",
     [string]$ListenHost = "127.0.0.1",
     [int]$Port = 8787
 )
@@ -61,12 +61,12 @@ if ([string]::IsNullOrWhiteSpace($env:JWT_REFRESH_SECRET_KEY)) {
     $env:JWT_REFRESH_SECRET_KEY = New-SecureSecret
 }
 
-if ($Mode -eq "team") {
-    $env:BACKEND_MODE = "basic"
+if ($Mode -eq "plus" -or $Mode -eq "team") {
+    $env:BACKEND_MODE = "team"
     $env:NEO4J_ENABLED = "false"
     $env:VECTOR_SEARCH_ENABLED = "false"
 } else {
-    $env:BACKEND_MODE = "full"
+    $env:BACKEND_MODE = "enterprise"
     $env:NEO4J_ENABLED = "true"
     $env:VECTOR_SEARCH_ENABLED = "true"
 }

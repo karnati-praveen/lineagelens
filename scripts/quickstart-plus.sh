@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# LineageLens Solo — Quick Start
-# Run once after unzipping: bash quickstart-solo.sh
+# LineageLens Plus — Quick Start
+# Run once after unzipping: bash quickstart.sh
 
 set -euo pipefail
 
@@ -14,8 +14,8 @@ RESET='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_DIR="$SCRIPT_DIR/deploy"
 ENV_FILE="$DEPLOY_DIR/.env"
-COMPOSE_FILE="$DEPLOY_DIR/docker-compose.solo.yml"
-PROJECT_NAME="lineagelens-solo"
+COMPOSE_FILE="$DEPLOY_DIR/docker-compose.plus.yml"
+PROJECT_NAME="lineagelens-plus"
 BACKEND_URL="http://localhost:8787"
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -25,11 +25,13 @@ ok()   { echo -e "  ${GREEN}✓${RESET}  $*"; }
 info() { echo -e "  ${YELLOW}→${RESET}  $*"; }
 die()  { echo -e "\n  ${RED}✗  ERROR:${RESET} $*\n" >&2; exit 1; }
 
+# Print the command then run it
 cmd() {
     echo -e "  ${YELLOW}\$${RESET}  $*"
     "$@"
 }
 
+# Compose shorthand — always includes project name and env file
 compose() {
     $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
 }
@@ -38,7 +40,7 @@ compose() {
 
 echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════╗${RESET}"
-echo -e "${BOLD}║   LineageLens Solo  —  Quick Start       ║${RESET}"
+echo -e "${BOLD}║   LineageLens Plus  —  Quick Start       ║${RESET}"
 echo -e "${BOLD}╚══════════════════════════════════════════╝${RESET}"
 
 # ── 1. Prerequisites ──────────────────────────────────────────────────────────
@@ -65,6 +67,8 @@ ok "All prerequisites met."
 # ── 2. Clean up any leftover containers ───────────────────────────────────────
 step "2/7" "Cleaning up any existing containers"
 
+# Stop and remove containers (but NOT volumes — keeps existing data safe).
+# This prevents 'container name already in use' errors.
 if $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" ps -q 2>/dev/null | grep -q .; then
     info "Found existing containers. Stopping them first..."
     echo -e "  ${YELLOW}\$${RESET}  $COMPOSE --project-name $PROJECT_NAME -f $COMPOSE_FILE down --remove-orphans"
@@ -77,16 +81,19 @@ fi
 # ── 3. Generate secrets & write .env ─────────────────────────────────────────
 step "3/7" "Generating secrets"
 
-if [ -f "$ENV_FILE" ]; then
+if [[ -f "$ENV_FILE" ]]; then
     info ".env already exists — reusing existing secrets."
+    # Verify that all required secrets are present and non-empty.
+    # A partially-written .env (e.g. from a failed first run) will cause silent
+    # Postgres auth failures or JWT signing errors that are hard to diagnose.
     for required_key in POSTGRES_PASSWORD JWT_SECRET_KEY JWT_REFRESH_SECRET_KEY; do
         key_value=$(grep -E "^${required_key}=.+" "$ENV_FILE" | head -1 | cut -d= -f2-)
-        if [ -z "$key_value" ]; then
-            die "Required secret '${required_key}' is missing or empty in $ENV_FILE. Delete the file and re-run to regenerate secrets, or run bash reset-solo.sh."
+        if [[ -z "$key_value" ]]; then
+            die "Required secret '${required_key}' is missing or empty in $ENV_FILE. Delete the file and re-run to regenerate secrets, or run bash reset.sh."
         fi
     done
     ok "All required secrets present."
-    info "Run bash reset-solo.sh first if you want a completely fresh setup."
+    info "Run bash reset.sh first if you want a completely fresh setup."
 else
     POSTGRES_PASSWORD=$(openssl rand -hex 32)
     JWT_SECRET_KEY=$(openssl rand -hex 48)
@@ -104,7 +111,6 @@ EXPLAIN_LLM_API_KEY=
 EOF
 
     ok "Written to: $ENV_FILE"
-    info "Tip: set EXPLAIN_LLM_API_KEY in $ENV_FILE to enable AI explanations."
 fi
 
 # ── 4. Start PostgreSQL ───────────────────────────────────────────────────────
@@ -125,7 +131,7 @@ while true; do
         ok "PostgreSQL is ready."
         break
     fi
-    if [ "$WAITED" -ge "$MAX_WAIT" ]; then
+    if [[ "$WAITED" -ge "$MAX_WAIT" ]]; then
         echo ""
         echo -e "\n  ${YELLOW}Logs from postgres:${RESET}"
         $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" logs --tail 20 postgres
@@ -139,6 +145,10 @@ done
 # ── 5. Run migrations ─────────────────────────────────────────────────────────
 step "5/7" "Running database migrations"
 
+info "Building backend and proxy images..."
+echo -e "  ${YELLOW}\$${RESET}  $COMPOSE --project-name $PROJECT_NAME -f $COMPOSE_FILE --env-file $ENV_FILE build backend proxy"
+$COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build backend proxy
+
 info "Running: alembic upgrade head"
 echo -e "  ${YELLOW}\$${RESET}  $COMPOSE --project-name $PROJECT_NAME -f $COMPOSE_FILE --env-file $ENV_FILE run --rm --no-deps backend alembic upgrade head"
 $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" \
@@ -147,7 +157,7 @@ $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE
 ok "All migrations applied."
 
 # ── 6. Start the backend ──────────────────────────────────────────────────────
-step "6/7" "Starting the backend"
+step "6/7" "Starting the backend and proxy"
 
 echo -e "  ${YELLOW}\$${RESET}  $COMPOSE --project-name $PROJECT_NAME -f $COMPOSE_FILE --env-file $ENV_FILE up -d"
 $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
@@ -158,12 +168,12 @@ WAITED=0
 printf "  "
 while true; do
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BACKEND_URL/health" 2>/dev/null || echo "000")
-    if [ "$HTTP_CODE" = "200" ]; then
+    if [[ "$HTTP_CODE" = "200" ]]; then
         echo ""
         ok "Backend is up."
         break
     fi
-    if [ "$WAITED" -ge "$MAX_WAIT" ]; then
+    if [[ "$WAITED" -ge "$MAX_WAIT" ]]; then
         echo ""
         echo -e "\n  ${YELLOW}Logs from backend:${RESET}"
         $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" logs --tail 30 backend
@@ -183,25 +193,45 @@ curl -s "$BACKEND_URL/health" | python3 -m json.tool
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════╗${RESET}"
-echo -e "${BOLD}${GREEN}║   LineageLens Solo is ready!             ║${RESET}"
+echo -e "${BOLD}${GREEN}║   LineageLens Plus is ready!             ║${RESET}"
 echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════╝${RESET}"
 echo ""
 echo -e "  API:    ${CYAN}$BACKEND_URL${RESET}"
 echo -e "  Health: ${CYAN}$BACKEND_URL/health${RESET}"
 echo ""
-echo -e "  ${BOLD}Register your user:${RESET}"
+echo -e "  ${BOLD}Register your first admin user:${RESET}"
 echo ""
 echo -e "  ${YELLOW}\$${RESET}  curl -s -X POST $BACKEND_URL/auth/register \\"
 echo       "       -H 'Content-Type: application/json' \\"
-echo       "       -d '{\"username\":\"you\",\"password\":\"YourPassword123!\",\"workspace_id\":\"my-workspace\"}' \\"
+echo       "       -d '{\"username\":\"admin\",\"password\":\"YourPassword123!\",\"workspace_id\":\"my-workspace\"}' \\"
 echo       "       | python3 -m json.tool"
 echo ""
-echo -e "  ${BOLD}Solo mode includes:${RESET} provenance capture, WebSocket ingest, LLM explain"
-echo -e "  ${BOLD}Not available:${RESET}     semantic search, insights dashboard, team management"
+echo -e "  Proxy:  ${CYAN}http://localhost:8788${RESET}  (universal LLM capture)"
 echo ""
-echo -e "  ${BOLD}Stop the backend:${RESET}"
+echo -e "  ${BOLD}── Proxy setup (one-time after first login) ──────────────────────${RESET}"
+echo ""
+echo -e "  1. Register and log in to get your token (see above)"
+echo -e "  2. Add your token to ${YELLOW}deploy/.env${RESET}:"
+echo -e "       ${YELLOW}PROXY_INGEST_TOKEN=<your-access-token>${RESET}"
+echo -e "  3. Restart the proxy:"
+echo -e "  ${YELLOW}\$${RESET}  $COMPOSE --project-name $PROJECT_NAME -f $COMPOSE_FILE --env-file $ENV_FILE restart proxy"
+echo ""
+echo -e "  ${BOLD}── Point your AI tools at the proxy ─────────────────────────────${RESET}"
+echo ""
+echo -e "  ${CYAN}# Claude Code / Anthropic SDK${RESET}"
+echo -e "  export ANTHROPIC_BASE_URL=http://localhost:8788"
+echo ""
+echo -e "  ${CYAN}# OpenAI SDK / Cursor / Copilot / any OpenAI-compatible tool${RESET}"
+echo -e "  export OPENAI_BASE_URL=http://localhost:8788"
+echo ""
+echo -e "  ${CYAN}# Verify proxy is running${RESET}"
+echo -e "  curl -s http://localhost:8788/proxy-health | python3 -m json.tool"
+echo ""
+echo -e "  ${BOLD}Stop all services:${RESET}"
 echo -e "  ${YELLOW}\$${RESET}  $COMPOSE --project-name $PROJECT_NAME -f $COMPOSE_FILE down"
 echo ""
 echo -e "  ${BOLD}Full reset (deletes all data):${RESET}"
-echo -e "  ${YELLOW}\$${RESET}  bash reset-solo.sh"
+echo -e "  ${YELLOW}\$${RESET}  bash reset.sh"
+echo ""
+echo "  See docs/native-backend.md for the full API reference."
 echo ""

@@ -130,7 +130,8 @@ async def enforce_http_payload_size(request: Request, call_next):
             "more_body": False,
         }
 
-    request = Request(request.scope, receive)
+    request._receive = receive
+    request._stream_consumed = False
     return await call_next(request)
 
 

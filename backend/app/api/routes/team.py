@@ -1,3 +1,6 @@
+import uuid as uuid_pkg
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -16,10 +19,10 @@ from app.services.team_service import build_team_member_stats
 router = APIRouter(prefix="/team", tags=["team"])
 
 
-@router.get("/members", response_model=TeamMembersResponse, dependencies=[Depends(require_non_solo)])
+@router.get("/members", dependencies=[Depends(require_non_solo)])
 async def list_team_members(
-    session: AsyncSession = Depends(get_db_session),
-    auth: AuthContext = Depends(get_current_auth_context),
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> TeamMembersResponse:
     users_stmt = (
         select(UserAccount)
@@ -44,12 +47,12 @@ async def list_team_members(
     return TeamMembersResponse(workspaceId=auth.workspace_id, members=members)
 
 
-@router.post("/invite", response_model=InviteMemberResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_non_solo)])
+@router.post("/invite", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_non_solo)])
 async def invite_team_member(
     payload: InviteMemberRequest,
-    session: AsyncSession = Depends(get_db_session),
-    auth: AuthContext = Depends(get_current_auth_context),
-    settings: Settings = Depends(get_settings),
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> InviteMemberResponse:
     caller_id = _parse_uuid(auth.subject)
     if caller_id is None:
@@ -104,9 +107,8 @@ async def invite_team_member(
     )
 
 
-def _parse_uuid(value: str):
-    import uuid
+def _parse_uuid(value: str) -> uuid_pkg.UUID | None:
     try:
-        return uuid.UUID(value)
+        return uuid_pkg.UUID(value)
     except (ValueError, TypeError):
         return None

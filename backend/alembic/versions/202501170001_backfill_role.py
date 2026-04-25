@@ -36,4 +36,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Intentionally left empty: the role column and its backfill are purely additive
+    # and cannot be meaningfully reversed without risking data loss for running workspaces.
     pass

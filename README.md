@@ -4,7 +4,7 @@ LineageLens is a provenance system for AI-generated code. It tracks code inserte
 
 ## Operating Modes
 
-### Solo Mode (`local`, default)
+### LineageLens Base (`local`, default)
 
 Zero setup. Fully private. Works offline.
 
@@ -13,17 +13,17 @@ Zero setup. Fully private. Works offline.
 - Best for individual and offline workflows.
 - Start the extension from Command Palette (`Ctrl+Shift+P`) by running `Start LineageLens`.
 
-### Team Mode (`backend basic`)
+### LineageLens Plus (`backend basic`)
 
-Simple team sharing without complexity.
+Shared backend workflows without graph complexity.
 
-- Connects to your FastAPI backend for shared/team workflows.
+- Connects to your FastAPI backend for shared/backend workflows.
 - Enables backend ingest, auth, search, and shared provenance storage.
 - Runs without Neo4j or vector search.
 - Docker is optional. Use the native Python path in [docs/native-backend.md](docs/native-backend.md) if you do not want Docker Desktop.
-- Use `deploy/docker-compose.team.yml` plus `deploy/.env.team.example` when shipping it separately.
+- Use `deploy/docker-compose.plus.yml` plus `deploy/.env.plus.example` for the LineageLens Plus bundle.
 
-### Enterprise Mode (`backend full`)
+### LineageLens Max (`backend full`)
 
 Complete provenance intelligence and auditability.
 
@@ -31,7 +31,7 @@ Complete provenance intelligence and auditability.
 - Uses Neo4j lineage and vector search.
 - Best for the complete production setup.
 - Docker is optional. Use the native Python path in [docs/native-backend.md](docs/native-backend.md) if you want to run the backend without Docker Desktop.
-- Use `deploy/docker-compose.enterprise.yml` plus `deploy/.env.enterprise.example` when shipping it separately.
+- Use `deploy/docker-compose.max.yml` plus `deploy/.env.max.example` for the LineageLens Max bundle.
 
 See [docs/lightweight-adapters.md](docs/lightweight-adapters.md) for the lightweight adapter contract.
 See [docs/shipping-modes.md](docs/shipping-modes.md) for the release layout and [docs/SHIP_PRODUCTS_COMMANDS.md](docs/SHIP_PRODUCTS_COMMANDS.md) for exact ship commands.
@@ -46,10 +46,10 @@ See [docs/shipping-modes.md](docs/shipping-modes.md) for the release layout and 
 
 ## Native Python Backend (No Docker Desktop)
 
-If you want Team or Enterprise mode without Docker Desktop, run the backend in your local Python environment and point it at a PostgreSQL instance you already have.
+If you want LineageLens Plus or LineageLens Max without Docker Desktop, run the backend in your local Python environment and point it at a PostgreSQL instance you already have.
 
-- Team mode needs PostgreSQL only.
-- Enterprise mode needs PostgreSQL plus Neo4j.
+- LineageLens Plus needs PostgreSQL only.
+- LineageLens Max needs PostgreSQL plus Neo4j.
 - Use [docs/native-backend.md](docs/native-backend.md) for the full setup and the PowerShell launch scripts.
 - The native test command is `npm run native:test`.
 
@@ -132,12 +132,12 @@ npm run package:vsix
 
 Mode-specific release helpers:
 
-- `npm run ship:solo`
-- `npm run ship:team`
-- `npm run ship:enterprise`
+- `npm run ship:base`
+- `npm run ship:plus`
+- `npm run ship:max`
 
 Native backend helpers:
 
-- `npm run native:team`
-- `npm run native:enterprise`
+- `npm run native:plus`
+- `npm run native:max`
 - `npm run native:test`

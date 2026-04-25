@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
+import logging
 import re
 import uuid as uuid_pkg
 from typing import Any
@@ -19,10 +20,14 @@ from app.services.ingest_normalizer import NormalizedIngestPayload
 from app.services.neo4j_service import Neo4jLineageService
 
 
+logger = logging.getLogger(__name__)
+
+
 @dataclass(slots=True)
 class IngestOutcome:
     record: ProvenanceRecord
     warnings: list[str]
+    stored: bool = True
 
 
 def infer_language_hint(file_path: str) -> str:
@@ -74,8 +79,8 @@ async def ingest_provenance_event(
         request_uuid=payload.request_uuid,
     )
     if existing_record is not None:
-                warnings.append("Duplicate ingest detected; existing record returned.")
-                return IngestOutcome(record=existing_record, warnings=warnings)
+        warnings.append("Duplicate ingest detected; existing record returned.")
+        return IngestOutcome(record=existing_record, warnings=warnings, stored=False)
 
     timestamp = payload.timestamp_iso
     language_hint = infer_language_hint(payload.file_path)
@@ -122,46 +127,25 @@ async def ingest_provenance_event(
         provenance_payload=payload.provenance_payload,
     )
 
-    lineage_version_id: str | None = None
     try:
         session.add(record)
         await session.flush()
 
-        if neo4j_service is None:
-            warnings.append("Neo4j lineage is disabled; record stored without graph lineage.")
-        else:
-            try:
-                lineage_version_id = await neo4j_service.create_initial_lineage_version(
-                    record_uuid=str(record.uuid),
-                    workspace_id=record.workspace_id,
-                    file_path=record.file_path,
-                    code=record.inserted_code,
-                    ast_tokens=ast_tokens,
-                    timestamp=timestamp,
-                )
-                record.lineage_node_id = lineage_version_id
-            except Exception as error:
-                if settings.lineage_strict_mode:
-                    await session.rollback()
-                    raise
+        lineage_version_id = await _write_lineage_node(
+            record=record,
+            ast_tokens=ast_tokens,
+            timestamp=timestamp,
+            neo4j_service=neo4j_service,
+            session=session,
+            settings=settings,
+            warnings=warnings,
+        )
 
-                warnings.append(
-                    "Neo4j lineage is unavailable; record stored without graph lineage."
-                )
-                warnings.append(f"Neo4j lineage creation failed: {error}")
-
-        try:
-            await session.commit()
-        except Exception:
-            # If the Postgres commit fails after a Neo4j node was written, the
-            # graph node has no matching provenance record. Clean it up to avoid
-            # a zombie node that the UI would hit as a dead-end.
-            if lineage_version_id is not None and neo4j_service is not None:
-                try:
-                    await neo4j_service.delete_lineage_record(record_uuid=lineage_version_id)
-                except Exception:
-                    pass  # cleanup failure; original commit error is re-raised below
-            raise
+        await _commit_with_lineage_cleanup(
+            session=session,
+            lineage_version_id=lineage_version_id,
+            neo4j_service=neo4j_service,
+        )
 
         await session.refresh(record)
     except IntegrityError:
@@ -175,11 +159,66 @@ async def ingest_provenance_event(
         )
         if existing_record is not None:
             warnings.append("Duplicate ingest detected; existing record returned.")
-            return IngestOutcome(record=existing_record, warnings=warnings)
+            return IngestOutcome(record=existing_record, warnings=warnings, stored=False)
 
         raise
 
     return IngestOutcome(record=record, warnings=warnings)
+
+
+async def _write_lineage_node(
+    *,
+    record: ProvenanceRecord,
+    ast_tokens: list[str],
+    timestamp: Any,
+    neo4j_service: Neo4jLineageService | None,
+    session: AsyncSession,
+    settings: Settings,
+    warnings: list[str],
+) -> str | None:
+    if neo4j_service is None:
+        warnings.append("Neo4j lineage is disabled; record stored without graph lineage.")
+        return None
+
+    try:
+        lineage_version_id = await neo4j_service.create_initial_lineage_version(
+            record_uuid=str(record.uuid),
+            workspace_id=record.workspace_id,
+            file_path=record.file_path,
+            code=record.inserted_code,
+            ast_tokens=ast_tokens,
+            timestamp=timestamp,
+        )
+        record.lineage_node_id = lineage_version_id
+        return lineage_version_id
+    except Exception as error:
+        if settings.lineage_strict_mode:
+            await session.rollback()
+            raise
+        warnings.append("Neo4j lineage is unavailable; record stored without graph lineage.")
+        warnings.append(f"Neo4j lineage creation failed: {error}")
+        return None
+
+
+async def _commit_with_lineage_cleanup(
+    *,
+    session: AsyncSession,
+    lineage_version_id: str | None,
+    neo4j_service: Neo4jLineageService | None,
+) -> None:
+    try:
+        await session.commit()
+    except Exception:
+        # If the Postgres commit fails after a Neo4j node was written, the graph node has no
+        # matching provenance record. Clean it up to avoid a zombie node.
+        if lineage_version_id is not None and neo4j_service is not None:
+            try:
+                await neo4j_service.delete_lineage_record(record_uuid=lineage_version_id)
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Neo4j orphan cleanup failed after Postgres commit error: %s", cleanup_error
+                )
+        raise
 
 
 async def find_existing_ingest_record(
@@ -333,35 +372,36 @@ def score_keyword_match(record: ProvenanceRecord, tokens: list[str]) -> float:
     if not tokens:
         return 0.0
 
-    payload_blob = json.dumps(record.provenance_payload or {}, sort_keys=True, default=str).lower()
-    file_path = (record.file_path or "").lower()
-    inserted_code = (record.inserted_code or "").lower()
-    prompt_blob = json.dumps(record.prompt_messages or {}, sort_keys=True, default=str).lower()
-    model_name = (record.model_name or "").lower()
+    fields = {
+        "file_path": (record.file_path or "").lower(),
+        "inserted_code": (record.inserted_code or "").lower(),
+        "prompt_blob": json.dumps(record.prompt_messages or {}, sort_keys=True, default=str).lower(),
+        "model_name": (record.model_name or "").lower(),
+        "payload_blob": json.dumps(record.provenance_payload or {}, sort_keys=True, default=str).lower(),
+    }
 
-    total_score = 0.0
-    max_score = 0.0
-
-    for token in tokens:
-        token_score = 0.0
-        if token in file_path:
-            token_score += 3.0
-        if token in inserted_code:
-            token_score += 2.0
-        if token in prompt_blob:
-            token_score += 2.0
-        if token in model_name:
-            token_score += 2.0
-        if token in payload_blob:
-            token_score += 1.0
-
-        total_score += token_score
-        max_score += 10.0
+    total_score = sum(_score_token(token, fields) for token in tokens)
+    max_score = len(tokens) * 10.0
 
     if max_score <= 0:
         return 0.0
 
     return round(total_score / max_score, 6)
+
+
+def _score_token(token: str, fields: dict[str, str]) -> float:
+    score = 0.0
+    if token in fields["file_path"]:
+        score += 3.0
+    if token in fields["inserted_code"]:
+        score += 2.0
+    if token in fields["prompt_blob"]:
+        score += 2.0
+    if token in fields["model_name"]:
+        score += 2.0
+    if token in fields["payload_blob"]:
+        score += 1.0
+    return score
 
 
 def to_similarity(distance: object) -> float:

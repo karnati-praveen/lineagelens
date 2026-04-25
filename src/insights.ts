@@ -399,7 +399,7 @@ export function assessProvenanceRisk(record: ProvenanceRecord): RiskAssessment {
     score: normalizedScore,
     level: toRiskLevel(normalizedScore),
     reasons: dedupeStrings(reasons).slice(0, 5),
-    categories: [...categories].sort(),
+    categories: [...categories].sort((a, b) => a.localeCompare(b)),
     signalCount: dedupeStrings(reasons).length
   };
 }
@@ -525,6 +525,21 @@ function applyInsightsFilters(
   });
 }
 
+function higherIsBetter(value: number, passAt: number, warnAt: number): 'pass' | 'warning' | 'fail' {
+  return value >= passAt ? 'pass' : value >= warnAt ? 'warning' : 'fail';
+}
+
+function lowerIsBetter(value: number, passAt: number, warnAt: number): 'pass' | 'warning' | 'fail' {
+  return value <= passAt ? 'pass' : value <= warnAt ? 'warning' : 'fail';
+}
+
+function agentSessionControlStatus(agenticRecords: number, uniqueAgentSessions: number): 'pass' | 'warning' | 'fail' {
+  if (agenticRecords === 0) {
+    return 'warning';
+  }
+  return uniqueAgentSessions > 0 ? 'pass' : 'warning';
+}
+
 function buildComplianceControls(input: {
   totalRecords: number;
   promptCaptureRate: number;
@@ -542,50 +557,42 @@ function buildComplianceControls(input: {
     buildControl(
       'prompt-capture',
       'Prompt Capture Coverage',
-      input.promptCaptureRate >= 0.8 ? 'pass' : input.promptCaptureRate >= 0.5 ? 'warning' : 'fail',
+      higherIsBetter(input.promptCaptureRate, 0.8, 0.5),
       percentage(input.promptCaptureRate),
       'How consistently the system retained auditable prompt evidence.'
     ),
     buildControl(
       'risk-density',
       'High-Risk Density',
-      highRiskRatio <= 0.1 ? 'pass' : highRiskRatio <= 0.25 ? 'warning' : 'fail',
+      lowerIsBetter(highRiskRatio, 0.1, 0.25),
       percentage(highRiskRatio),
       'Share of AI-generated records currently assessed as high risk.'
     ),
     buildControl(
       'critical-records',
       'Critical Findings',
-      input.criticalRecords === 0 ? 'pass' : input.criticalRecords <= 3 ? 'warning' : 'fail',
+      lowerIsBetter(input.criticalRecords, 0, 3),
       String(input.criticalRecords),
       'Count of AI-generated records that should be escalated immediately.'
     ),
     buildControl(
       'correlation-quality',
       'Correlation Confidence',
-      input.averageCorrelationConfidence >= 0.7
-        ? 'pass'
-        : input.averageCorrelationConfidence >= 0.5
-          ? 'warning'
-          : 'fail',
+      higherIsBetter(input.averageCorrelationConfidence, 0.7, 0.5),
       percentage(input.averageCorrelationConfidence),
       'Average confidence that prompt/response evidence matches generated code.'
     ),
     buildControl(
       'agent-session-attribution',
       'Agent Session Attribution',
-      input.agenticRecords === 0
-        ? 'warning'
-        : input.uniqueAgentSessions > 0
-          ? 'pass'
-          : 'warning',
+      agentSessionControlStatus(input.agenticRecords, input.uniqueAgentSessions),
       String(input.uniqueAgentSessions),
       'Whether autonomous coding activity can be grouped into reviewable sessions.'
     ),
     buildControl(
       'overall-risk',
       'Average Governance Risk',
-      input.avgRiskScore < 35 ? 'pass' : input.avgRiskScore < 60 ? 'warning' : 'fail',
+      lowerIsBetter(input.avgRiskScore, 35, 60),
       String(input.avgRiskScore),
       'Heuristic governance risk score across all filtered provenance records.'
     )
@@ -869,7 +876,7 @@ function buildAgentSessions(
           (promptCapturedCount / Math.max(1, session.records.length)).toFixed(4)
         ),
         totalNetAddedLines,
-        files: [...files].sort(),
+        files: [...files].sort((a, b) => a.localeCompare(b)),
         evidence: dedupeStrings(session.evidence).slice(0, 6)
       } satisfies AgentSessionSummary;
     })

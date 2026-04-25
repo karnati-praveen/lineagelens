@@ -66,12 +66,9 @@ class InMemoryRateLimiter:
         if len(self._events) <= self._max_tracked_keys:
             return
 
-        threshold = now - window_seconds
-
         stale_keys: list[str] = []
         for key, bucket in self._events.items():
-            while bucket and bucket[0] <= threshold:
-                bucket.popleft()
+            self._prune(bucket, now, window_seconds)
             if not bucket:
                 stale_keys.append(key)
 

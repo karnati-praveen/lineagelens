@@ -50,7 +50,7 @@ if ([string]::IsNullOrWhiteSpace($env:JWT_REFRESH_SECRET_KEY)) {
 }
 
 $env:APP_ENV = "test"
-$env:BACKEND_MODE = "basic"
+$env:BACKEND_MODE = "team"
 $env:NEO4J_ENABLED = "false"
 $env:VECTOR_SEARCH_ENABLED = "false"
 $env:PYTHONPATH = "."

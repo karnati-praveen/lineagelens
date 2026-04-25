@@ -1,17 +1,16 @@
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$releaseDir = Join-Path $repoRoot "releases\\enterprise"
-$envExample = Join-Path $repoRoot "deploy\\.env.enterprise.example"
-$composeFile = Join-Path $repoRoot "deploy\\docker-compose.enterprise.yml"
+$releaseDir = Join-Path $repoRoot "releases\\base"
+$composeFile = Join-Path $repoRoot "deploy\\docker-compose.base.yml"
 
 Push-Location $repoRoot
 try {
     $package = Get-Content (Join-Path $repoRoot "package.json") | ConvertFrom-Json
     $version = $package.version
-    $artifactName = "lineagelens-enterprise-$version.zip"
+    $artifactName = "lineagelens-base-$version.zip"
     $artifactPath = Join-Path $releaseDir $artifactName
-    $bundleRoot = Join-Path $env:TEMP "lineagelens-enterprise-$version"
+    $bundleRoot = Join-Path $env:TEMP "lineagelens-base-$version"
 
     New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 
@@ -29,27 +28,21 @@ try {
 
     # Deploy
     New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "deploy") | Out-Null
-    Copy-Item $composeFile (Join-Path $bundleRoot "deploy\docker-compose.enterprise.yml") -Force
-    Copy-Item $envExample (Join-Path $bundleRoot "deploy\.env.enterprise.example") -Force
+    Copy-Item $composeFile (Join-Path $bundleRoot "deploy\docker-compose.base.yml") -Force
 
     # Docs
     New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "docs") | Out-Null
     Copy-Item (Join-Path $repoRoot "docs\native-backend.md") (Join-Path $bundleRoot "docs\native-backend.md") -Force
-    Copy-Item (Join-Path $repoRoot "docs\architecture.md") (Join-Path $bundleRoot "docs\architecture.md") -Force
-    Copy-Item (Join-Path $repoRoot "docs\shipping-modes.md") (Join-Path $bundleRoot "docs\shipping-modes.md") -Force
 
     # Scripts
     New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "scripts") | Out-Null
-    Copy-Item (Join-Path $repoRoot "scripts\run-backend-native.ps1") (Join-Path $bundleRoot "scripts\run-backend-native.ps1") -Force
-    Copy-Item (Join-Path $repoRoot "scripts\test-backend-native.ps1") (Join-Path $bundleRoot "scripts\test-backend-native.ps1") -Force
     Copy-Item (Join-Path $repoRoot "scripts\debug.sh") (Join-Path $bundleRoot "debug.sh") -Force
     Copy-Item (Join-Path $repoRoot "scripts\debug.ps1") (Join-Path $bundleRoot "debug.ps1") -Force
 
     npm run compile
     npm test
-    Copy-Item (Join-Path $repoRoot "scripts\quickstart-enterprise.sh") (Join-Path $bundleRoot "quickstart.sh") -Force
-    Copy-Item (Join-Path $repoRoot "scripts\reset-enterprise.sh") (Join-Path $bundleRoot "reset.sh") -Force
-    Copy-Item (Join-Path $repoRoot "scripts\commands-enterprise.md") (Join-Path $bundleRoot "COMMANDS.md") -Force
+    Copy-Item (Join-Path $repoRoot "scripts\quickstart-base.sh") (Join-Path $bundleRoot "quickstart.sh") -Force
+    Copy-Item (Join-Path $repoRoot "scripts\reset-base.sh") (Join-Path $bundleRoot "reset.sh") -Force
 
     if (Test-Path $artifactPath) {
         Remove-Item $artifactPath -Force
@@ -58,7 +51,7 @@ try {
     Compress-Archive -Path $bundleRoot -DestinationPath $artifactPath -Force
 
     Remove-Item $bundleRoot -Recurse -Force
-    Write-Host "Enterprise package ready: $artifactPath"
+    Write-Host "Base package ready: $artifactPath"
 }
 finally {
     Pop-Location

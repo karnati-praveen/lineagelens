@@ -2,18 +2,17 @@
 
 LineageLens ships from one codebase in three release modes.
 
-## Solo
+## LineageLens Base
 
-- Extension only.
-- No backend required.
-- Uses `aiCodeProvenance.mode = local`.
+- Extension plus optional self-hosted backend (bundled for convenience).
+- Default mode (`aiCodeProvenance.mode = local`) stores data locally; no backend setup required.
 - Best for single-user and offline workflows.
 
 Artifact target:
 
-- `lineagelens-solo-<version>.vsix`
+- `lineagelens-base-<version>.zip`
 
-## Team
+## LineageLens Plus
 
 - Extension plus backend-basic.
 - Shared ingest, auth, search, and dashboard.
@@ -21,23 +20,23 @@ Artifact target:
 
 Artifacts:
 
-- `lineagelens-team-<version>.zip`
-- `deploy/docker-compose.team.yml`
-- `deploy/.env.team.example`
+- `lineagelens-plus-<version>.zip`
+- `deploy/docker-compose.plus.yml`
+- `deploy/.env.example`
 - `docs/native-backend.md`
 - `scripts/run-backend-native.ps1`
 - `scripts/test-backend-native.ps1`
 
-## Enterprise
+## LineageLens Max
 
 - Extension plus backend-full.
 - Shared ingest, auth, search, dashboard, vector search, and Neo4j lineage.
 
 Artifacts:
 
-- `lineagelens-enterprise-<version>.zip`
-- `deploy/docker-compose.enterprise.yml`
-- `deploy/.env.enterprise.example`
+- `lineagelens-max-<version>.zip`
+- `deploy/docker-compose.max.yml`
+- `deploy/.env.example`
 - `docs/native-backend.md`
 - `scripts/run-backend-native.ps1`
 - `scripts/test-backend-native.ps1`
@@ -46,14 +45,14 @@ Artifacts:
 
 PowerShell helpers:
 
-- `scripts/package-solo.ps1`
-- `scripts/package-team.ps1`
-- `scripts/package-enterprise.ps1`
+- `scripts/package-base.ps1`
+- `scripts/package-plus.ps1`
+- `scripts/package-max.ps1`
 
 NPM wrappers:
 
-- `npm run ship:solo`
-- `npm run ship:team`
-- `npm run ship:enterprise`
+- `npm run ship:base`
+- `npm run ship:plus`
+- `npm run ship:max`
 
 For the exact end-to-end commands, see [SHIP_PRODUCTS_COMMANDS.md](../SHIP_PRODUCTS_COMMANDS.md).

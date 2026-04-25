@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,8 +16,8 @@ router = APIRouter(tags=["insights"])
 @router.post("/insights/dashboard", dependencies=[Depends(require_non_solo)])
 async def get_insights_dashboard(
     payload: SearchRequest,
-    session: AsyncSession = Depends(get_db_session),
-    auth: AuthContext = Depends(get_current_auth_context),
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> dict[str, object]:
     ensure_workspace_scope(auth, payload.workspace_id)
 

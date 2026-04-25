@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LineageLens Enterprise — Quick Start
+# LineageLens Max — Quick Start
 # Run once after unzipping: bash quickstart.sh
 
 set -euo pipefail
@@ -14,8 +14,8 @@ RESET='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_DIR="$SCRIPT_DIR/deploy"
 ENV_FILE="$DEPLOY_DIR/.env"
-COMPOSE_FILE="$DEPLOY_DIR/docker-compose.enterprise.yml"
-PROJECT_NAME="lineagelens-enterprise"
+COMPOSE_FILE="$DEPLOY_DIR/docker-compose.max.yml"
+PROJECT_NAME="lineagelens-max"
 BACKEND_URL="http://localhost:8787"
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ cmd() {
 
 echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════╗${RESET}"
-echo -e "${BOLD}║   LineageLens Enterprise — Quick Start   ║${RESET}"
+echo -e "${BOLD}║   LineageLens Max — Quick Start   ║${RESET}"
 echo -e "${BOLD}╚══════════════════════════════════════════╝${RESET}"
 
 # ── 1. Prerequisites ──────────────────────────────────────────────────────────
@@ -73,11 +73,11 @@ fi
 # ── 3. Generate secrets & write .env ─────────────────────────────────────────
 step "3/8" "Generating secrets"
 
-if [ -f "$ENV_FILE" ]; then
+if [[ -f "$ENV_FILE" ]]; then
     info ".env already exists — reusing existing secrets."
     for required_key in POSTGRES_PASSWORD NEO4J_PASSWORD JWT_SECRET_KEY JWT_REFRESH_SECRET_KEY; do
         key_value=$(grep -E "^${required_key}=.+" "$ENV_FILE" | head -1 | cut -d= -f2-)
-        if [ -z "$key_value" ]; then
+        if [[ -z "$key_value" ]]; then
             die "Required secret '${required_key}' is missing or empty in $ENV_FILE. Delete the file and re-run to regenerate secrets, or run bash reset.sh."
         fi
     done
@@ -104,6 +104,21 @@ EXPLAIN_LLM_API_KEY=
 EOF
 
     ok "Written to: $ENV_FILE"
+
+    # New secrets mean any existing Neo4j volume has the OLD password.
+    # Neo4j stores credentials inside the volume on first boot and ignores
+    # NEO4J_AUTH on subsequent starts — so the new password would be rejected
+    # and the healthcheck would fail.  Remove stale volumes now so Neo4j
+    # initialises clean with the freshly generated password.
+    for vol in \
+        "${PROJECT_NAME}_neo4j_enterprise_data" \
+        "${PROJECT_NAME}_neo4j_enterprise_logs"; do
+        if docker volume ls --format '{{.Name}}' | grep -qx "$vol"; then
+            info "Removing stale Neo4j volume: $vol"
+            docker volume rm "$vol" >/dev/null 2>&1 || true
+        fi
+    done
+    ok "Neo4j volumes cleared — will initialise with new credentials."
 fi
 
 # ── 4. Start PostgreSQL and Neo4j ─────────────────────────────────────────────
@@ -126,7 +141,7 @@ while true; do
         ok "PostgreSQL is ready."
         break
     fi
-    if [ "$WAITED" -ge "$MAX_WAIT" ]; then
+    if [[ "$WAITED" -ge "$MAX_WAIT" ]]; then
         echo ""
         echo -e "\n  ${YELLOW}Logs from postgres:${RESET}"
         $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" logs --tail 20 postgres
@@ -146,12 +161,12 @@ printf "  "
 while true; do
     HEALTH=$($COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" ps -q neo4j 2>/dev/null \
         | xargs -I{} docker inspect --format '{{.State.Health.Status}}' {} 2>/dev/null || echo "starting")
-    if [ "$HEALTH" = "healthy" ]; then
+    if [[ "$HEALTH" = "healthy" ]]; then
         echo ""
         ok "Neo4j is healthy."
         break
     fi
-    if [ "$WAITED" -ge "$MAX_WAIT" ]; then
+    if [[ "$WAITED" -ge "$MAX_WAIT" ]]; then
         echo ""
         echo -e "\n  ${YELLOW}Logs from neo4j:${RESET}"
         $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" logs --tail 20 neo4j
@@ -165,6 +180,10 @@ done
 # ── 7. Run migrations ─────────────────────────────────────────────────────────
 step "7/8" "Running database migrations"
 
+info "Building backend and proxy images..."
+echo -e "  ${YELLOW}\$${RESET}  $COMPOSE --project-name $PROJECT_NAME -f $COMPOSE_FILE --env-file $ENV_FILE build backend proxy"
+$COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build backend proxy
+
 info "Running: alembic upgrade head"
 echo -e "  ${YELLOW}\$${RESET}  $COMPOSE --project-name $PROJECT_NAME -f $COMPOSE_FILE --env-file $ENV_FILE run --rm --no-deps backend alembic upgrade head"
 $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" \
@@ -173,7 +192,7 @@ $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE
 ok "All migrations applied."
 
 # ── 8. Start backend & verify ─────────────────────────────────────────────────
-step "8/8" "Starting backend and verifying"
+step "8/8" "Starting backend and proxy"
 
 echo -e "  ${YELLOW}\$${RESET}  $COMPOSE --project-name $PROJECT_NAME -f $COMPOSE_FILE --env-file $ENV_FILE up -d"
 $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
@@ -184,12 +203,12 @@ WAITED=0
 printf "  "
 while true; do
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BACKEND_URL/health" 2>/dev/null || echo "000")
-    if [ "$HTTP_CODE" = "200" ]; then
+    if [[ "$HTTP_CODE" = "200" ]]; then
         echo ""
         ok "Backend is up."
         break
     fi
-    if [ "$WAITED" -ge "$MAX_WAIT" ]; then
+    if [[ "$WAITED" -ge "$MAX_WAIT" ]]; then
         echo ""
         echo -e "\n  ${YELLOW}Logs from backend:${RESET}"
         $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" logs --tail 30 backend
@@ -206,12 +225,13 @@ curl -s "$BACKEND_URL/health" | python3 -m json.tool
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════╗${RESET}"
-echo -e "${BOLD}${GREEN}║   LineageLens Enterprise is ready!       ║${RESET}"
+echo -e "${BOLD}${GREEN}║   LineageLens Max is ready!       ║${RESET}"
 echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════╝${RESET}"
 echo ""
 echo -e "  API:           ${CYAN}$BACKEND_URL${RESET}"
 echo -e "  Health:        ${CYAN}$BACKEND_URL/health${RESET}"
 echo -e "  Neo4j Browser: ${CYAN}http://localhost:7474${RESET}  (user: neo4j)"
+echo -e "  Proxy:         ${CYAN}http://localhost:8788${RESET}  (universal LLM capture)"
 echo ""
 echo -e "  ${BOLD}Register your first admin user:${RESET}"
 echo ""
@@ -219,6 +239,25 @@ echo -e "  ${YELLOW}\$${RESET}  curl -s -X POST $BACKEND_URL/auth/register \\"
 echo       "       -H 'Content-Type: application/json' \\"
 echo       "       -d '{\"username\":\"admin\",\"password\":\"YourPassword123!\",\"workspace_id\":\"my-workspace\"}' \\"
 echo       "       | python3 -m json.tool"
+echo ""
+echo -e "  ${BOLD}── Proxy setup (one-time after first login) ──────────────────────${RESET}"
+echo ""
+echo -e "  1. Register and log in to get your token (see above)"
+echo -e "  2. Add your token to ${YELLOW}deploy/.env${RESET}:"
+echo -e "       ${YELLOW}PROXY_INGEST_TOKEN=<your-access-token>${RESET}"
+echo -e "  3. Restart the proxy:"
+echo -e "  ${YELLOW}\$${RESET}  $COMPOSE --project-name $PROJECT_NAME -f $COMPOSE_FILE --env-file $ENV_FILE restart proxy"
+echo ""
+echo -e "  ${BOLD}── Point your AI tools at the proxy ─────────────────────────────${RESET}"
+echo ""
+echo -e "  ${CYAN}# Claude Code / Anthropic SDK${RESET}"
+echo -e "  export ANTHROPIC_BASE_URL=http://localhost:8788"
+echo ""
+echo -e "  ${CYAN}# OpenAI SDK / Cursor / Copilot / any OpenAI-compatible tool${RESET}"
+echo -e "  export OPENAI_BASE_URL=http://localhost:8788"
+echo ""
+echo -e "  ${CYAN}# Verify proxy is running${RESET}"
+echo -e "  curl -s http://localhost:8788/proxy-health | python3 -m json.tool"
 echo ""
 echo -e "  ${BOLD}Stop all services:${RESET}"
 echo -e "  ${YELLOW}\$${RESET}  $COMPOSE --project-name $PROJECT_NAME -f $COMPOSE_FILE down"

@@ -29,4 +29,4 @@ def test_initialize_neo4j_service_returns_none_when_disabled(monkeypatch) -> Non
 def test_settings_expose_team_product_mode_for_basic_backend() -> None:
     settings = build_settings(NEO4J_ENABLED=False, BACKEND_MODE='basic')
 
-    assert settings.product_mode == 'team'
+    assert settings.product_mode == 'plus'

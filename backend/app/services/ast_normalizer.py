@@ -97,7 +97,7 @@ def traverse(node, output: list[str]) -> None:
     if should_include(node_type):
         output.append(node_type)
 
-    for child in getattr(node, "named_children", []) or []:
+    for child in getattr(node, "named_children", []):
         traverse(child, output)
 
 

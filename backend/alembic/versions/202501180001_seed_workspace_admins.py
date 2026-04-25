@@ -49,4 +49,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Intentionally left empty: demoting users back from admin after a workspace-seeding
+    # migration is destructive and workspace-specific; there is no safe generic reversal.
     pass
