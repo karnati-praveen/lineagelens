@@ -77,7 +77,7 @@ All project documentation lives here.
 - `docs/architecture.md` — full architecture overview with data flow diagrams.
 - `docs/lightweight-adapters.md` — lightweight CLI boundary and backend mode behavior.
 - `docs/native-backend.md` — native Python backend setup (no Docker Desktop required).
-- `docs/shipping-modes.md` — release structure and packaging modes (solo, team, enterprise).
+- `docs/shipping-modes.md` — release structure and packaging modes (base, plus, max).
 - `docs/CHANGELOG.md` — version history.
 - `docs/SUPPORT.md` — support information and issue tracking.
 - `docs/SHIP_PRODUCTS_COMMANDS.md` — build and deployment commands for all three modes.

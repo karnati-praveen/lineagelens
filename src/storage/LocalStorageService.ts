@@ -121,7 +121,7 @@ export class LocalStorageService implements ProvenanceStorageService {
 
   public async authenticate(): Promise<void> {
     await vscode.window.showWarningMessage(
-      'Backend authentication is disabled in Local Mode. Use AI Provenance: Switch to Backend Mode to enable team features.'
+      'Backend authentication is disabled in Local Mode. Use AI Provenance: Switch to Backend Mode to enable Plus/Max features.'
     );
   }
 
@@ -252,31 +252,15 @@ export class LocalStorageService implements ProvenanceStorageService {
     const dateToEpoch = parseDateToEpoch(filters.dateTo);
     const currentFilePath = filters.currentFilePath ?? '';
 
-    const candidateEntries: LocalRecordEntry[] = [];
-
-    for (const entry of store.records) {
-      const recordTimestamp = parseDateToEpoch(entry.record.timestampIso);
-      if (dateFromEpoch !== null && (recordTimestamp === null || recordTimestamp < dateFromEpoch)) {
-        continue;
-      }
-
-      if (dateToEpoch !== null && (recordTimestamp === null || recordTimestamp > dateToEpoch)) {
-        continue;
-      }
-
-      const modelName = normalizeModelName(entry.record.prompt.modelName);
-      if (normalizedModelFilter.length > 0 && !modelName.toLowerCase().includes(normalizedModelFilter)) {
-        continue;
-      }
-
-      if (filters.currentFileOnly && currentFilePath.trim().length > 0) {
-        if (!pathsReferToSameFile(entry.record.file.path, currentFilePath)) {
-          continue;
-        }
-      }
-
-      candidateEntries.push(entry);
-    }
+    const candidateEntries = store.records.filter((entry) =>
+      passesSearchFilters(entry, {
+        normalizedModelFilter,
+        dateFromEpoch,
+        dateToEpoch,
+        currentFileOnly: filters.currentFileOnly,
+        currentFilePath
+      })
+    );
 
     const candidateTokens = candidateEntries.map((entry) => tokenizeForSearch(entry.searchText));
     const queryVector =
@@ -348,43 +332,17 @@ export class LocalStorageService implements ProvenanceStorageService {
     const workspaceFolder = this.resolveWorkspaceFolder(resource);
 
     if (!workspaceFolder) {
-      let recordsUpdated = 0;
-      const grouped = groupByFile(store.records);
-      const nowIso = new Date().toISOString();
-
-      for (const entries of grouped.values()) {
-        sortEntriesByTime(entries);
-        for (let index = 1; index < entries.length; index += 1) {
-          const previous = entries[index - 1];
-          const current = entries[index];
-          const lineage = deriveLineage(previous.record, current.record);
-
-          const before = JSON.stringify(current.lineage);
-          current.lineage = {
-            parentUuid: previous.uuid,
-            relationshipType: lineage.relationshipType,
-            similarity: lineage.similarity,
-            commitHash: current.lineage.commitHash,
-            updatedAtIso: nowIso
-          };
-
-          if (before !== JSON.stringify(current.lineage)) {
-            recordsUpdated += 1;
-          }
-        }
-      }
-
-      if (recordsUpdated > 0) {
-        store.updatedAtIso = nowIso;
+      const result = applyLocalLineageWithoutGit(store.records);
+      if (result.recordsUpdated > 0) {
+        store.updatedAtIso = result.nowIso;
         await this.writeStore(resource, store);
       }
-
       return {
         mode: this.mode,
         commitHash: 'n/a',
         parentCommitHash: null,
-        filesChanged: grouped.size,
-        recordsUpdated,
+        filesChanged: result.filesChanged,
+        recordsUpdated: result.recordsUpdated,
         message: 'Updated local lineage without git metadata (workspace folder not available).'
       };
     }
@@ -487,7 +445,7 @@ export class LocalStorageService implements ProvenanceStorageService {
 
   public getModeWarnings(): string[] {
     return [
-      'Team sharing requires backend mode.',
+      'Plus/Max sharing requires backend mode.',
       'Neo4j lineage graph and vector similarity search are available only in backend mode.'
     ];
   }
@@ -670,6 +628,70 @@ export class LocalStorageService implements ProvenanceStorageService {
 
     return vscode.workspace.workspaceFolders?.[0];
   }
+}
+
+function applyLocalLineageWithoutGit(
+  records: LocalRecordEntry[]
+): { recordsUpdated: number; filesChanged: number; nowIso: string } {
+  const nowIso = new Date().toISOString();
+  let recordsUpdated = 0;
+  const grouped = groupByFile(records);
+
+  for (const entries of grouped.values()) {
+    sortEntriesByTime(entries);
+    for (let index = 1; index < entries.length; index += 1) {
+      const previous = entries[index - 1];
+      const current = entries[index];
+      const lineage = deriveLineage(previous.record, current.record);
+      const before = JSON.stringify(current.lineage);
+      current.lineage = {
+        parentUuid: previous.uuid,
+        relationshipType: lineage.relationshipType,
+        similarity: lineage.similarity,
+        commitHash: current.lineage.commitHash,
+        updatedAtIso: nowIso
+      };
+      if (before !== JSON.stringify(current.lineage)) {
+        recordsUpdated += 1;
+      }
+    }
+  }
+
+  return { recordsUpdated, filesChanged: grouped.size, nowIso };
+}
+
+function passesSearchFilters(
+  entry: LocalRecordEntry,
+  opts: {
+    normalizedModelFilter: string;
+    dateFromEpoch: number | null;
+    dateToEpoch: number | null;
+    currentFileOnly: boolean;
+    currentFilePath: string;
+  }
+): boolean {
+  const recordTimestamp = parseDateToEpoch(entry.record.timestampIso);
+
+  if (opts.dateFromEpoch !== null && (recordTimestamp === null || recordTimestamp < opts.dateFromEpoch)) {
+    return false;
+  }
+
+  if (opts.dateToEpoch !== null && (recordTimestamp === null || recordTimestamp > opts.dateToEpoch)) {
+    return false;
+  }
+
+  const modelName = normalizeModelName(entry.record.prompt.modelName);
+  if (opts.normalizedModelFilter.length > 0 && !modelName.toLowerCase().includes(opts.normalizedModelFilter)) {
+    return false;
+  }
+
+  if (opts.currentFileOnly && opts.currentFilePath.trim().length > 0) {
+    if (!pathsReferToSameFile(entry.record.file.path, opts.currentFilePath)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function cloneRecord(record: ProvenanceRecord): ProvenanceRecord {

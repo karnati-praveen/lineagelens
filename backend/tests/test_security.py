@@ -69,4 +69,4 @@ def test_ensure_workspace_scope_rejects_mismatch() -> None:
         workspace_id = "ws-a"
 
     with pytest.raises(HTTPException):
-        ensure_workspace_scope(DummyAuth(), "ws-b")
+        ensure_workspace_scope(DummyAuth(), "ws-b")  # type: ignore[arg-type]

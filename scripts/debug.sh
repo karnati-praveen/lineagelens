@@ -16,18 +16,18 @@ ENV_FILE="$DEPLOY_DIR/.env"
 BACKEND_URL="http://localhost:8787"
 FAILED_STEPS=()
 
-if [ -f "$DEPLOY_DIR/docker-compose.team.yml" ]; then
+if [[ -f "$DEPLOY_DIR/docker-compose.plus.yml" ]]; then
     BUNDLE_MODE="team"
-    COMPOSE_FILE="$DEPLOY_DIR/docker-compose.team.yml"
-    PROJECT_NAME="lineagelens-team"
+    COMPOSE_FILE="$DEPLOY_DIR/docker-compose.plus.yml"
+    PROJECT_NAME="lineagelens-plus"
     SERVICE_NAMES=(postgres backend)
-elif [ -f "$DEPLOY_DIR/docker-compose.enterprise.yml" ]; then
+elif [[ -f "$DEPLOY_DIR/docker-compose.max.yml" ]]; then
     BUNDLE_MODE="enterprise"
-    COMPOSE_FILE="$DEPLOY_DIR/docker-compose.enterprise.yml"
-    PROJECT_NAME="lineagelens-enterprise"
+    COMPOSE_FILE="$DEPLOY_DIR/docker-compose.max.yml"
+    PROJECT_NAME="lineagelens-max"
     SERVICE_NAMES=(postgres neo4j backend)
 else
-    echo -e "${RED}ERROR${RESET}: could not detect Team or Enterprise bundle contents under $DEPLOY_DIR" >&2
+    echo -e "${RED}ERROR${RESET}: could not detect Plus or Max bundle contents under $DEPLOY_DIR" >&2
     exit 1
 fi
 
@@ -61,7 +61,7 @@ section() {
 run_check() {
     local label="$1"
     shift
-    echo -e "  ${YELLOW}$${RESET} $*"
+    echo -e "  ${YELLOW}\$${RESET} $*"
     if "$@"; then
         pass "$label"
     else
@@ -75,12 +75,12 @@ wait_for_health() {
     local elapsed_seconds=0
     local current_health="missing"
 
-    while [ "$elapsed_seconds" -le "$timeout_seconds" ]; do
+    while [[ "$elapsed_seconds" -le "$timeout_seconds" ]]; do
         local container_id
         container_id="$(compose ps -q "$service_name" 2>/dev/null || true)"
-        if [ -n "$container_id" ]; then
+        if [[ -n "$container_id" ]]; then
             current_health="$(docker inspect --format '{{.State.Health.Status}}' "$container_id" 2>/dev/null || echo unknown)"
-            if [ "$current_health" = "healthy" ]; then
+            if [[ "$current_health" = "healthy" ]]; then
                 return 0
             fi
         else
@@ -113,9 +113,9 @@ run_check "curl available" command -v curl
 run_check "python3 available" command -v python3
 
 section "Environment"
-if [ -f "$ENV_FILE" ]; then
+if [[ -f "$ENV_FILE" ]]; then
     required_keys=(POSTGRES_PASSWORD JWT_SECRET_KEY JWT_REFRESH_SECRET_KEY)
-    if [ "$BUNDLE_MODE" = "enterprise" ]; then
+    if [[ "$BUNDLE_MODE" = "enterprise" ]]; then
         required_keys+=(NEO4J_PASSWORD)
     fi
 
@@ -126,7 +126,7 @@ if [ -f "$ENV_FILE" ]; then
         fi
     done
 
-    if [ ${#missing_keys[@]} -eq 0 ]; then
+    if [[ ${#missing_keys[@]} -eq 0 ]]; then
         pass "required env keys present"
     else
         fail "missing env keys: ${missing_keys[*]}"
@@ -137,36 +137,36 @@ section "Compose validation"
 run_check "compose config parses" compose config
 
 section "Database services"
-if [ "$BUNDLE_MODE" = "team" ]; then
+if [[ "$BUNDLE_MODE" = "team" ]]; then
     run_check "start postgres" compose up -d --build postgres
     run_check "postgres becomes healthy" wait_for_health postgres 60
-    if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
+    if [[ ${#FAILED_STEPS[@]} -gt 0 ]]; then
         print_logs postgres
     fi
 else
     run_check "start postgres and neo4j" compose up -d --build postgres neo4j
     run_check "postgres becomes healthy" wait_for_health postgres 60
     run_check "neo4j becomes healthy" wait_for_health neo4j 120
-    if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
+    if [[ ${#FAILED_STEPS[@]} -gt 0 ]]; then
         print_logs postgres
         print_logs neo4j
     fi
 fi
 
 section "Migration checks"
-run_check "alembic heads" compose run --rm --no-deps --build backend alembic heads
-run_check "alembic current" compose run --rm --no-deps --build backend alembic current
-run_check "alembic upgrade head" compose run --rm --no-deps --build backend alembic upgrade head
+run_check "alembic heads" compose run --rm --no-deps backend alembic heads
+run_check "alembic current" compose run --rm --no-deps backend alembic current
+run_check "alembic upgrade head" compose run --rm --no-deps backend alembic upgrade head
 
 section "Backend"
-run_check "start backend" compose up -d --build backend
+run_check "start backend" compose up -d backend
 run_check "backend becomes healthy" bash -lc "for i in {1..20}; do curl -fsS '$BACKEND_URL/health' >/dev/null && exit 0; sleep 3; done; exit 1"
-if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
+if [[ ${#FAILED_STEPS[@]} -gt 0 ]]; then
     print_logs backend
 fi
 
 section "Summary"
-if [ ${#FAILED_STEPS[@]} -eq 0 ]; then
+if [[ ${#FAILED_STEPS[@]} -eq 0 ]]; then
     echo -e "${GREEN}All checks passed.${RESET}"
     exit 0
 fi

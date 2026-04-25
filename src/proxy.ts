@@ -863,6 +863,15 @@ function toErrorMessage(error: unknown): string {
   }
 }
 
+function statusCounts(status: CaptureStatus): { full: number; metadataOnly: number; tunnelOnly: number; unavailable: number } {
+  return {
+    full: status === 'full' ? 1 : 0,
+    metadataOnly: status === 'metadata_only' ? 1 : 0,
+    tunnelOnly: status === 'tunnel_only' ? 1 : 0,
+    unavailable: status === 'unavailable' ? 1 : 0
+  };
+}
+
 function recordCapabilityObservation(
   telemetry: Map<
     string,
@@ -882,25 +891,26 @@ function recordCapabilityObservation(
 ): void {
   const key = host.toLowerCase();
   const current = telemetry.get(key);
+  const counts = statusCounts(status);
   const next = current
     ? {
         ...current,
         status,
         totalCount: current.totalCount + 1,
-        fullCount: current.fullCount + (status === 'full' ? 1 : 0),
-        metadataOnlyCount: current.metadataOnlyCount + (status === 'metadata_only' ? 1 : 0),
-        tunnelOnlyCount: current.tunnelOnlyCount + (status === 'tunnel_only' ? 1 : 0),
-        unavailableCount: current.unavailableCount + (status === 'unavailable' ? 1 : 0),
+        fullCount: current.fullCount + counts.full,
+        metadataOnlyCount: current.metadataOnlyCount + counts.metadataOnly,
+        tunnelOnlyCount: current.tunnelOnlyCount + counts.tunnelOnly,
+        unavailableCount: current.unavailableCount + counts.unavailable,
         lastSeenIso: new Date().toISOString()
       }
     : {
         host,
         status,
         totalCount: 1,
-        fullCount: status === 'full' ? 1 : 0,
-        metadataOnlyCount: status === 'metadata_only' ? 1 : 0,
-        tunnelOnlyCount: status === 'tunnel_only' ? 1 : 0,
-        unavailableCount: status === 'unavailable' ? 1 : 0,
+        fullCount: counts.full,
+        metadataOnlyCount: counts.metadataOnly,
+        tunnelOnlyCount: counts.tunnelOnly,
+        unavailableCount: counts.unavailable,
         lastSeenIso: new Date().toISOString()
       };
 

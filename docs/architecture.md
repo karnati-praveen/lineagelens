@@ -8,11 +8,11 @@ LineageLens is a provenance system for AI-generated code. It works with any tool
 
 The current implementation supports three operating modes:
 
-- Solo mode: local-only storage inside VS Code.
-- Team mode: backend basic, with PostgreSQL and no Neo4j or vector search.
-- Enterprise mode: backend full, with PostgreSQL, Neo4j lineage, and vector search.
+- Base mode: local-only storage inside VS Code.
+- Plus mode: backend-backed storage with PostgreSQL and no Neo4j or vector search.
+- Max mode: backend + graph storage with PostgreSQL, Neo4j lineage, and vector search.
 
-For Team and Enterprise usage, the important part is the agent traffic and backend, not only the VS Code UI. The current codebase already recognizes Claude Code, Cursor, Aider, and a legacy heuristic path as agent sources.
+For Plus and Max usage, the important part is the agent traffic and backend, not only the VS Code UI. The current codebase already recognizes Claude Code, Cursor, Aider, and a legacy heuristic path as agent sources.
 
 ## 2. Main Runtime Pieces
 
@@ -51,7 +51,7 @@ The adapter layer already supports these agent sources:
 - Aider
 - Legacy heuristic fallback for older or partial fingerprints
 
-These are not separate IDE shims in the current repo. They are agent identities inferred from traffic, headers, user-agent strings, payload shapes, and routing hints. That is why Team and Enterprise can still talk about Claude Code or Cursor even if the primary UI is not VS Code-only in the user's workflow.
+These are not separate IDE shims in the current repo. They are agent identities inferred from traffic, headers, user-agent strings, payload shapes, and routing hints. That is why Plus and Max can still talk about Claude Code or Cursor even if the primary UI is not VS Code-only in the user's workflow.
 
 ## 5. Provenance Data Model
 
@@ -97,7 +97,7 @@ The storage layer is split into local and backend implementations.
 - Search uses local keyword scoring with path-aware filters.
 - Explanations default to a template and can optionally call a local Ollama endpoint.
 - Local lineage is derived from previous records in the same file and from AST-token similarity.
-- This mode is the default for Solo usage and requires no backend.
+- This mode is the default for Base usage and requires no backend.
 
 ### Backend Storage
 
@@ -131,21 +131,21 @@ Backend startup initializes the database and, when enabled, Neo4j constraints an
 
 | Mode | Frontend storage mode | Backend mode | Datastores | Search behavior | Lineage graph |
 | --- | --- | --- | --- | --- | --- |
-| Solo | `local` | none | VS Code storage or workspace file | local keyword scoring | local lineage only |
-| Team | `backend` | `basic` | PostgreSQL | keyword fallback search when vector search is off | Neo4j disabled |
-| Enterprise | `backend` | `full` | PostgreSQL + Neo4j | vector search plus filters | Neo4j lineage enabled |
+| Base | `local` | none | VS Code storage or workspace file | local keyword scoring | local lineage only |
+| Plus | `backend` | `team` | PostgreSQL | keyword fallback search when vector search is off | Neo4j disabled |
+| Max | `backend` | `enterprise` | PostgreSQL + Neo4j | vector search plus filters | Neo4j lineage enabled |
 
 Mode wiring is controlled by configuration and environment values:
 
 - Extension storage mode: `aiCodeProvenance.mode`
 - Backend base URL and websocket URL: `aiInsertionDetector.backend.baseUrl` and `aiInsertionDetector.backend.websocketUrl`
-- Backend mode: `BACKEND_MODE=basic` or `BACKEND_MODE=full`
-- Team flags: `NEO4J_ENABLED=false`, `VECTOR_SEARCH_ENABLED=false`
-- Enterprise flags: `NEO4J_ENABLED=true`, `VECTOR_SEARCH_ENABLED=true`
+- Backend mode: `BACKEND_MODE=team` or `BACKEND_MODE=enterprise`
+- Plus flags: `NEO4J_ENABLED=false`, `VECTOR_SEARCH_ENABLED=false`
+- Max flags: `NEO4J_ENABLED=true`, `VECTOR_SEARCH_ENABLED=true`
 
 ## 9. Graphs For Each Mode
 
-### Solo Mode
+### Base Mode
 
 ```mermaid
 flowchart TD
@@ -161,9 +161,9 @@ flowchart TD
   I --> J[Provenance sidebar, search sidebar, dashboard, reviewer]
 ```
 
-Solo mode keeps all provenance on the workstation and does not require backend services.
+Base mode keeps all provenance on the workstation and does not require backend services.
 
-### Team Mode
+### Plus Mode
 
 ```mermaid
 flowchart TD
@@ -182,9 +182,9 @@ flowchart TD
   J -. no Neo4j / no vector search .-> M[backend_mode = basic]
 ```
 
-Team mode moves shared provenance into the backend while keeping the graph layer off. Search falls back to keyword scoring when vector search is disabled.
+Plus mode moves shared provenance into the backend while keeping the graph layer off. Search falls back to keyword scoring when vector search is disabled.
 
-### Enterprise Mode
+### Max Mode
 
 ```mermaid
 flowchart TD
@@ -205,20 +205,20 @@ flowchart TD
   J -. backend_mode = full .-> N[Neo4j enabled and vector search enabled]
 ```
 
-Enterprise mode adds lineage graph persistence and vector search on top of the Team flow.
+Max mode adds lineage graph persistence and vector search on top of the Plus flow.
 
 ## 10. Native And Docker Launch Paths
 
 The backend can run without Docker Desktop.
 
-- Native Team: `npm run native:team`
-- Native Enterprise: `npm run native:enterprise`
+- Native Plus: `npm run native:plus`
+- Native Max: `npm run native:max`
 - Native backend tests: `npm run native:test`
 
 The Docker shipping paths remain available for release packaging:
 
-- `docker compose -f docker-compose.team.yml up`
-- `docker compose -f docker-compose.enterprise.yml up`
+- `docker compose -f docker-compose.plus.yml up`
+- `docker compose -f docker-compose.max.yml up`
 
 ## 11. Security And Limits
 
@@ -244,4 +244,4 @@ The native backend test path runs through the local `.venv` and exercises the Py
 
 ## 13. One-Sentence Summary
 
-LineageLens uses VS Code as its current observation host to detect AI-assisted code insertions from Claude Code, Cursor, Aider, or any tool that writes files, correlates them with local or backend capture sources, normalizes them into a portable provenance record, and exposes provenance, review, dashboard, and lineage views across Solo, Team, and Enterprise modes.
+LineageLens uses VS Code as its current observation host to detect AI-assisted code insertions from Claude Code, Cursor, Aider, or any tool that writes files, correlates them with local or backend capture sources, normalizes them into a portable provenance record, and exposes provenance, review, dashboard, and lineage views across Base, Plus, and Max modes.

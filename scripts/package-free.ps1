@@ -1,16 +1,16 @@
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$releaseDir = Join-Path $repoRoot "releases\\solo"
-$composeFile = Join-Path $repoRoot "deploy\\docker-compose.solo.yml"
+$releaseDir = Join-Path $repoRoot "releases\\base"
+$composeFile = Join-Path $repoRoot "deploy\\docker-compose.base.yml"
 
 Push-Location $repoRoot
 try {
     $package = Get-Content (Join-Path $repoRoot "package.json") | ConvertFrom-Json
     $version = $package.version
-    $artifactName = "lineagelens-solo-$version.zip"
+    $artifactName = "lineagelens-base-$version.zip"
     $artifactPath = Join-Path $releaseDir $artifactName
-    $bundleRoot = Join-Path $env:TEMP "lineagelens-solo-$version"
+    $bundleRoot = Join-Path $env:TEMP "lineagelens-base-$version"
 
     New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 
@@ -28,7 +28,7 @@ try {
 
     # Deploy
     New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "deploy") | Out-Null
-    Copy-Item $composeFile (Join-Path $bundleRoot "deploy\docker-compose.solo.yml") -Force
+    Copy-Item $composeFile (Join-Path $bundleRoot "deploy\docker-compose.yml") -Force
 
     # Docs
     New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "docs") | Out-Null
@@ -41,8 +41,8 @@ try {
 
     npm run compile
     npm test
-    Copy-Item (Join-Path $repoRoot "scripts\quickstart-solo.sh") (Join-Path $bundleRoot "quickstart.sh") -Force
-    Copy-Item (Join-Path $repoRoot "scripts\reset-solo.sh") (Join-Path $bundleRoot "reset.sh") -Force
+    Copy-Item (Join-Path $repoRoot "scripts\quickstart-base.sh") (Join-Path $bundleRoot "quickstart.sh") -Force
+    Copy-Item (Join-Path $repoRoot "scripts\reset-base.sh") (Join-Path $bundleRoot "reset.sh") -Force
 
     if (Test-Path $artifactPath) {
         Remove-Item $artifactPath -Force
@@ -51,7 +51,7 @@ try {
     Compress-Archive -Path $bundleRoot -DestinationPath $artifactPath -Force
 
     Remove-Item $bundleRoot -Recurse -Force
-    Write-Host "Solo package ready: $artifactPath"
+    Write-Host "Free package ready: $artifactPath"
 }
 finally {
     Pop-Location

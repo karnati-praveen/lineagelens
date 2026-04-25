@@ -281,69 +281,35 @@ function detectParserLanguage(code: string, language?: string): SupportedParserL
   return 'javascript';
 }
 
+const _EXTENSION_LANGUAGE_MAP: Record<string, SupportedParserLanguage> = {
+  '.py': 'python', '.pyi': 'python',
+  '.tsx': 'tsx', '.jsx': 'tsx',
+  '.ts': 'typescript', '.cts': 'typescript', '.mts': 'typescript',
+  '.js': 'javascript', '.cjs': 'javascript', '.mjs': 'javascript'
+};
+
+const _HINT_LANGUAGE_MAP: Record<string, SupportedParserLanguage> = {
+  python: 'python', py: 'python', python3: 'python', pyi: 'python',
+  typescriptreact: 'tsx', tsx: 'tsx', jsx: 'tsx',
+  typescript: 'typescript', ts: 'typescript', mts: 'typescript', cts: 'typescript',
+  javascript: 'javascript', js: 'javascript', node: 'javascript', nodejs: 'javascript'
+};
+
 function normalizeLanguageHint(language?: string): SupportedParserLanguage | undefined {
   if (!language || language.trim().length === 0) {
     return undefined;
   }
 
   const normalizedHint = language.trim().toLowerCase();
-
   const extensionHint = path.extname(normalizedHint);
   if (extensionHint) {
-    if (extensionHint === '.py' || extensionHint === '.pyi') {
-      return 'python';
-    }
-
-    if (extensionHint === '.tsx') {
-      return 'tsx';
-    }
-
-    if (extensionHint === '.ts' || extensionHint === '.cts' || extensionHint === '.mts') {
-      return 'typescript';
-    }
-
-    if (
-      extensionHint === '.js' ||
-      extensionHint === '.jsx' ||
-      extensionHint === '.cjs' ||
-      extensionHint === '.mjs'
-    ) {
-      return extensionHint === '.jsx' ? 'tsx' : 'javascript';
+    const mapped = _EXTENSION_LANGUAGE_MAP[extensionHint];
+    if (mapped) {
+      return mapped;
     }
   }
 
-  if (
-    normalizedHint === 'python' ||
-    normalizedHint === 'py' ||
-    normalizedHint === 'python3' ||
-    normalizedHint === 'pyi'
-  ) {
-    return 'python';
-  }
-
-  if (normalizedHint === 'typescriptreact' || normalizedHint === 'tsx' || normalizedHint === 'jsx') {
-    return 'tsx';
-  }
-
-  if (
-    normalizedHint === 'typescript' ||
-    normalizedHint === 'ts' ||
-    normalizedHint === 'mts' ||
-    normalizedHint === 'cts'
-  ) {
-    return 'typescript';
-  }
-
-  if (
-    normalizedHint === 'javascript' ||
-    normalizedHint === 'js' ||
-    normalizedHint === 'node' ||
-    normalizedHint === 'nodejs'
-  ) {
-    return 'javascript';
-  }
-
-  return undefined;
+  return _HINT_LANGUAGE_MAP[normalizedHint];
 }
 
 function looksLikePython(sample: string): boolean {

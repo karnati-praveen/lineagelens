@@ -175,40 +175,9 @@ export async function correlateInsertionWithProxyRequest(
   const timingAmbiguous = isTimingWindowAmbiguous(availableCandidates);
   const insertedCode = input.insertedCode;
   const contentSimilarityApplied = timingAmbiguous && insertedCode.trim().length > 0;
-  let ambiguityResolvedByContent = false;
-
-  if (contentSimilarityApplied) {
-    for (const candidate of availableCandidates) {
-      const responseBody = candidate.pair.response?.rawBodyUtf8 ?? '';
-      const similarityScore = calculateLevenshteinSimilarity(responseBody, insertedCode);
-      candidate.contentSimilarityScore = similarityScore;
-      candidate.contentSimilarityQualified = similarityScore >= similarityThreshold;
-      if (candidate.contentSimilarityQualified && similarityScore >= 0.95) {
-        break;
-      }
-    }
-
-    const hasQualifiedCandidate = availableCandidates.some(
-      (candidate) => candidate.contentSimilarityQualified
-    );
-
-    if (hasQualifiedCandidate) {
-      ambiguityResolvedByContent = true;
-      availableCandidates.sort((left, right) => {
-        if (left.contentSimilarityQualified !== right.contentSimilarityQualified) {
-          return left.contentSimilarityQualified ? -1 : 1;
-        }
-
-        const leftScore = left.contentSimilarityScore ?? 0;
-        const rightScore = right.contentSimilarityScore ?? 0;
-        if (leftScore !== rightScore) {
-          return rightScore - leftScore;
-        }
-
-        return compareCandidatesBaseline(left, right);
-      });
-    }
-  }
+  const ambiguityResolvedByContent = contentSimilarityApplied
+    ? resolveByContentSimilarity(availableCandidates, insertedCode, similarityThreshold)
+    : false;
 
   const bestCandidate = availableCandidates[0];
   const correlationConfidence = computeCorrelationConfidence({
@@ -354,6 +323,41 @@ function captureStatusPriority(status: CaptureStatus): number {
   }
 
   return 0;
+}
+
+function resolveByContentSimilarity(
+  candidates: CorrelationCandidate[],
+  insertedCode: string,
+  similarityThreshold: number
+): boolean {
+  for (const candidate of candidates) {
+    const responseBody = candidate.pair.response?.rawBodyUtf8 ?? '';
+    const similarityScore = calculateLevenshteinSimilarity(responseBody, insertedCode);
+    candidate.contentSimilarityScore = similarityScore;
+    candidate.contentSimilarityQualified = similarityScore >= similarityThreshold;
+    if (candidate.contentSimilarityQualified && similarityScore >= 0.95) {
+      break;
+    }
+  }
+
+  const hasQualified = candidates.some((c) => c.contentSimilarityQualified);
+  if (!hasQualified) {
+    return false;
+  }
+
+  candidates.sort((left, right) => {
+    if (left.contentSimilarityQualified !== right.contentSimilarityQualified) {
+      return left.contentSimilarityQualified ? -1 : 1;
+    }
+    const leftScore = left.contentSimilarityScore ?? 0;
+    const rightScore = right.contentSimilarityScore ?? 0;
+    if (leftScore !== rightScore) {
+      return rightScore - leftScore;
+    }
+    return compareCandidatesBaseline(left, right);
+  });
+
+  return true;
 }
 
 function clampSimilarityThreshold(value: number): number {

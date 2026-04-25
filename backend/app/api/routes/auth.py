@@ -1,9 +1,10 @@
 import re
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,11 +35,11 @@ from app.schemas.auth import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/register", response_model=AuthTokenResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register_user(
     payload: RegisterRequest,
-    session: AsyncSession = Depends(get_db_session),
-    settings: Settings = Depends(get_settings),
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> AuthTokenResponse:
     username = normalize_username(payload.username)
     validate_password_strength(payload.password, settings)
@@ -77,11 +78,11 @@ async def register_user(
     return issue_token_response(user, settings)
 
 
-@router.post("/login", response_model=AuthTokenResponse)
+@router.post("/login")
 async def login_user(
     payload: LoginRequest,
-    session: AsyncSession = Depends(get_db_session),
-    settings: Settings = Depends(get_settings),
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> AuthTokenResponse:
     username = normalize_username(payload.username)
     user = await get_user_by_username(session, username)
@@ -108,11 +109,11 @@ async def login_user(
     return issue_token_response(user, settings)
 
 
-@router.post("/refresh", response_model=AuthTokenResponse)
+@router.post("/refresh")
 async def refresh_access_token(
     payload: RefreshRequest,
-    session: AsyncSession = Depends(get_db_session),
-    settings: Settings = Depends(get_settings),
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> AuthTokenResponse:
     raw_refresh_token = payload.refresh_token.strip()
     if not raw_refresh_token:
@@ -165,10 +166,10 @@ async def refresh_access_token(
     return issue_token_response(user, settings)
 
 
-@router.post("/logout", response_model=LogoutResponse)
+@router.post("/logout")
 async def logout_user(
-    auth: AuthContext = Depends(get_current_auth_context),
-    session: AsyncSession = Depends(get_db_session),
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> LogoutResponse:
     user = await get_user_by_id(session, auth.subject)
     if user is not None:
@@ -179,8 +180,8 @@ async def logout_user(
 
 @router.get("/me")
 async def get_authenticated_user(
-    auth: AuthContext = Depends(get_current_auth_context),
-    session: AsyncSession = Depends(get_db_session),
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> dict[str, object]:
     user = await get_user_by_id(session, auth.subject)
 
@@ -245,9 +246,8 @@ async def get_user_by_username(session: AsyncSession, username: str) -> UserAcco
 
 
 async def get_workspace_user_count(session: AsyncSession, workspace_id: str) -> int:
-    from sqlalchemy import func as sa_func
     statement = (
-        select(sa_func.count())
+        select(func.count())
         .select_from(UserAccount)
         .where(UserAccount.workspace_id == workspace_id, UserAccount.is_active.is_(True))
     )

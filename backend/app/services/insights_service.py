@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from datetime import UTC, datetime
-import re
 from typing import Any
 
 from sqlalchemy import and_, desc, func, select
@@ -20,6 +20,7 @@ from app.services.team_service import build_team_member_stats
 HIGH_RISK_THRESHOLD = 65
 CRITICAL_RISK_THRESHOLD = 85
 AGENT_SESSION_GAP_SECONDS = 20 * 60
+MAX_DASHBOARD_RECORDS = 2000
 
 
 async def get_insights_dashboard_payload(
@@ -31,14 +32,24 @@ async def get_insights_dashboard_payload(
         select(ProvenanceRecord)
         .where(and_(*build_workspace_record_filters(search, workspace_id)))
         .order_by(desc(ProvenanceRecord.timestamp_iso))
+        .limit(MAX_DASHBOARD_RECORDS + 1)
     )
 
     result = await session.execute(statement)
     rows = result.scalars().all()
+    truncated = len(rows) > MAX_DASHBOARD_RECORDS
+    rows = rows[:MAX_DASHBOARD_RECORDS]
     records = [serialize_provenance_record(row) for row in rows]
 
+    extra_warnings: list[str] = []
+    if truncated:
+        extra_warnings.append(
+            f"Dashboard analysis is limited to the {MAX_DASHBOARD_RECORDS} most recent records; "
+            "apply date or file filters to narrow results."
+        )
+
     member_stats = await build_member_stats(session, workspace_id)
-    payload = build_insights_dashboard(records)
+    payload = build_insights_dashboard(records, extra_warnings=extra_warnings)
     payload["memberStats"] = [member.model_dump(by_alias=True) for member in member_stats]
     return payload
 
@@ -68,7 +79,22 @@ async def build_member_stats(session: AsyncSession, workspace_id: str) -> list[A
     return build_team_member_stats(users, record_counts)
 
 
-def build_insights_dashboard(records: list[dict[str, Any]]) -> dict[str, Any]:
+def _top_high_risk_previews(high_risk: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ordered = sorted(
+        high_risk,
+        key=lambda item: (item["risk"]["score"], str(item["record"].get("timestampIso", ""))),
+        reverse=True,
+    )
+    return [
+        to_record_preview(item["record"], item["risk"], item["agentContext"], item["model"])
+        for item in ordered[:12]
+    ]
+
+
+def build_insights_dashboard(
+    records: list[dict[str, Any]],
+    extra_warnings: list[str] | None = None,
+) -> dict[str, Any]:
     summaries: list[dict[str, Any]] = []
 
     for record in records:
@@ -139,22 +165,12 @@ def build_insights_dashboard(records: list[dict[str, Any]]) -> dict[str, Any]:
                 [item["record"] for item in summaries]
             ),
         ),
-        "highRiskRecords": [
-            to_record_preview(item["record"], item["risk"], item["agentContext"], item["model"])
-            for item in sorted(
-                high_risk,
-                key=lambda value: (
-                    value["risk"]["score"],
-                    str(value["record"].get("timestampIso", "")),
-                ),
-                reverse=True,
-            )[:12]
-        ],
+        "highRiskRecords": _top_high_risk_previews(high_risk),
         "hotspots": build_hotspots(summaries),
         "modelAnalytics": build_model_analytics(summaries),
         "riskTrends": build_risk_trends(summaries),
         "agentSessions": sessions,
-        "warnings": [],
+        "warnings": list(extra_warnings or []),
     }
 
 
@@ -362,83 +378,86 @@ def build_agent_sessions(summaries: list[dict[str, Any]]) -> list[dict[str, Any]
             current = latest_by_signature.get(signature)
 
         if not current or (timestamp - current["endedAt"]).total_seconds() > AGENT_SESSION_GAP_SECONDS:
-            evidence_values = []
-            for evidence in agent_context.get("evidence") or []:
-                if isinstance(evidence, dict):
-                    evidence_values.append(
-                        f"{str(evidence.get('field') or 'unknown')}: {str(evidence.get('value') or '')}"
-                    )
-
-            current = {
-                "sessionId": native_key
-                or str(agent_context.get("sessionId") or item["record"].get("uuid") or item["record"].get("id")),
-                "conversationId": agent_context.get("conversationId"),
-                "runId": agent_context.get("runId"),
-                "toolName": agent_context.get("toolName"),
-                "provider": agent_context.get("provider"),
-                "modelName": item["model"] or agent_context.get("modelName"),
-                "adapterName": agent_context.get("adapterName"),
-                "adapterConfidence": to_number(agent_context.get("confidence")),
-                "sessionKind": agent_context.get("sessionKind") or "unknown",
-                "startedAt": timestamp,
-                "endedAt": timestamp,
-                "records": [item["record"]],
-                "evidence": evidence_values,
-            }
+            current = _start_agent_session(native_key, agent_context, item, timestamp)
             sessions.append(current)
             if native_key:
                 latest_by_native_id[native_key] = current
             latest_by_signature[signature] = current
         else:
-            current["records"].append(item["record"])
+            current["records"].append((item["record"], item["risk"]["score"]))
             current["endedAt"] = timestamp
             if native_key:
                 latest_by_native_id[native_key] = current
 
-    rows: list[dict[str, Any]] = []
-    for session in sessions:
-        files = {
-            str(pick_first(record, [["file", "path"], ["filePath"]]) or "").strip()
-            for record in session["records"]
-            if pick_first(record, [["file", "path"], ["filePath"]])
-        }
-        record_count = len(session["records"])
-        high_risk_count = sum(
-            1 for record in session["records"] if get_risk_assessment(record)["score"] >= HIGH_RISK_THRESHOLD
-        )
-        prompt_captured_count = sum(
-            1
-            for record in session["records"]
-            if str(record.get("promptStatus", "")).strip().lower() == "captured"
-        )
-        total_net_added_lines = sum(
-            max(0, int(pick_first(record, [["insertion", "netAddedLines"], ["netAddedLines"]]) or 0))
-            for record in session["records"]
-        )
-
-        rows.append(
-            {
-                "sessionId": session["sessionId"],
-                "conversationId": session.get("conversationId"),
-                "runId": session.get("runId"),
-                "toolName": session["toolName"],
-                "provider": session["provider"],
-                "modelName": session["modelName"],
-                "adapterName": session.get("adapterName"),
-                "adapterConfidence": session.get("adapterConfidence"),
-                "sessionKind": session["sessionKind"],
-                "startedAtIso": session["startedAt"].isoformat() + "Z",
-                "endedAtIso": session["endedAt"].isoformat() + "Z",
-                "recordCount": record_count,
-                "highRiskCount": high_risk_count,
-                "promptCaptureRate": round(prompt_captured_count / max(1, record_count), 4),
-                "totalNetAddedLines": total_net_added_lines,
-                "files": sorted(file_path for file_path in files if file_path),
-                "evidence": list(dict.fromkeys(session.get("evidence", [])))[:6],
-            }
-        )
-
+    rows = [_serialize_agent_session_row(session) for session in sessions]
     return sorted(rows, key=lambda row: row["endedAtIso"], reverse=True)[:12]
+
+
+def _start_agent_session(
+    native_key: str | None,
+    agent_context: dict[str, Any],
+    item: dict[str, Any],
+    timestamp: Any,
+) -> dict[str, Any]:
+    evidence_values = [
+        f"{str(evidence.get('field') or 'unknown')}: {str(evidence.get('value') or '')}"
+        for evidence in (agent_context.get("evidence") or [])
+        if isinstance(evidence, dict)
+    ]
+    return {
+        "sessionId": native_key or str(
+            agent_context.get("sessionId") or item["record"].get("uuid") or item["record"].get("id")
+        ),
+        "conversationId": agent_context.get("conversationId"),
+        "runId": agent_context.get("runId"),
+        "toolName": agent_context.get("toolName"),
+        "provider": agent_context.get("provider"),
+        "modelName": item["model"] or agent_context.get("modelName"),
+        "adapterName": agent_context.get("adapterName"),
+        "adapterConfidence": to_number(agent_context.get("confidence")),
+        "sessionKind": agent_context.get("sessionKind") or "unknown",
+        "startedAt": timestamp,
+        "endedAt": timestamp,
+        "records": [(item["record"], item["risk"]["score"])],
+        "evidence": evidence_values,
+    }
+
+
+def _serialize_agent_session_row(session: dict[str, Any]) -> dict[str, Any]:
+    record_count = len(session["records"])
+    files = {
+        str(pick_first(record, [["file", "path"], ["filePath"]]) or "").strip()
+        for record, _ in session["records"]
+        if pick_first(record, [["file", "path"], ["filePath"]])
+    }
+    high_risk_count = sum(1 for _, s in session["records"] if s >= HIGH_RISK_THRESHOLD)
+    prompt_captured = sum(
+        1 for record, _ in session["records"]
+        if str(record.get("promptStatus", "")).strip().lower() == "captured"
+    )
+    net_lines = sum(
+        max(0, int(pick_first(record, [["insertion", "netAddedLines"], ["netAddedLines"]]) or 0))
+        for record, _ in session["records"]
+    )
+    return {
+        "sessionId": session["sessionId"],
+        "conversationId": session.get("conversationId"),
+        "runId": session.get("runId"),
+        "toolName": session["toolName"],
+        "provider": session["provider"],
+        "modelName": session["modelName"],
+        "adapterName": session.get("adapterName"),
+        "adapterConfidence": session.get("adapterConfidence"),
+        "sessionKind": session["sessionKind"],
+        "startedAtIso": session["startedAt"].strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+        "endedAtIso": session["endedAt"].strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+        "recordCount": record_count,
+        "highRiskCount": high_risk_count,
+        "promptCaptureRate": round(prompt_captured / max(1, record_count), 4),
+        "totalNetAddedLines": net_lines,
+        "files": sorted(fp for fp in files if fp),
+        "evidence": list(dict.fromkeys(session.get("evidence", [])))[:6],
+    }
 
 
 def to_record_preview(
@@ -475,102 +494,7 @@ def get_risk_assessment(record: dict[str, Any]) -> dict[str, Any]:
             "reasons": stored.get("reasons") or ["Stored risk assessment available."],
         }
 
-    score = 12
-    reasons: list[str] = []
-    categories: set[str] = set()
-    prompt_status = str(record.get("promptStatus") or "").strip().lower()
-    inserted_code = str(
-        pick_first(record, [["insertion", "extractedInsertedCodeBlock"], ["insertedText"]]) or ""
-    )
-    file_path = str(pick_first(record, [["file", "path"], ["filePath"]]) or "")
-    net_added_lines = int(pick_first(record, [["insertion", "netAddedLines"], ["netAddedLines"]]) or 0)
-    correlation_confidence = to_number(pick_first(record, [["metadata", "correlationConfidence"]]))
-
-    if prompt_status != "captured":
-        score += 24
-        reasons.append("Prompt capture is missing, which reduces auditability and reviewer confidence.")
-        categories.add("provenance")
-
-    if correlation_confidence is not None and correlation_confidence < 0.4:
-        score += 16
-        reasons.append("Prompt-to-code correlation confidence is low.")
-        categories.add("provenance")
-    elif correlation_confidence is not None and correlation_confidence < 0.65:
-        score += 8
-        reasons.append("Prompt-to-code correlation confidence is only moderate.")
-        categories.add("provenance")
-
-    if net_added_lines >= 80:
-        score += 18
-        reasons.append("A large AI-generated block was introduced.")
-        categories.add("reliability")
-    elif net_added_lines >= 30:
-        score += 10
-        reasons.append("The generated block is large enough to warrant focused review.")
-        categories.add("reliability")
-
-    if contains_pattern(inserted_code, [r"api[_-]?key", r"access[_-]?token", r"private[_-]?key"]):
-        score += 28
-        reasons.append("The inserted block appears to contain credential-like material.")
-        categories.add("security")
-
-    if contains_pattern(
-        inserted_code,
-        [r"\beval\b", r"\bFunction\s*\(", r"new Function", r"\bexec\s*\(", r"\bexecSync\s*\("],
-    ):
-        score += 24
-        reasons.append("Dynamic code execution is present in the generated block.")
-        categories.add("security")
-
-    if contains_pattern(
-        inserted_code,
-        [r"\bsubprocess\.", r"\bos\.system\b", r"\bchild_process\b", r"\bspawn(?:Sync)?\b"],
-    ):
-        score += 22
-        reasons.append("Shell or process execution was introduced by the generated block.")
-        categories.add("security")
-
-    if contains_pattern(inserted_code, [r"dangerouslySetInnerHTML", r"\binnerHTML\s*="]):
-        score += 20
-        reasons.append("Unsafe DOM mutation patterns were introduced.")
-        categories.add("security")
-
-    if contains_pattern(
-        inserted_code,
-        [
-            r"\bSELECT\s+.+\bFROM\b",
-            r"\bINSERT\s+INTO\b",
-            r"\bUPDATE\s+\w+\s+SET\b",
-            r"\bDELETE\s+FROM\b",
-        ],
-    ):
-        score += 16
-        reasons.append("Raw SQL appears in the generated block.")
-        categories.add("reliability")
-
-    if contains_pattern(inserted_code, [r"\bpassword\b", r"\btoken\b", r"\bauth\b", r"\bcredential\b"]):
-        score += 12
-        reasons.append("Authentication or credential handling appears in the generated block.")
-        categories.add("compliance")
-
-    if contains_pattern(
-        file_path,
-        [r"auth", r"security", r"permission", r"oauth", r"token", r"secret", r"credential"],
-    ):
-        score += 14
-        reasons.append("The file path suggests a security-sensitive surface.")
-        categories.add("compliance")
-
-    if contains_pattern(file_path, [r"payment", r"billing", r"invoice", r"ledger", r"finance"]):
-        score += 14
-        reasons.append("The file path suggests a financially sensitive surface.")
-        categories.add("compliance")
-
-    agent_context = get_agent_context(record)
-    if isinstance(agent_context, dict) and agent_context.get("sessionKind") == "agentic":
-        score += 6
-        reasons.append("The record appears to come from an autonomous or semi-autonomous coding session.")
-        categories.add("provenance")
+    score, reasons, categories = _compute_heuristic_risk(record)
 
     if not reasons:
         reasons.append("No strong governance or security risk signals were detected.")
@@ -582,6 +506,146 @@ def get_risk_assessment(record: dict[str, Any]) -> dict[str, Any]:
         "reasons": list(dict.fromkeys(reasons))[:5],
         "categories": sorted(categories),
     }
+
+
+def _compute_heuristic_risk(
+    record: dict[str, Any],
+) -> tuple[int, list[str], set[str]]:
+    score = 12
+    reasons: list[str] = []
+    categories: set[str] = set()
+
+    prompt_status = str(record.get("promptStatus") or "").strip().lower()
+    inserted_code = str(
+        pick_first(record, [["insertion", "extractedInsertedCodeBlock"], ["insertedText"]]) or ""
+    )
+    file_path = str(pick_first(record, [["file", "path"], ["filePath"]]) or "")
+    net_added_lines = int(pick_first(record, [["insertion", "netAddedLines"], ["netAddedLines"]]) or 0)
+    correlation_confidence = to_number(pick_first(record, [["metadata", "correlationConfidence"]]))
+
+    _apply_prompt_capture_signal(prompt_status, score, reasons, categories)
+    score = _apply_prompt_capture_score(prompt_status, score)
+    _apply_correlation_signal(correlation_confidence, reasons, categories)
+    score = _apply_correlation_score(correlation_confidence, score)
+    _apply_size_signal(net_added_lines, reasons, categories)
+    score = _apply_size_score(net_added_lines, score)
+    score = _apply_pattern_rules(inserted_code, file_path, reasons, categories, score)
+
+    agent_context = get_agent_context(record)
+    if isinstance(agent_context, dict) and agent_context.get("sessionKind") == "agentic":
+        score += 6
+        reasons.append("The record appears to come from an autonomous or semi-autonomous coding session.")
+        categories.add("provenance")
+
+    return score, reasons, categories
+
+
+def _apply_prompt_capture_signal(
+    prompt_status: str, score: int, reasons: list[str], categories: set[str]
+) -> None:
+    if prompt_status != "captured":
+        reasons.append("Prompt capture is missing, which reduces auditability and reviewer confidence.")
+        categories.add("provenance")
+
+
+def _apply_prompt_capture_score(prompt_status: str, score: int) -> int:
+    return score + 24 if prompt_status != "captured" else score
+
+
+def _apply_correlation_signal(
+    confidence: float | None, reasons: list[str], categories: set[str]
+) -> None:
+    if confidence is not None and confidence < 0.4:
+        reasons.append("Prompt-to-code correlation confidence is low.")
+        categories.add("provenance")
+    elif confidence is not None and confidence < 0.65:
+        reasons.append("Prompt-to-code correlation confidence is only moderate.")
+        categories.add("provenance")
+
+
+def _apply_correlation_score(confidence: float | None, score: int) -> int:
+    if confidence is not None and confidence < 0.4:
+        return score + 16
+    if confidence is not None and confidence < 0.65:
+        return score + 8
+    return score
+
+
+def _apply_size_signal(net_added_lines: int, reasons: list[str], categories: set[str]) -> None:
+    if net_added_lines >= 80:
+        reasons.append("A large AI-generated block was introduced.")
+        categories.add("reliability")
+    elif net_added_lines >= 30:
+        reasons.append("The generated block is large enough to warrant focused review.")
+        categories.add("reliability")
+
+
+def _apply_size_score(net_added_lines: int, score: int) -> int:
+    if net_added_lines >= 80:
+        return score + 18
+    if net_added_lines >= 30:
+        return score + 10
+    return score
+
+
+_CODE_PATTERN_RULES: list[tuple[list[str], int, str, str]] = [
+    ([r"api[_-]?key", r"access[_-]?token", r"private[_-]?key"], 28,
+     "The inserted block appears to contain credential-like material.", "security"),
+    ([r"\beval\b", r"\bFunction\s*\(", r"new Function", r"\bexec\s*\(", r"\bexecSync\s*\("], 24,
+     "Dynamic code execution is present in the generated block.", "security"),
+    ([r"\bsubprocess\.", r"\bos\.system\b", r"\bchild_process\b", r"\bspawn(?:Sync)?\b"], 22,
+     "Shell or process execution was introduced by the generated block.", "security"),
+    ([r"dangerouslySetInnerHTML", r"\binnerHTML\s*="], 20,
+     "Unsafe DOM mutation patterns were introduced.", "security"),
+    ([r"\bSELECT\s+.+\bFROM\b", r"\bINSERT\s+INTO\b", r"\bUPDATE\s+\w+\s+SET\b", r"\bDELETE\s+FROM\b"], 16,
+     "Raw SQL appears in the generated block.", "reliability"),
+    ([r"\bpassword\b", r"\btoken\b", r"\bauth\b", r"\bcredential\b"], 12,
+     "Authentication or credential handling appears in the generated block.", "compliance"),
+]
+
+_FILE_PATTERN_RULES: list[tuple[list[str], int, str, str]] = [
+    ([r"auth", r"security", r"permission", r"oauth", r"token", r"secret", r"credential"], 14,
+     "The file path suggests a security-sensitive surface.", "compliance"),
+    ([r"payment", r"billing", r"invoice", r"ledger", r"finance"], 14,
+     "The file path suggests a financially sensitive surface.", "compliance"),
+]
+
+
+def _apply_pattern_rules(
+    inserted_code: str,
+    file_path: str,
+    reasons: list[str],
+    categories: set[str],
+    score: int,
+) -> int:
+    for patterns, delta, reason, category in _CODE_PATTERN_RULES:
+        if contains_pattern(inserted_code, patterns):
+            score += delta
+            reasons.append(reason)
+            categories.add(category)
+    for patterns, delta, reason, category in _FILE_PATTERN_RULES:
+        if contains_pattern(file_path, patterns):
+            score += delta
+            reasons.append(reason)
+            categories.add(category)
+    return score
+
+
+_TOOL_DETECTION_RULES: list[tuple[str, str, str]] = [
+    ("cursor", "Cursor", "agentic"),
+    ("claude-code", "Claude Code", "agentic"),
+    ("claude code", "Claude Code", "agentic"),
+    ("aider", "Aider", "agentic"),
+    ("codex", "Codex CLI", "agentic"),
+    ("copilot", "GitHub Copilot", "assistant"),
+]
+
+
+def _detect_tool_from_blob(raw_blob: str) -> tuple[str | None, str]:
+    for keyword, tool_name, session_kind in _TOOL_DETECTION_RULES:
+        if keyword in raw_blob:
+            return tool_name, session_kind
+    return None, "unknown"
 
 
 def get_agent_context(record: dict[str, Any]) -> dict[str, Any] | None:
@@ -639,24 +703,7 @@ def get_agent_context(record: dict[str, Any]) -> dict[str, Any] | None:
         ]
     ).lower()
 
-    tool_name = None
-    session_kind = "unknown"
-    if "cursor" in raw_blob:
-        tool_name = "Cursor"
-        session_kind = "agentic"
-    elif "claude-code" in raw_blob or "claude code" in raw_blob:
-        tool_name = "Claude Code"
-        session_kind = "agentic"
-    elif "aider" in raw_blob:
-        tool_name = "Aider"
-        session_kind = "agentic"
-    elif "codex" in raw_blob:
-        tool_name = "Codex CLI"
-        session_kind = "agentic"
-    elif "copilot" in raw_blob:
-        tool_name = "GitHub Copilot"
-        session_kind = "assistant"
-
+    tool_name, session_kind = _detect_tool_from_blob(raw_blob)
     provider = infer_provider(target_host, model_name, raw_blob)
     if session_kind == "unknown" and provider:
         session_kind = "assistant"
@@ -906,17 +953,18 @@ def format_percent(value: float) -> str:
 
 def parse_timestamp(value: Any) -> datetime:
     if isinstance(value, datetime):
-        return value
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
     text = str(value or "").strip()
     if not text:
-        return datetime.min
+        return datetime(1, 1, 1, tzinfo=UTC)
 
-    normalized = text[:-1] if text.endswith("Z") else text
+    normalized = text.replace("Z", "+00:00")
     try:
-        return datetime.fromisoformat(normalized)
+        dt = datetime.fromisoformat(normalized)
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
     except ValueError:
-        return datetime.min
+        return datetime(1, 1, 1, tzinfo=UTC)
 
 
 def to_record(value: Any) -> dict[str, Any]:
@@ -942,14 +990,12 @@ def get_at_path(source: Any, path: list[str]) -> Any:
 
 def safe_serialize(value: Any) -> str:
     try:
-        return str(value if isinstance(value, str) else value)
+        return value if isinstance(value, str) else str(value)
     except Exception:
         return ""
 
 
 def contains_pattern(value: str, patterns: list[str]) -> bool:
-    import re
-
     return any(re.search(pattern, value, flags=re.IGNORECASE) for pattern in patterns)
 
 

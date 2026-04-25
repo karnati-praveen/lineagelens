@@ -46,6 +46,156 @@ def get_ws_rate_limiter(websocket: WebSocket) -> InMemoryRateLimiter:
     return limiter
 
 
+async def _setup_ws_connection(
+    websocket: WebSocket,
+    settings: Settings,
+    rate_limiter: InMemoryRateLimiter,
+    client_ip: str,
+) -> Any | None:
+    if settings.rate_limit_enabled:
+        decision = rate_limiter.check(
+            key=f"ws-connect:{client_ip}",
+            limit=settings.rate_limit_ws_max_connections,
+            window_seconds=settings.rate_limit_ws_window_seconds,
+        )
+        if not decision.allowed:
+            logger.warning("WebSocket connection rate limit exceeded: client=%s", client_ip)
+            await websocket.close(code=4429, reason="WebSocket rate limit exceeded")
+            return None
+
+    try:
+        return authenticate_websocket(websocket, settings)
+    except AuthError as error:
+        logger.warning("WebSocket capture auth failed: %s", error)
+        await websocket.close(code=4401, reason=str(error))
+        return None
+    except Exception as error:  # pragma: no cover - defensive guard
+        logger.exception("Unexpected error during websocket auth: %s", error)
+        await websocket.close(code=1011, reason="Authentication failure")
+        return None
+
+
+async def _process_one_ws_message(
+    websocket: WebSocket,
+    raw_message: str,
+    auth: Any,
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+    neo4j_service: Neo4jLineageService | None,
+) -> bool:
+    """Returns False if the connection should be closed."""
+    try:
+        message = json.loads(raw_message)
+    except json.JSONDecodeError as error:
+        logger.info("Invalid JSON websocket message: %s", error)
+        await send_error(websocket, error_message="Message must be valid JSON.", status_code=status.HTTP_400_BAD_REQUEST)
+        return True
+
+    if not isinstance(message, dict):
+        await send_error(websocket, error_message="Message payload must be a JSON object.", status_code=status.HTTP_400_BAD_REQUEST)
+        return True
+
+    message_type = str(message.get("type", "ingest")).strip().lower()
+    if message_type in {"ping", "heartbeat"}:
+        await websocket.send_json({"type": "capture.pong", "serverTime": datetime.now(tz=UTC).isoformat()})
+        return True
+
+    if message_type not in {"ingest", "capture.ingest"}:
+        await send_error(websocket, error_message="Unsupported websocket message type.", details={"type": message_type}, status_code=status.HTTP_400_BAD_REQUEST)
+        return True
+
+    raw_payload = message.get("payload")
+    if raw_payload is None:
+        raw_payload = message
+
+    if not isinstance(raw_payload, dict):
+        await send_error(websocket, error_message="Payload must be a JSON object.", status_code=status.HTTP_400_BAD_REQUEST)
+        return True
+
+    requested_workspace: str | None = None
+    try:
+        requested_workspace = extract_workspace_id(raw_payload)
+        ensure_workspace_scope(auth, requested_workspace)
+        payload = normalize_ingest_payload(raw_payload, workspace_id=auth.workspace_id)
+    except HTTPException as error:
+        logger.warning(
+            "Workspace scope mismatch on websocket capture: workspace=%s payload_workspace=%s",
+            auth.workspace_id,
+            requested_workspace,
+        )
+        await send_error(websocket, error_message=str(error.detail), status_code=error.status_code)
+        return True
+    except ValueError as error:
+        logger.info("Invalid ingest payload received: %s", error)
+        await send_error(websocket, error_message="Invalid ingest payload.", details={"validation": str(error)}, status_code=status.HTTP_400_BAD_REQUEST)
+        return True
+
+    try:
+        async with session_factory() as session:
+            outcome = await ingest_provenance_event(session=session, payload=payload, auth=auth, settings=settings, neo4j_service=neo4j_service)
+    except Exception:
+        logger.exception(
+            "Failed to ingest websocket payload: workspace=%s request_uuid=%s file=%s",
+            auth.workspace_id,
+            payload.request_uuid,
+            payload.file_path,
+        )
+        await send_error(websocket, error_message="Failed to ingest event.", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return True
+
+    logger.info("WebSocket ingest stored: workspace=%s uuid=%s file=%s", auth.workspace_id, outcome.record.uuid, outcome.record.file_path)
+    confirmation = {
+        "type": "capture.confirmed",
+        "workspaceId": auth.workspace_id,
+        "uuid": str(outcome.record.uuid),
+        "requestUuid": str(outcome.record.request_uuid) if outcome.record.request_uuid else None,
+        "filePath": outcome.record.file_path,
+        "timestampIso": outcome.record.timestamp_iso.isoformat(),
+        "lineageNodeId": outcome.record.lineage_node_id,
+        "embeddingModel": outcome.record.embedding_model,
+        "warnings": outcome.warnings,
+        "status": status.HTTP_201_CREATED,
+    }
+
+    if not await safe_send_json(websocket, confirmation):
+        logger.warning("Unable to send capture confirmation to websocket client.")
+        return False
+
+    await manager.broadcast(auth.workspace_id, {"type": "capture.update", "event": "ingested", **confirmation})
+    return True
+
+
+async def _run_ws_message_loop(
+    websocket: WebSocket,
+    auth: Any,
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+    neo4j_service: Neo4jLineageService | None,
+    rate_limiter: InMemoryRateLimiter,
+) -> None:
+    while True:
+        if settings.rate_limit_enabled:
+            message_decision = rate_limiter.check(
+                key=f"ws-message:{auth.workspace_id}:{auth.subject}",
+                limit=settings.rate_limit_ws_max_messages,
+                window_seconds=settings.rate_limit_ws_window_seconds,
+            )
+            if not message_decision.allowed:
+                logger.warning("WebSocket message rate limit exceeded: workspace=%s subject=%s", auth.workspace_id, auth.subject)
+                await send_error(websocket, error_message="WebSocket rate limit exceeded.", status_code=status.HTTP_429_TOO_MANY_REQUESTS, details={"retryAfterSeconds": message_decision.retry_after_seconds})
+                break
+
+        raw_message = await websocket.receive_text()
+
+        if len(raw_message.encode("utf-8")) > settings.ws_max_message_bytes:
+            logger.warning("WebSocket payload too large: workspace=%s subject=%s", auth.workspace_id, auth.subject)
+            await send_error(websocket, error_message="WebSocket message too large.", status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, details={"maxBytes": settings.ws_max_message_bytes})
+            break
+
+        if not await _process_one_ws_message(websocket, raw_message, auth, settings, session_factory, neo4j_service):
+            break
+
+
 @router.websocket("/ws/capture")
 async def ws_capture(
     websocket: WebSocket,
@@ -54,244 +204,24 @@ async def ws_capture(
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_ws_session_factory)],
     rate_limiter: Annotated[InMemoryRateLimiter, Depends(get_ws_rate_limiter)],
 ) -> None:
-    """Receive real-time provenance capture events from the VS Code extension.
-
-    On each incoming event payload:
-    1) Validate JWT and workspace scope.
-    2) Parse and validate provenance payload.
-    3) Run embedding generation + AST normalization via service layer.
-    4) Persist in Postgres (including pgvector embedding).
-    5) Create initial lineage nodes in Neo4j.
-    6) Broadcast confirmation to all workspace subscribers.
-    """
-
     client_ip = client_identifier(websocket.client.host if websocket.client else None)
-
-    if settings.rate_limit_enabled:
-        connection_decision = rate_limiter.check(
-            key=f"ws-connect:{client_ip}",
-            limit=settings.rate_limit_ws_max_connections,
-            window_seconds=settings.rate_limit_ws_window_seconds,
-        )
-
-        if not connection_decision.allowed:
-            logger.warning(
-                "WebSocket connection rate limit exceeded: client=%s",
-                client_ip,
-            )
-            await websocket.close(code=4429, reason="WebSocket rate limit exceeded")
-            return
-
-    auth = None
-    try:
-        auth = await authenticate_websocket(websocket, settings)
-    except AuthError as error:
-        logger.warning("WebSocket capture auth failed: %s", error)
-        await websocket.close(code=4401, reason=str(error))
-        return
-    except Exception as error:  # pragma: no cover - defensive guard
-        logger.exception("Unexpected error during websocket auth: %s", error)
-        await websocket.close(code=1011, reason="Authentication failure")
+    auth = await _setup_ws_connection(websocket, settings, rate_limiter, client_ip)
+    if auth is None:
         return
 
     await manager.connect(auth.workspace_id, websocket)
-    logger.info(
-        "WebSocket capture connected: workspace=%s subject=%s",
-        auth.workspace_id,
-        auth.subject,
-    )
-
-    await websocket.send_json(
-        {
-            "type": "capture.connected",
-            "workspaceId": auth.workspace_id,
-            "serverTime": datetime.now(tz=UTC).isoformat(),
-        }
-    )
+    logger.info("WebSocket capture connected: workspace=%s subject=%s", auth.workspace_id, auth.subject)
+    await websocket.send_json({"type": "capture.connected", "workspaceId": auth.workspace_id, "serverTime": datetime.now(tz=UTC).isoformat()})
 
     try:
-        while True:
-            if settings.rate_limit_enabled:
-                message_decision = rate_limiter.check(
-                    key=f"ws-message:{auth.workspace_id}:{auth.subject}",
-                    limit=settings.rate_limit_ws_max_messages,
-                    window_seconds=settings.rate_limit_ws_window_seconds,
-                )
-
-                if not message_decision.allowed:
-                    logger.warning(
-                        "WebSocket message rate limit exceeded: workspace=%s subject=%s",
-                        auth.workspace_id,
-                        auth.subject,
-                    )
-                    await send_error(
-                        websocket,
-                        error_message="WebSocket rate limit exceeded.",
-                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        details={"retryAfterSeconds": message_decision.retry_after_seconds},
-                    )
-                    break
-
-            raw_message = await websocket.receive_text()
-
-            if len(raw_message.encode("utf-8")) > settings.ws_max_message_bytes:
-                logger.warning(
-                    "WebSocket payload too large: workspace=%s subject=%s",
-                    auth.workspace_id,
-                    auth.subject,
-                )
-                await send_error(
-                    websocket,
-                    error_message="WebSocket message too large.",
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    details={"maxBytes": settings.ws_max_message_bytes},
-                )
-                break
-
-            try:
-                message = json.loads(raw_message)
-            except json.JSONDecodeError as error:
-                logger.info("Invalid JSON websocket message: %s", error)
-                await send_error(
-                    websocket,
-                    error_message="Message must be valid JSON.",
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                )
-                continue
-
-            if not isinstance(message, dict):
-                await send_error(
-                    websocket,
-                    error_message="Message payload must be a JSON object.",
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                )
-                continue
-
-            message_type = str(message.get("type", "ingest")).strip().lower()
-            if message_type in {"ping", "heartbeat"}:
-                await websocket.send_json(
-                    {
-                        "type": "capture.pong",
-                        "serverTime": datetime.now(tz=UTC).isoformat(),
-                    }
-                )
-                continue
-
-            if message_type not in {"ingest", "capture.ingest"}:
-                await send_error(
-                    websocket,
-                    error_message="Unsupported websocket message type.",
-                    details={"type": message_type},
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                )
-                continue
-
-            raw_payload = message.get("payload")
-            if raw_payload is None:
-                raw_payload = message
-
-            if not isinstance(raw_payload, dict):
-                await send_error(
-                    websocket,
-                    error_message="Payload must be a JSON object.",
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                )
-                continue
-
-            try:
-                requested_workspace = extract_workspace_id(raw_payload)
-                ensure_workspace_scope(auth, requested_workspace)
-                payload = normalize_ingest_payload(raw_payload, workspace_id=auth.workspace_id)
-            except HTTPException as error:
-                logger.warning(
-                    "Workspace scope mismatch on websocket capture: workspace=%s payload_workspace=%s",
-                    auth.workspace_id,
-                    requested_workspace,
-                )
-                await send_error(
-                    websocket,
-                    error_message=str(error.detail),
-                    status_code=error.status_code,
-                )
-                continue
-            except ValueError as error:
-                logger.info("Invalid ingest payload received: %s", error)
-                await send_error(
-                    websocket,
-                    error_message="Invalid ingest payload.",
-                    details={"validation": str(error)},
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                )
-                continue
-
-            try:
-                async with session_factory() as session:
-                    outcome = await ingest_provenance_event(
-                        session=session,
-                        payload=payload,
-                        auth=auth,
-                        settings=settings,
-                        neo4j_service=neo4j_service,
-                    )
-            except Exception:
-                logger.exception(
-                    "Failed to ingest websocket payload: workspace=%s request_uuid=%s file=%s",
-                    auth.workspace_id,
-                    payload.request_uuid,
-                    payload.file_path,
-                )
-                await send_error(
-                    websocket,
-                    error_message="Failed to ingest event.",
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
-                continue
-
-            logger.info(
-                "WebSocket ingest stored: workspace=%s uuid=%s file=%s",
-                auth.workspace_id,
-                outcome.record.uuid,
-                outcome.record.file_path,
-            )
-
-            confirmation = {
-                "type": "capture.confirmed",
-                "workspaceId": auth.workspace_id,
-                "uuid": str(outcome.record.uuid),
-                "requestUuid": str(outcome.record.request_uuid) if outcome.record.request_uuid else None,
-                "filePath": outcome.record.file_path,
-                "timestampIso": outcome.record.timestamp_iso.isoformat(),
-                "lineageNodeId": outcome.record.lineage_node_id,
-                "embeddingModel": outcome.record.embedding_model,
-                "warnings": outcome.warnings,
-                "status": status.HTTP_201_CREATED,
-            }
-
-            if not await safe_send_json(websocket, confirmation):
-                logger.warning("Unable to send capture confirmation to websocket client.")
-                break
-
-            await manager.broadcast(
-                auth.workspace_id,
-                {
-                    "type": "capture.update",
-                    "event": "ingested",
-                    **confirmation,
-                },
-            )
-
+        await _run_ws_message_loop(websocket, auth, settings, session_factory, neo4j_service, rate_limiter)
     except WebSocketDisconnect:
-        logger.info(
-            "WebSocket capture disconnected: workspace=%s subject=%s",
-            auth.workspace_id,
-            auth.subject,
-        )
+        logger.info("WebSocket capture disconnected: workspace=%s subject=%s", auth.workspace_id, auth.subject)
     except Exception as error:
         logger.exception("Unhandled websocket capture error: %s", error)
         try:
             await websocket.close(code=1011, reason=str(error))
         except RuntimeError:
-            # Socket may already be closed by the peer.
             pass
     finally:
         if auth is not None:

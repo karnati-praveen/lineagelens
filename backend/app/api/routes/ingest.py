@@ -1,6 +1,5 @@
-from typing import Any
-
 import logging
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,12 +15,12 @@ router = APIRouter(tags=["ingest"])
 logger = logging.getLogger(__name__)
 
 
-@router.post("/ingest", response_model=IngestResponse)
+@router.post("/ingest")
 async def ingest_provenance(
     payload: dict[str, Any],
     request: Request,
-    session: AsyncSession = Depends(get_db_session),
-    auth: AuthContext = Depends(get_current_auth_context),
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> IngestResponse:
     requested_workspace = extract_workspace_id(payload)
     ensure_workspace_scope(auth, requested_workspace)
@@ -58,6 +57,6 @@ async def ingest_provenance(
         uuid=str(outcome.record.uuid),
         workspaceId=outcome.record.workspace_id,
         lineageNodeId=outcome.record.lineage_node_id,
-        stored=True,
+        stored=outcome.stored,
         warnings=outcome.warnings,
     )

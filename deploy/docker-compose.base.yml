@@ -3,7 +3,7 @@ version: "3.9"
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: provenance-postgres
+    container_name: lineagelens-base-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: provenance
@@ -12,69 +12,36 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_solo_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d provenance"]
       interval: 10s
       timeout: 5s
       retries: 10
 
-  neo4j:
-    image: neo4j:5
-    container_name: provenance-neo4j
-    restart: unless-stopped
-    environment:
-      NEO4J_AUTH: ${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}
-      NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}
-      NEO4J_server_memory_pagecache_size: 512M
-      NEO4J_server_memory_heap_initial__size: 512M
-      NEO4J_server_memory_heap_max__size: 1024M
-    ports:
-      - "7474:7474"
-      - "7687:7687"
-    volumes:
-      - neo4j_data:/data
-      - neo4j_logs:/logs
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "echo 'RETURN 1;' | cypher-shell -a bolt://localhost:7687 -u $$NEO4J_USERNAME -p $$NEO4J_PASSWORD || exit 1"
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 15
-
   backend:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile
-    container_name: provenance-backend
+    container_name: lineagelens-base-backend
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
-      neo4j:
-        condition: service_healthy
     environment:
-      BACKEND_MODE: full
-      NEO4J_ENABLED: "true"
-      VECTOR_SEARCH_ENABLED: "true"
+      BACKEND_MODE: solo
+      NEO4J_ENABLED: "false"
+      VECTOR_SEARCH_ENABLED: "false"
       LINEAGE_STRICT_MODE: "false"
       APP_ENV: development
-      APP_TITLE: AI Provenance Backend
+      APP_TITLE: LineageLens Base Backend
       APP_VERSION: 0.1.0
       DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/provenance
       PGVECTOR_DIMENSION: 256
-      DB_POOL_SIZE: 10
-      DB_MAX_OVERFLOW: 20
+      DB_POOL_SIZE: 3
+      DB_MAX_OVERFLOW: 5
       DB_POOL_TIMEOUT_SECONDS: 30
       DB_POOL_RECYCLE_SECONDS: 1800
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}
-      NEO4J_DATABASE: neo4j
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}
       JWT_REFRESH_SECRET_KEY: ${JWT_REFRESH_SECRET_KEY:?Set JWT_REFRESH_SECRET_KEY in .env}
       JWT_ALGORITHM: HS256
@@ -92,16 +59,17 @@ services:
       RATE_LIMIT_MAX_REQUESTS: 120
       RATE_LIMIT_WS_WINDOW_SECONDS: 60
       RATE_LIMIT_WS_MAX_MESSAGES: 120
-      RATE_LIMIT_WS_MAX_CONNECTIONS: 30
-      RATE_LIMIT_MAX_TRACKED_KEYS: 50000
+      RATE_LIMIT_WS_MAX_CONNECTIONS: 5
+      RATE_LIMIT_MAX_TRACKED_KEYS: 10000
       EXPLAIN_LLM_API_URL: https://api.openai.com/v1/chat/completions
       EXPLAIN_LLM_API_KEY: ${EXPLAIN_LLM_API_KEY:-}
       EXPLAIN_LLM_MODEL: gpt-4o-mini
       EXPLAIN_LLM_TIMEOUT_SECONDS: 25
+      # Embedding provider is hash-only in base — no OpenAI embedding key needed.
+      EMBEDDING_PROVIDER: hash
+      EMBEDDING_MODEL_NAME: hash-256
     ports:
       - "8787:8787"
 
 volumes:
-  postgres_data:
-  neo4j_data:
-  neo4j_logs:
+  postgres_solo_data:

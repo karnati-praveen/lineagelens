@@ -2,9 +2,9 @@
 
 LineageLens supports three practical operating profiles:
 
-- `solo`: everything stays inside VS Code storage or an optional workspace file.
-- `team`: the backend stores provenance without requiring Neo4j or vector search.
-- `enterprise`: the backend enables graph lineage and vector search.
+- `base`: everything stays inside VS Code storage or an optional workspace file.
+- `plus`: the backend stores provenance without requiring Neo4j or vector search.
+- `max`: the backend enables graph lineage and vector search.
 
 The lightweight adapter boundary is for tools that can identify an insertion event without depending on VS Code internals. Use it when you want to create provenance from a CLI, a script, a manual reviewer flow, or another editor integration.
 
@@ -54,17 +54,17 @@ const record = buildLightweightProvenanceRecord({
 });
 ```
 
-That helper returns the same provider-agnostic event contract used by the extension, so team mode can accept it without any extra adapter-specific code.
+That helper returns the same provider-agnostic event contract used by the extension, so LineageLens Plus can accept it without any extra adapter-specific code.
 
 ## Backend Behavior
 
-In `team` mode:
+In `plus` mode:
 
 - Neo4j startup is optional.
 - Search falls back to keyword matching when vector search is disabled.
 - Ingest responses include warnings when graph lineage is unavailable.
 
-In `enterprise` mode:
+In `max` mode:
 
 - Neo4j lineage is initialized at startup.
 - Vector search is enabled.

@@ -323,106 +323,97 @@ function summarizeRequirementsTxt(
   };
 }
 
+type PyprojectDep = { name: string; specifier: string | null; source: string };
+
+function collectInlineDeps(
+  input: string,
+  source: string,
+  dependencies: PyprojectDep[],
+  dependencyVersions: Map<string, string>
+): void {
+  for (const value of splitDependencyArrayItems(input)) {
+    const parsed = parseDependencyExpression(value);
+    if (!parsed) {
+      continue;
+    }
+    dependencies.push({ name: parsed.name, specifier: parsed.specifier, source });
+    if (parsed.specifier) {
+      dependencyVersions.set(normalizePackageKey(parsed.name), parsed.specifier);
+    }
+  }
+}
+
+function processProjectSectionLine(
+  trimmed: string,
+  state: { inProjectDependenciesArray: boolean },
+  dependencies: PyprojectDep[],
+  dependencyVersions: Map<string, string>
+): void {
+  if (!state.inProjectDependenciesArray && trimmed.startsWith('dependencies')) {
+    const startBracketIndex = trimmed.indexOf('[');
+    if (startBracketIndex >= 0) {
+      const remainder = trimmed.slice(startBracketIndex + 1);
+      const closingBracketIndex = remainder.indexOf(']');
+      if (closingBracketIndex >= 0) {
+        collectInlineDeps(remainder.slice(0, closingBracketIndex), 'project.dependencies', dependencies, dependencyVersions);
+      } else {
+        state.inProjectDependenciesArray = true;
+      }
+    }
+    return;
+  }
+  if (state.inProjectDependenciesArray) {
+    const endIndex = trimmed.indexOf(']');
+    collectInlineDeps(endIndex >= 0 ? trimmed.slice(0, endIndex) : trimmed, 'project.dependencies', dependencies, dependencyVersions);
+    if (endIndex >= 0) {
+      state.inProjectDependenciesArray = false;
+    }
+  }
+}
+
+function processPoetryDependenciesLine(
+  trimmed: string,
+  dependencies: PyprojectDep[],
+  dependencyVersions: Map<string, string>
+): void {
+  const poetryMatch = trimmed.match(/^([A-Za-z0-9_.-]+)\s*=\s*(.+)$/);
+  if (!poetryMatch) {
+    return;
+  }
+  const packageName = poetryMatch[1].trim();
+  if (packageName.toLowerCase() === 'python') {
+    return;
+  }
+  const specifier = parsePoetrySpecifier(poetryMatch[2].trim());
+  dependencies.push({ name: packageName, specifier, source: 'tool.poetry.dependencies' });
+  if (specifier) {
+    dependencyVersions.set(normalizePackageKey(packageName), specifier);
+  }
+}
+
 function summarizePyProjectToml(
   manifestPath: string,
   content: string
 ): { snapshot: ManifestSnapshot; dependencyVersions: Map<string, string> } {
   const dependencyVersions = new Map<string, string>();
-  const dependencies: Array<{ name: string; specifier: string | null; source: string }> = [];
+  const dependencies: PyprojectDep[] = [];
   const lines = splitLines(content);
-
   let currentSection = '';
-  let inProjectDependenciesArray = false;
+  const state = { inProjectDependenciesArray: false };
 
   for (const line of lines) {
     const trimmed = line.trim();
-
     const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
     if (sectionMatch) {
       currentSection = sectionMatch[1].trim();
-      inProjectDependenciesArray = false;
+      state.inProjectDependenciesArray = false;
       continue;
     }
-
     if (currentSection === 'project') {
-      if (!inProjectDependenciesArray && trimmed.startsWith('dependencies')) {
-        const startBracketIndex = trimmed.indexOf('[');
-        if (startBracketIndex >= 0) {
-          const remainder = trimmed.slice(startBracketIndex + 1);
-          const closingBracketIndex = remainder.indexOf(']');
-
-          if (closingBracketIndex >= 0) {
-            const inlineValues = remainder.slice(0, closingBracketIndex);
-            for (const value of splitDependencyArrayItems(inlineValues)) {
-              const parsed = parseDependencyExpression(value);
-              if (!parsed) {
-                continue;
-              }
-
-              dependencies.push({
-                name: parsed.name,
-                specifier: parsed.specifier,
-                source: 'project.dependencies'
-              });
-              if (parsed.specifier) {
-                dependencyVersions.set(normalizePackageKey(parsed.name), parsed.specifier);
-              }
-            }
-          } else {
-            inProjectDependenciesArray = true;
-          }
-        }
-        continue;
-      }
-
-      if (inProjectDependenciesArray) {
-        const endIndex = trimmed.indexOf(']');
-        const rawItem = endIndex >= 0 ? trimmed.slice(0, endIndex) : trimmed;
-
-        for (const value of splitDependencyArrayItems(rawItem)) {
-          const parsed = parseDependencyExpression(value);
-          if (!parsed) {
-            continue;
-          }
-
-          dependencies.push({
-            name: parsed.name,
-            specifier: parsed.specifier,
-            source: 'project.dependencies'
-          });
-          if (parsed.specifier) {
-            dependencyVersions.set(normalizePackageKey(parsed.name), parsed.specifier);
-          }
-        }
-
-        if (endIndex >= 0) {
-          inProjectDependenciesArray = false;
-        }
-      }
+      processProjectSectionLine(trimmed, state, dependencies, dependencyVersions);
     }
-
     if (currentSection === 'tool.poetry.dependencies') {
-      const poetryMatch = trimmed.match(/^([A-Za-z0-9_.-]+)\s*=\s*(.+)$/);
-      if (!poetryMatch) {
-        continue;
-      }
-
-      const packageName = poetryMatch[1].trim();
-      if (packageName.toLowerCase() === 'python') {
-        continue;
-      }
-
-      const value = poetryMatch[2].trim();
-      const specifier = parsePoetrySpecifier(value);
-      dependencies.push({
-        name: packageName,
-        specifier,
-        source: 'tool.poetry.dependencies'
-      });
-
-      if (specifier) {
-        dependencyVersions.set(normalizePackageKey(packageName), specifier);
-      }
+      processPoetryDependenciesLine(trimmed, dependencies, dependencyVersions);
     }
   }
 
