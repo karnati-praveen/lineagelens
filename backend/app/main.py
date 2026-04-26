@@ -1,10 +1,14 @@
 from contextlib import asynccontextmanager
+from ipaddress import ip_address
 import logging
+import os
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
 
 from app.api.routes.auth import router as auth_router
 from app.api.routes.ingest import router as ingest_router
@@ -16,26 +20,185 @@ from app.api.routes.team import router as team_router
 from app.api.routes.ws_capture import router as ws_capture_router
 from app.core.config import Settings, get_settings
 from app.core.rate_limit import InMemoryRateLimiter, client_identifier
-from app.db.session import engine, initialize_database
+from app.db.session import create_engine_from_env, create_session_factory, initialize_database
 from app.services.neo4j_service import Neo4jLineageService
 
 
-settings: Settings = get_settings()
 logger = logging.getLogger(__name__)
+DEFAULT_APP_TITLE = "AI Provenance Backend"
+DEFAULT_APP_VERSION = "0.1.0"
+
+
+def parse_csv_env(name: str, default: str) -> list[str]:
+    raw_value = os.getenv(name, default)
+    entries = [entry.strip() for entry in raw_value.split(",") if entry.strip()]
+    return list(dict.fromkeys(entries))
+
+
+def get_runtime_settings(request: Request) -> Settings:
+    current_settings = getattr(request.app.state, "settings", None)
+    if isinstance(current_settings, Settings):
+        return current_settings
+    return get_settings()
+
+
+def _is_trusted_proxy_host(host: str | None) -> bool:
+    normalized = (host or "").strip()
+    if not normalized:
+        return False
+    if normalized.lower() == "localhost":
+        return True
+
+    try:
+        parsed = ip_address(normalized)
+    except ValueError:
+        return False
+
+    return parsed.is_loopback or parsed.is_private
+
+
+def get_client_ip(request: Request) -> str:
+    peer_host = request.client.host if request.client else None
+    if _is_trusted_proxy_host(peer_host):
+        forwarded_for = request.headers.get("x-forwarded-for", "")
+        forwarded_chain = [entry.strip() for entry in forwarded_for.split(",") if entry.strip()]
+        if forwarded_chain:
+            return client_identifier(forwarded_chain[0])
+
+        real_ip = request.headers.get("x-real-ip")
+        if real_ip and real_ip.strip():
+            return client_identifier(real_ip.strip())
+
+    return client_identifier(peer_host)
+
+
+class SecurityHeadersMiddleware:
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = message.setdefault("headers", [])
+
+                def _add_header(name: bytes, value: bytes) -> None:
+                    if not any(existing_name.lower() == name.lower() for existing_name, _ in headers):
+                        headers.append((name, value))
+
+                _add_header(b"x-content-type-options", b"nosniff")
+                _add_header(b"x-frame-options", b"DENY")
+                _add_header(b"referrer-policy", b"no-referrer")
+                _add_header(b"cross-origin-opener-policy", b"same-origin")
+                _add_header(b"cross-origin-resource-policy", b"same-site")
+                _add_header(
+                    b"permissions-policy",
+                    b"geolocation=(), microphone=(), camera=(), payment=()",
+                )
+
+                app_state = scope.get("app").state if scope.get("app") is not None else None
+                current_settings = getattr(app_state, "settings", None)
+                if (
+                    isinstance(current_settings, Settings)
+                    and current_settings.app_env.strip().lower() == "production"
+                ):
+                    _add_header(
+                        b"strict-transport-security",
+                        b"max-age=31536000; includeSubDomains",
+                    )
+
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+class RequestGuardsMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        current_settings = get_runtime_settings(request)
+
+        if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+            max_bytes = current_settings.http_max_body_bytes
+            content_length = request.headers.get("content-length")
+            if content_length:
+                try:
+                    if int(content_length) > max_bytes:
+                        return JSONResponse(
+                            status_code=413,
+                            content={"detail": "Request body too large."},
+                        )
+                except ValueError:
+                    return JSONResponse(
+                        status_code=400,
+                        content={"detail": "Invalid Content-Length header."},
+                    )
+
+            body = await request.body()
+            if len(body) > max_bytes:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": "Request body too large."},
+                )
+
+        if not current_settings.rate_limit_enabled or request.url.path == "/health":
+            return await call_next(request)
+
+        limiter: InMemoryRateLimiter = request.app.state.rate_limiter
+        client_ip = get_client_ip(request)
+        key = f"http:{client_ip}"
+
+        decision = limiter.check(
+            key=key,
+            limit=current_settings.rate_limit_max_requests,
+            window_seconds=current_settings.rate_limit_window_seconds,
+        )
+
+        if not decision.allowed:
+            logger.warning(
+                "HTTP rate limit exceeded: client=%s path=%s",
+                client_ip,
+                request.url.path,
+            )
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "detail": "Rate limit exceeded.",
+                    "retryAfterSeconds": decision.retry_after_seconds,
+                },
+                headers={
+                    "Retry-After": str(decision.retry_after_seconds),
+                    "X-RateLimit-Limit": str(decision.limit),
+                    "X-RateLimit-Remaining": "0",
+                },
+            )
+
+        response = await call_next(request)
+        response.headers["X-RateLimit-Limit"] = str(decision.limit)
+        response.headers["X-RateLimit-Remaining"] = str(decision.remaining)
+        return response
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings = get_settings()
+    engine = create_engine_from_env()
+    session_factory = create_session_factory(engine)
+
     app.state.settings = settings
+    app.state.db_engine = engine
+    app.state.db_session_factory = session_factory
+    app.title = settings.app_title
+    app.version = settings.app_version
     app.state.rate_limiter = InMemoryRateLimiter(settings.rate_limit_max_tracked_keys)
-    app.state.neo4j_service = None
-
-    await initialize_database()
-
-    neo4j_service = await initialize_neo4j_service(settings)
+    neo4j_service: Neo4jLineageService | None = None
     app.state.neo4j_service = neo4j_service
 
     try:
+        await initialize_database(engine)
+        neo4j_service = await initialize_neo4j_service(settings)
+        app.state.neo4j_service = neo4j_service
         yield
     finally:
         if neo4j_service is not None:
@@ -44,140 +207,31 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title=settings.app_title,
-    version=settings.app_version,
+    title=DEFAULT_APP_TITLE,
+    version=DEFAULT_APP_VERSION,
     lifespan=lifespan,
 )
 
-_allowed_hosts = settings.trusted_hosts
+_allowed_hosts = parse_csv_env("BACKEND_TRUSTED_HOSTS", "")
+_cors_origins = parse_csv_env(
+    "BACKEND_CORS_ORIGINS",
+    "http://127.0.0.1:3000,http://localhost:3000",
+)
+_cors_origins_raw = os.getenv("BACKEND_CORS_ORIGINS", "")
+
+app.add_middleware(RequestGuardsMiddleware)
 if _allowed_hosts:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts)
-
-_cors_origins = settings.cors_origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_origin_regex=None,
-    allow_credentials=bool(_cors_origins),
+    allow_credentials=bool(_cors_origins_raw.strip()),
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
     max_age=600,
 )
-
-
-@app.middleware("http")
-async def apply_security_headers(request: Request, call_next):
-    response = await call_next(request)
-    response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "DENY")
-    response.headers.setdefault("Referrer-Policy", "no-referrer")
-    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
-    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
-    response.headers.setdefault(
-        "Permissions-Policy",
-        "geolocation=(), microphone=(), camera=(), payment=()",
-    )
-    if request.app.state.settings.app_env.strip().lower() == "production":
-        response.headers.setdefault(
-            "Strict-Transport-Security",
-            "max-age=31536000; includeSubDomains",
-        )
-    return response
-
-
-@app.middleware("http")
-async def enforce_http_payload_size(request: Request, call_next):
-    current_settings: Settings = request.app.state.settings
-
-    if request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
-        return await call_next(request)
-
-    max_bytes = current_settings.http_max_body_bytes
-
-    content_length = request.headers.get("content-length")
-    if content_length:
-        try:
-            if int(content_length) > max_bytes:
-                return JSONResponse(
-                    status_code=413,
-                    content={"detail": "Request body too large."},
-                )
-        except ValueError:
-            return JSONResponse(
-                status_code=400,
-                content={"detail": "Invalid Content-Length header."},
-            )
-
-    # Stream the body chunk-by-chunk so chunked-encoded requests without a
-    # Content-Length header cannot exhaust worker memory before the size check.
-    chunks: list[bytes] = []
-    total = 0
-    async for chunk in request.stream():
-        total += len(chunk)
-        if total > max_bytes:
-            return JSONResponse(
-                status_code=413,
-                content={"detail": "Request body too large."},
-            )
-        chunks.append(chunk)
-
-    body = b"".join(chunks)
-
-    async def receive() -> dict[str, object]:
-        return {
-            "type": "http.request",
-            "body": body,
-            "more_body": False,
-        }
-
-    request._receive = receive
-    request._stream_consumed = False
-    return await call_next(request)
-
-
-@app.middleware("http")
-async def enforce_http_rate_limit(request: Request, call_next):
-    current_settings: Settings = request.app.state.settings
-    if not current_settings.rate_limit_enabled:
-        return await call_next(request)
-
-    if request.url.path == "/health":
-        return await call_next(request)
-
-    limiter: InMemoryRateLimiter = request.app.state.rate_limiter
-
-    client_ip = client_identifier(request.client.host if request.client else None)
-    key = f"http:{client_ip}"
-
-    decision = limiter.check(
-        key=key,
-        limit=current_settings.rate_limit_max_requests,
-        window_seconds=current_settings.rate_limit_window_seconds,
-    )
-
-    if not decision.allowed:
-        logger.warning(
-            "HTTP rate limit exceeded: client=%s path=%s",
-            client_ip,
-            request.url.path,
-        )
-        return JSONResponse(
-            status_code=429,
-            content={
-                "detail": "Rate limit exceeded.",
-                "retryAfterSeconds": decision.retry_after_seconds,
-            },
-            headers={
-                "Retry-After": str(decision.retry_after_seconds),
-                "X-RateLimit-Limit": str(decision.limit),
-                "X-RateLimit-Remaining": "0",
-            },
-        )
-
-    response = await call_next(request)
-    response.headers["X-RateLimit-Limit"] = str(decision.limit)
-    response.headers["X-RateLimit-Remaining"] = str(decision.remaining)
-    return response
+app.add_middleware(SecurityHeadersMiddleware)
 
 app.include_router(auth_router)
 app.include_router(ingest_router)
@@ -190,24 +244,25 @@ app.include_router(ws_capture_router)
 
 
 @app.get("/health")
-async def health() -> dict[str, object]:
+async def health(request: Request) -> dict[str, object]:
+    current_settings = get_runtime_settings(request)
     body: dict[str, object] = {
         "status": "ok",
-        "app": settings.app_title,
-        "version": settings.app_version,
+        "app": current_settings.app_title,
+        "version": current_settings.app_version,
         # productMode is always included so the VS Code extension can detect
         # which tier is running and hide unavailable UI controls accordingly.
-        "productMode": settings.product_mode,
+        "productMode": current_settings.product_mode,
     }
-    if settings.app_env.strip().lower() != "production":
+    if current_settings.app_env.strip().lower() != "production":
         body.update(
             {
-                "environment": settings.app_env,
-                "backendMode": settings.backend_mode,
+                "environment": current_settings.app_env,
+                "backendMode": current_settings.backend_mode,
                 "features": {
-                    "neo4j": settings.neo4j_enabled,
-                    "vectorSearch": settings.vector_search_enabled,
-                    "lineageStrictMode": settings.lineage_strict_mode,
+                    "neo4j": current_settings.neo4j_enabled,
+                    "vectorSearch": current_settings.vector_search_enabled,
+                    "lineageStrictMode": current_settings.lineage_strict_mode,
                 },
             }
         )
