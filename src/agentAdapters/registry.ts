@@ -2,7 +2,14 @@ import type { AgentAdapter, AgentAdapterInput, NormalizedAgentContext } from './
 import { normalizeAgentContext } from './shared';
 import { createCursorAdapter } from './cursor';
 import { createClaudeCodeAdapter } from './claudeCode';
+import { createCopilotAdapter } from './copilot';
+import { createCodeiumAdapter } from './codeium';
 import { createAiderAdapter } from './aider';
+import { createContinueAdapter } from './continue';
+import { createCodyAdapter } from './cody';
+import { createAmazonQAdapter } from './amazonQ';
+import { createGeminiCliAdapter } from './geminiCli';
+import { createCodexCliAdapter } from './codex';
 import { createLegacyHeuristicAdapter } from './legacy';
 
 export class AgentAdapterRegistry {
@@ -19,14 +26,17 @@ export class AgentAdapterRegistry {
       try {
         const detected = adapter.detect(input);
         if (detected) {
-          const normalized = normalizeAgentContext(detected) ?? detected;
+          const normalized = normalizeAgentContext(detected);
+          if (!normalized) {
+            continue;
+          }
           candidates.push({
             ...normalized,
             adapterOrder: adapter.order
           });
         }
-      } catch {
-        // non-fatal; continue to next adapter
+      } catch (error) {
+        console.warn(`[AgentAdapterRegistry] Adapter "${adapter.name}" threw:`, error);
       }
     }
 
@@ -74,11 +84,21 @@ export function createDefaultAgentAdapterRegistry(): AgentAdapterRegistry {
   return new AgentAdapterRegistry([
     createCursorAdapter(),
     createClaudeCodeAdapter(),
+    createCopilotAdapter(),
+    createCodeiumAdapter(),
     createAiderAdapter(),
+    createContinueAdapter(),
+    createCodyAdapter(),
+    createAmazonQAdapter(),
+    createGeminiCliAdapter(),
+    createCodexCliAdapter(),
     createLegacyHeuristicAdapter()
   ]);
 }
 
+let defaultRegistry: AgentAdapterRegistry | undefined;
+
 export function detectAgentContext(input: AgentAdapterInput): NormalizedAgentContext | null {
-  return createDefaultAgentAdapterRegistry().detect(input);
+  defaultRegistry ??= createDefaultAgentAdapterRegistry();
+  return defaultRegistry.detect(input);
 }

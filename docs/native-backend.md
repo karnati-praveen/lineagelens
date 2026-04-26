@@ -16,8 +16,8 @@ If you do not want to run the databases locally, point the backend at managed Po
 
 1. Create and activate a Python virtual environment at the repo root.
 2. Install backend dependencies with `python -m pip install -r backend/requirements.txt`.
-3. For LineageLens Plus, copy `.env.plus.example` to `backend/.env` and fill in your database credentials.
-4. For LineageLens Max, copy `.env.max.example` to `backend/.env` and fill in your PostgreSQL and Neo4j credentials.
+3. For LineageLens Plus, copy `deploy/.env.plus.example` to `backend/.env` and fill in your database credentials.
+4. For LineageLens Max, copy `deploy/.env.max.example` to `backend/.env` and fill in your PostgreSQL and Neo4j credentials.
 5. Start the backend with the native PowerShell script.
 
 ## Commands

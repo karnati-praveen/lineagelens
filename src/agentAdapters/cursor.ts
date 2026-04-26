@@ -1,16 +1,16 @@
-import type { AgentAdapter, AgentAdapterInput, NormalizedAgentContext } from './types';
+import type { AgentAdapter, AgentAdapterInput, AgentEvidence, NormalizedAgentContext } from './types';
 import {
+  buildDetectionPayloadBlob,
   buildSessionSignature,
   clampConfidence,
   classifyOperationType,
-  createEvidence,
   findHeaderValue,
   hashContext,
   inferProvider,
   normalizeModelName,
   normalizeUserAgent,
-  safeSerialize,
-  toText
+  pushEvidence,
+  sumEvidenceWeights
 } from './shared';
 
 export function createCursorAdapter(): AgentAdapter {
@@ -41,15 +41,12 @@ export function createCursorAdapter(): AgentAdapter {
         normalizeUserAgent(findHeaderValue(headers, 'x-cursor-client-name'));
 
       const targetHost = input.correlation.targetHost?.trim().toLowerCase() ?? null;
-      const payloadBlob = [
-        safeSerialize(input.correlation.fullPromptMessages),
-        safeSerialize(input.correlation.parameters),
-        toText(input.correlation.systemPrompt),
-        toText(input.correlation.rawModelResponse),
-        input.insertedText
-      ]
-        .join('\n')
-        .toLowerCase();
+      const payloadBlob = buildDetectionPayloadBlob({
+        fullPromptMessages: input.correlation.fullPromptMessages,
+        parameters: input.correlation.parameters,
+        systemPrompt: input.correlation.systemPrompt,
+        insertedText: input.insertedText
+      });
 
       const cursorSignals = [
         userAgent?.toLowerCase().includes('cursor') ?? false,
@@ -87,12 +84,11 @@ export function createCursorAdapter(): AgentAdapter {
         findHeaderValue(headers, 'x-cursor-operation-id') ||
         null;
 
-      const evidence = [
-        createEvidence('user-agent', 'user-agent', userAgent ?? 'cursor', 0.26, 'Cursor user agent matched.'),
-        createEvidence('header', 'targetHost', targetHost ?? 'unknown', 0.18, 'Cursor traffic target host matched.'),
-        createEvidence('payload', 'prompt', payloadBlob.slice(0, 200), 0.22, 'Cursor prompt or payload fingerprint matched.'),
-        createEvidence('routing', 'modelName', modelName || 'unknown', 0.08, 'Model routing metadata observed.')
-      ];
+      const evidence: AgentEvidence[] = [];
+      pushEvidence(evidence, userAgent?.toLowerCase().includes('cursor') ?? false, 'user-agent', 'user-agent', userAgent, 0.26, 'Cursor user agent matched.');
+      pushEvidence(evidence, targetHost?.includes('cursor') ?? false, 'header', 'targetHost', targetHost, 0.18, 'Cursor traffic target host matched.');
+      pushEvidence(evidence, payloadBlob.includes('cursor') || payloadBlob.includes('composer') || payloadBlob.includes('inline completion'), 'payload', 'prompt', payloadBlob.slice(0, 200), 0.22, 'Cursor prompt or payload fingerprint matched.');
+      pushEvidence(evidence, Boolean(modelName), 'routing', 'modelName', modelName || 'unknown', 0.08, 'Model routing metadata observed.');
 
       return {
         toolName: 'Cursor',
@@ -104,7 +100,7 @@ export function createCursorAdapter(): AgentAdapter {
         userAgent,
         workspaceHint: input.workspaceHint,
         operationType,
-        confidence: clampConfidence(0.88 + evidence.reduce((sum, entry) => sum + entry.weight, 0) * 0.08),
+        confidence: clampConfidence(0.5 + sumEvidenceWeights(evidence) * 0.6),
         evidence,
         adapterName: 'cursor',
         matchSource: 'adapter',

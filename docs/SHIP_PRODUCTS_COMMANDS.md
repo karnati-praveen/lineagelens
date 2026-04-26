@@ -20,10 +20,9 @@ Code Name: Process Scheduler
 
 ## 2. LineageLens Base
 
-LineageLens Base ships as an extension-only artifact.
+LineageLens Base ships as the extension plus bundled local-backend assets.
 
 ```powershell
-Copy-Item .\deploy\.env.docker.example .env -ErrorAction SilentlyContinue
 npm run ship:base
 ```
 
@@ -42,6 +41,13 @@ Code Name: I/O Scheduler
 Output:
 
 - `releases\base\lineagelens-base-<version>.zip`
+- `releases\base\lineagelens-base-<version>\backend\`
+- `releases\base\lineagelens-base-<version>\deploy\docker-compose.base.yml`
+- `releases\base\lineagelens-base-<version>\docs\native-backend.md`
+- `releases\base\lineagelens-base-<version>\debug.sh`
+- `releases\base\lineagelens-base-<version>\debug.ps1`
+- `releases\base\lineagelens-base-<version>\quickstart.sh`
+- `releases\base\lineagelens-base-<version>\reset.sh`
 
 ## 3. LineageLens Plus
 

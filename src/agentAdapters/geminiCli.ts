@@ -6,17 +6,16 @@ import {
   classifyOperationType,
   findHeaderValue,
   hashContext,
-  inferProvider,
   normalizeModelName,
   normalizeUserAgent,
   pushEvidence,
   sumEvidenceWeights
 } from './shared';
 
-export function createAiderAdapter(): AgentAdapter {
+export function createGeminiCliAdapter(): AgentAdapter {
   return {
-    name: 'aider',
-    order: 30,
+    name: 'gemini-cli',
+    order: 50,
     capabilities: [
       'tool-name',
       'provider',
@@ -37,7 +36,7 @@ export function createAiderAdapter(): AgentAdapter {
       const headers = input.correlation.requestHeaders;
       const userAgent =
         normalizeUserAgent(findHeaderValue(headers, 'user-agent')) ||
-        normalizeUserAgent(findHeaderValue(headers, 'x-client-name'));
+        normalizeUserAgent(findHeaderValue(headers, 'x-goog-api-client'));
       const targetHost = input.correlation.targetHost?.trim().toLowerCase() ?? null;
       const payloadBlob = buildDetectionPayloadBlob({
         fullPromptMessages: input.correlation.fullPromptMessages,
@@ -46,17 +45,29 @@ export function createAiderAdapter(): AgentAdapter {
         insertedText: input.insertedText
       });
 
+      const googApiClient = findHeaderValue(headers, 'x-goog-api-client');
+      const googRequestReason = findHeaderValue(headers, 'x-goog-request-reason');
+      const googRequestId = findHeaderValue(headers, 'x-goog-request-id');
+
+      const isGoogleHost =
+        targetHost?.includes('generativelanguage.googleapis.com') ||
+        targetHost?.includes('aiplatform.googleapis.com');
+
       const matched =
-        userAgent?.toLowerCase().includes('aider') ||
-        payloadBlob.includes('aider') ||
-        payloadBlob.includes('pair programming');
+        userAgent?.toLowerCase().includes('gemini') ||
+        googApiClient?.toLowerCase().includes('gemini') ||
+        googApiClient?.toLowerCase().includes('google-generativeai') ||
+        isGoogleHost ||
+        payloadBlob.includes('gemini') ||
+        payloadBlob.includes('google generative') ||
+        payloadBlob.includes('generativelanguage');
 
       if (!matched) {
         return undefined;
       }
 
       const modelName = normalizeModelName(input.correlation.modelName);
-      const provider = inferProvider(targetHost, modelName, payloadBlob) ?? 'OpenAI';
+      const provider = 'Google';
       const operationType = classifyOperationType({
         insertedText: input.insertedText,
         promptBlob: payloadBlob,
@@ -64,29 +75,28 @@ export function createAiderAdapter(): AgentAdapter {
       });
 
       const sessionId =
-        findHeaderValue(headers, 'x-aider-session-id') ||
-        findHeaderValue(headers, 'x-aider-run-id') ||
+        googRequestId ||
+        findHeaderValue(headers, 'x-goog-session-id') ||
         findHeaderValue(headers, 'x-request-id') ||
-        `aider-${hashContext([targetHost, userAgent, modelName, input.workspaceHint, input.timestampIso])}`;
+        `gemini-${hashContext([targetHost, userAgent, modelName, input.workspaceHint, input.timestampIso])}`;
 
       const conversationId =
-        findHeaderValue(headers, 'x-aider-conversation-id') ||
-        findHeaderValue(headers, 'x-conversation-id') ||
+        findHeaderValue(headers, 'x-goog-conversation-id') ||
         sessionId;
 
       const runId =
-        findHeaderValue(headers, 'x-aider-run-id') ||
-        findHeaderValue(headers, 'x-session-id') ||
-        sessionId;
+        findHeaderValue(headers, 'x-goog-run-id') ||
+        null;
 
       const evidence: AgentEvidence[] = [];
-      pushEvidence(evidence, userAgent?.toLowerCase().includes('aider') ?? false, 'user-agent', 'user-agent', userAgent, 0.28, 'Aider user agent matched.');
-      pushEvidence(evidence, payloadBlob.includes('aider') || payloadBlob.includes('pair programming'), 'payload', 'prompt', payloadBlob.slice(0, 240), 0.2, 'Prompt payload contains Aider fingerprints.');
-      pushEvidence(evidence, Boolean(modelName), 'routing', 'modelName', modelName || 'unknown', 0.1, 'Model metadata observed.');
-      pushEvidence(evidence, Boolean(targetHost), 'header', 'targetHost', targetHost ?? 'unknown', 0.1, 'Target host was consistent with AI request routing.');
+      pushEvidence(evidence, userAgent?.toLowerCase().includes('gemini') ?? false, 'user-agent', 'user-agent', userAgent, 0.26, 'Gemini CLI user agent matched.');
+      pushEvidence(evidence, Boolean(isGoogleHost), 'header', 'targetHost', targetHost, 0.25, 'Google Generative Language API host matched.');
+      pushEvidence(evidence, googApiClient !== null, 'header', 'x-goog-api-client', googApiClient, 0.2, 'Google API client header present.');
+      pushEvidence(evidence, googRequestReason !== null, 'header', 'x-goog-request-reason', googRequestReason, 0.1, 'Google request reason header present.');
+      pushEvidence(evidence, payloadBlob.includes('gemini') || payloadBlob.includes('google generative') || payloadBlob.includes('generativelanguage'), 'payload', 'prompt', payloadBlob.slice(0, 200), 0.1, 'Payload fingerprint consistent with Gemini API traffic.');
 
       return {
-        toolName: 'Aider',
+        toolName: 'Gemini CLI',
         provider,
         sessionId,
         conversationId,
@@ -97,15 +107,15 @@ export function createAiderAdapter(): AgentAdapter {
         operationType,
         confidence: clampConfidence(0.5 + sumEvidenceWeights(evidence) * 0.6),
         evidence,
-        adapterName: 'aider',
+        adapterName: 'gemini-cli',
         matchSource: 'adapter',
-        sessionKind: 'agentic',
+        sessionKind: 'cli',
         host: targetHost,
         sessionSignature: buildSessionSignature({
-          toolName: 'Aider',
+          toolName: 'Gemini CLI',
           provider,
           modelName: modelName || null,
-          sessionKind: 'agentic',
+          sessionKind: 'cli',
           sessionId,
           conversationId,
           runId

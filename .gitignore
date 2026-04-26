@@ -21,6 +21,9 @@ coverage.xml
 *.log
 .DS_Store
 
+# Remotion video project
+lineagelens-ad/
+
 # Local environment files
 .env
 .env.*

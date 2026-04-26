@@ -13,10 +13,10 @@ import {
   sumEvidenceWeights
 } from './shared';
 
-export function createAiderAdapter(): AgentAdapter {
+export function createCodeiumAdapter(): AgentAdapter {
   return {
-    name: 'aider',
-    order: 30,
+    name: 'codeium',
+    order: 25,
     capabilities: [
       'tool-name',
       'provider',
@@ -46,17 +46,35 @@ export function createAiderAdapter(): AgentAdapter {
         insertedText: input.insertedText
       });
 
+      const codeiumApiKey = findHeaderValue(headers, 'x-codeium-api-key');
+      const codeiumChecksum = findHeaderValue(headers, 'x-codeium-checksum-algorithm');
+      const windsurfHeader = findHeaderValue(headers, 'x-windsurf-client');
+
       const matched =
-        userAgent?.toLowerCase().includes('aider') ||
-        payloadBlob.includes('aider') ||
-        payloadBlob.includes('pair programming');
+        userAgent?.toLowerCase().includes('codeium') ||
+        userAgent?.toLowerCase().includes('windsurf') ||
+        targetHost?.includes('codeium.com') ||
+        targetHost?.includes('windsurf.codeium.com') ||
+        codeiumApiKey !== null ||
+        codeiumChecksum !== null ||
+        windsurfHeader !== null ||
+        payloadBlob.includes('codeium') ||
+        payloadBlob.includes('windsurf');
 
       if (!matched) {
         return undefined;
       }
 
+      const isWindsurf =
+        userAgent?.toLowerCase().includes('windsurf') ||
+        windsurfHeader !== null ||
+        targetHost?.includes('windsurf') ||
+        payloadBlob.includes('windsurf');
+
+      const toolName = isWindsurf ? 'Windsurf' : 'Codeium';
+
       const modelName = normalizeModelName(input.correlation.modelName);
-      const provider = inferProvider(targetHost, modelName, payloadBlob) ?? 'OpenAI';
+      const provider = inferProvider(targetHost, modelName, payloadBlob) ?? 'Codeium';
       const operationType = classifyOperationType({
         insertedText: input.insertedText,
         promptBlob: payloadBlob,
@@ -64,29 +82,29 @@ export function createAiderAdapter(): AgentAdapter {
       });
 
       const sessionId =
-        findHeaderValue(headers, 'x-aider-session-id') ||
-        findHeaderValue(headers, 'x-aider-run-id') ||
+        findHeaderValue(headers, 'x-codeium-session-id') ||
+        findHeaderValue(headers, 'x-windsurf-session-id') ||
         findHeaderValue(headers, 'x-request-id') ||
-        `aider-${hashContext([targetHost, userAgent, modelName, input.workspaceHint, input.timestampIso])}`;
+        `codeium-${hashContext([targetHost, userAgent, modelName, input.workspaceHint, input.timestampIso])}`;
 
       const conversationId =
-        findHeaderValue(headers, 'x-aider-conversation-id') ||
-        findHeaderValue(headers, 'x-conversation-id') ||
+        findHeaderValue(headers, 'x-codeium-conversation-id') ||
+        findHeaderValue(headers, 'x-windsurf-chat-id') ||
         sessionId;
 
       const runId =
-        findHeaderValue(headers, 'x-aider-run-id') ||
-        findHeaderValue(headers, 'x-session-id') ||
-        sessionId;
+        findHeaderValue(headers, 'x-codeium-run-id') ||
+        findHeaderValue(headers, 'x-codeium-request-id') ||
+        null;
 
       const evidence: AgentEvidence[] = [];
-      pushEvidence(evidence, userAgent?.toLowerCase().includes('aider') ?? false, 'user-agent', 'user-agent', userAgent, 0.28, 'Aider user agent matched.');
-      pushEvidence(evidence, payloadBlob.includes('aider') || payloadBlob.includes('pair programming'), 'payload', 'prompt', payloadBlob.slice(0, 240), 0.2, 'Prompt payload contains Aider fingerprints.');
-      pushEvidence(evidence, Boolean(modelName), 'routing', 'modelName', modelName || 'unknown', 0.1, 'Model metadata observed.');
-      pushEvidence(evidence, Boolean(targetHost), 'header', 'targetHost', targetHost ?? 'unknown', 0.1, 'Target host was consistent with AI request routing.');
+      pushEvidence(evidence, Boolean(userAgent?.toLowerCase().includes('codeium') || userAgent?.toLowerCase().includes('windsurf')), 'user-agent', 'user-agent', userAgent, 0.27, `${toolName} user agent matched.`);
+      pushEvidence(evidence, Boolean(targetHost?.includes('codeium.com') || targetHost?.includes('windsurf.codeium.com')), 'header', 'targetHost', targetHost, 0.22, `${toolName} API host matched.`);
+      pushEvidence(evidence, codeiumApiKey !== null, 'header', 'x-codeium-api-key', codeiumApiKey, 0.2, 'Codeium API key header present.');
+      pushEvidence(evidence, payloadBlob.includes('codeium') || payloadBlob.includes('windsurf'), 'payload', 'prompt', payloadBlob.slice(0, 200), 0.12, `Payload fingerprint consistent with ${toolName} traffic.`);
 
       return {
-        toolName: 'Aider',
+        toolName,
         provider,
         sessionId,
         conversationId,
@@ -97,12 +115,12 @@ export function createAiderAdapter(): AgentAdapter {
         operationType,
         confidence: clampConfidence(0.5 + sumEvidenceWeights(evidence) * 0.6),
         evidence,
-        adapterName: 'aider',
+        adapterName: 'codeium',
         matchSource: 'adapter',
         sessionKind: 'agentic',
         host: targetHost,
         sessionSignature: buildSessionSignature({
-          toolName: 'Aider',
+          toolName,
           provider,
           modelName: modelName || null,
           sessionKind: 'agentic',
