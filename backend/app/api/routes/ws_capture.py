@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import Settings
 from app.core.rate_limit import InMemoryRateLimiter, client_identifier
 from app.core.security import AuthError, authenticate_websocket, ensure_workspace_scope
-from app.db.session import AsyncSessionLocal
+from app.db.session import get_session_factory_from_app
 from app.services.ingest_normalizer import extract_workspace_id, normalize_ingest_payload
 from app.services.neo4j_service import Neo4jLineageService
 from app.services.provenance_service import ingest_provenance_event
@@ -35,8 +35,8 @@ def get_ws_neo4j_service(websocket: WebSocket) -> Neo4jLineageService | None:
     return neo4j_service
 
 
-def get_ws_session_factory() -> async_sessionmaker[AsyncSession]:
-    return AsyncSessionLocal
+def get_ws_session_factory(websocket: WebSocket) -> async_sessionmaker[AsyncSession]:
+    return get_session_factory_from_app(websocket.app)
 
 
 def get_ws_rate_limiter(websocket: WebSocket) -> InMemoryRateLimiter:
