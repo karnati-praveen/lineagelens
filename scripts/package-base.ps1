@@ -20,6 +20,10 @@ try {
 
     New-Item -ItemType Directory -Force -Path $bundleRoot | Out-Null
 
+    if (Test-Path (Join-Path $bundleRoot "lineagelens-ad")) {
+        Remove-Item (Join-Path $bundleRoot "lineagelens-ad") -Recurse -Force
+    }
+
     # Backend
     Copy-Item (Join-Path $repoRoot "backend") (Join-Path $bundleRoot "backend") -Recurse -Force
     Get-ChildItem (Join-Path $bundleRoot "backend") -Directory -Recurse -Force |
@@ -43,6 +47,10 @@ try {
     npm test
     Copy-Item (Join-Path $repoRoot "scripts\quickstart-base.sh") (Join-Path $bundleRoot "quickstart.sh") -Force
     Copy-Item (Join-Path $repoRoot "scripts\reset-base.sh") (Join-Path $bundleRoot "reset.sh") -Force
+
+    if (Test-Path (Join-Path $bundleRoot "lineagelens-ad")) {
+        throw "Packaging safeguard failed: lineagelens-ad was copied into the Base bundle."
+    }
 
     if (Test-Path $artifactPath) {
         Remove-Item $artifactPath -Force

@@ -1,8 +1,14 @@
 ﻿# Exclude development and infrastructure content from extension package.
+.agents/**
+.claude/**
 .git/**
 .github/**
 .venv/**
 backend/**
+deploy/**
+docs/**
+lineagelens-ad/**
+proxy/**
 src/**
 out/**
 .vscode/**
@@ -21,9 +27,10 @@ docker-compose.enterprise.yml
 .gitignore
 .env.team.example
 .env.enterprise.example
-SHIP_PRODUCTS_COMMANDS.md
+docs/SHIP_PRODUCTS_COMMANDS.md
 file.md
 prafea
+skills-lock.json
 releases/**
 scripts/**
 docs/shipping-modes.md
@@ -41,6 +48,6 @@ node_modules/**
 # Keep package metadata/docs
 !package.json
 !README.md
-!CHANGELOG.md
+!docs/CHANGELOG.md
 !LICENSE
-!SUPPORT.md
+!docs/SUPPORT.md

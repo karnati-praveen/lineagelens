@@ -51,7 +51,7 @@ try {
     Compress-Archive -Path $bundleRoot -DestinationPath $artifactPath -Force
 
     Remove-Item $bundleRoot -Recurse -Force
-    Write-Host "Free package ready: $artifactPath"
+    Write-Host "Base package ready: $artifactPath"
 }
 finally {
     Pop-Location

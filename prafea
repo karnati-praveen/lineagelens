@@ -1,7 +1,7 @@
 # LineageLens — Complete System & Product Documentation
 
-Last reviewed from the local codebase: 2026-04-21
-Version: 0.0.3
+Last reviewed from the local codebase: 2026-04-26
+Version: 0.0.7
 
 ---
 
@@ -9,19 +9,19 @@ Version: 0.0.3
 
 ### What is LineageLens?
 
-LineageLens is an AI provenance tracking system for software teams. It answers one question that no existing tool answers: **"Where did this code come from, and why?"**
+LineageLens is an AI provenance tracking system for software teams. It answers one question that no other tool answers: **"Where did this code come from, and why?"**
 
-As AI coding assistants — Claude Code, Cursor, Aider, GitHub Copilot — write increasing fractions of production codebases, the origin and intent of code becomes invisible. LineageLens makes it visible again. It captures every significant AI-assisted code insertion, links it to the prompt and model that produced it, stores it with structured metadata, and gives developers tools to search, explain, audit, and govern that code over time.
+AI coding assistants — Claude Code, Cursor, Aider, GitHub Copilot, Codeium, Continue, Sourcegraph Cody, Amazon Q, Gemini CLI, OpenAI Codex — now write large fractions of production codebases. The origin and intent of that code is invisible. LineageLens makes it visible. It captures every significant AI-assisted code insertion, links it to the prompt and model that produced it, stores it with structured metadata, and gives developers tools to search, explain, audit, and govern that code over time.
 
-The detection host is currently a VS Code extension. The backend is a self-hosted FastAPI service backed by PostgreSQL and optionally Neo4j. Both work together: the extension observes file changes in real time, the backend stores and indexes provenance records across a team.
+The current detection host is a VS Code extension. The backend is a self-hosted FastAPI service backed by PostgreSQL and optionally Neo4j. The capture architecture is designed to support future IDE hosts and CLI ingest paths — the provider-agnostic event schema and agent adapter system make this straightforward to extend.
 
 ### The Problem
 
-AI coding tools are now writing large portions of production software. This creates three compounding problems:
+AI coding tools are writing large portions of production software. This creates three compounding problems:
 
-**Auditability.** When a bug appears in AI-generated code, there is no record of what prompt produced it, which model generated it, or what context surrounded the decision to insert it.
+**Auditability.** When a bug appears in AI-generated code, there is no record of what prompt produced it, which model generated it, or what context surrounded the decision to insert it. Root-cause analysis guesses.
 
-**Governance.** Security and compliance teams cannot answer basic questions: How much of our codebase was AI-generated? Which files have the highest AI insertion density? Which sessions produced high-risk code (security patterns, auth logic, eval calls)?
+**Governance.** Security and compliance teams cannot answer basic questions: How much of our codebase was AI-generated? Which files have the highest AI insertion density? Which sessions produced high-risk code — security patterns, auth logic, eval calls?
 
 **Lineage.** Code evolves. When AI-generated code is refactored, extended, or deleted, the relationship between generations is lost. There is no graph of how AI-contributed code has changed over time.
 
@@ -29,15 +29,15 @@ Traditional tools — debuggers, linters, code review bots — operate on what t
 
 ### Why This Matters
 
-The risks are concrete. A prompt that was slightly wrong, a model that hallucinated an API, a session that wrote auth logic without full context — these are real failure modes that have caused real incidents. Without provenance, root-cause analysis guesses. With it, you can trace from the bug back to the exact AI session that wrote the code.
+The risks are concrete. A prompt that was slightly wrong, a model that hallucinated an API, a session that wrote auth logic without full context — these are real failure modes that cause real incidents. Without provenance, root-cause analysis guesses. With it, you trace from the bug back to the exact AI session that wrote the code.
 
 For regulated industries — fintech, healthcare, defense — AI code governance is becoming a compliance requirement. LineageLens gives teams the audit trail they need before regulators require it.
 
 ### Target Users
 
-**Base users.** Individual engineers using AI tools heavily who want a personal record of what AI wrote in their codebase. They run LineageLens Base: local-first, no shared team features, just capture and explain.
+**Base users.** Individual engineers using AI tools heavily who want a personal record of what AI wrote in their codebase. They run LineageLens Base: local-first, no shared team features, capture and explain.
 
-**Plus workspaces (5-50 engineers).** Teams shipping AI-assisted code who need shared provenance records, semantic search across all insertions, governance dashboards, and the ability to review AI contribution patterns. They run LineageLens Plus.
+**Plus workspaces (5-50 engineers).** Teams shipping AI-assisted code who need shared provenance records, semantic search across all insertions, governance dashboards, and AI contribution pattern review. They run LineageLens Plus.
 
 **Max organizations.** Large teams with compliance requirements, multi-workspace setups, full graph lineage tracking, and audit export needs. They run LineageLens Max with Neo4j-backed lineage graphs.
 
@@ -50,31 +50,32 @@ For regulated industries — fintech, healthcare, defense — AI code governance
 LineageLens has two major subsystems that work together:
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Detection Host (VS Code Extension)                     │
-│                                                         │
-│  File watcher → Correlation engine → Provenance builder │
-│  Local LLM proxy → Agent adapter registry               │
-│  Storage service (local or backend)                     │
-│  UI: Sidebar, Search, Dashboard, Reviewer               │
-└───────────────────┬─────────────────────────────────────┘
-                    │  WebSocket (primary) / HTTP (fallback)
-                    ▼
-┌─────────────────────────────────────────────────────────┐
-│  FastAPI Backend                                        │
-│                                                         │
-│  Auth → Ingest → Provenance service → Search/Explain    │
-│  Team management → Insights → WebSocket capture         │
-└────────────┬───────────────────────────┬────────────────┘
-             │                           │
-             ▼                           ▼
-  ┌──────────────────┐       ┌───────────────────────┐
-  │   PostgreSQL     │       │   Neo4j (optional)    │
-  │   + pgvector     │       │   Graph lineage DB    │
-  │                  │       │                       │
-  │ provenance_recs  │       │ AIGeneratedBlock      │
-  │ user_accounts    │       │ ProvenanceBlockVersion│
-  └──────────────────┘       └───────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  Detection Host (VS Code Extension)                              │
+│                                                                  │
+│  File watcher → Correlation engine → Provenance builder          │
+│  Local LLM proxy → Agent adapter registry (10 adapters)         │
+│  Hook listener (Claude Code) → Lightweight record builder        │
+│  Storage service (local or backend)                              │
+│  UI: Sidebar, Search, Dashboard, Reviewer                        │
+└──────────────────────┬───────────────────────────────────────────┘
+                       │  WebSocket (primary) / HTTP POST (fallback)
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  FastAPI Backend                                                  │
+│                                                                  │
+│  Auth → Ingest → Provenance service → Search / Explain           │
+│  Team management → Insights → WebSocket capture                  │
+└─────────────┬───────────────────────────┬────────────────────────┘
+              │                           │
+              ▼                           ▼
+   ┌──────────────────┐       ┌───────────────────────┐
+   │   PostgreSQL     │       │   Neo4j (Max only)    │
+   │   + pgvector     │       │   Graph lineage DB    │
+   │                  │       │                       │
+   │ provenance_recs  │       │ AIGeneratedBlock      │
+   │ user_accounts    │       │ ProvenanceBlockVersion│
+   └──────────────────┘       └───────────────────────┘
 ```
 
 ### Detection Host (VS Code Extension)
@@ -84,15 +85,56 @@ The VS Code extension is the current observation surface. It is not the product'
 Key components:
 
 - **`src/extension.ts`** — Main activation, file change listeners, insertion detection, provenance record assembly.
-- **`src/proxy.ts`** — Local HTTP/HTTPS proxy that captures outbound LLM API traffic (OpenAI, Anthropic, Copilot, OpenRouter) before it leaves the machine.
-- **`src/correlation.ts`** — Matches a qualifying code insertion to a recent proxy-captured request/response pair using timing, file context, Levenshtein similarity, and confidence scoring.
-- **`src/agentAdapters/`** — Pluggable adapters that identify which tool produced the insertion (Cursor, Claude Code, Aider, legacy heuristic). Each adapter declares capabilities and evidence.
-- **`src/eventSchema.ts`** — Provider-agnostic normalized event schema (version `lineagelens.provenance-event.v1`). All adapters produce the same shape regardless of which tool was active.
+- **`src/proxy.ts`** — Local HTTP/HTTPS proxy that captures outbound LLM API traffic (Anthropic, OpenAI, GitHub Copilot, Codeium, OpenRouter, Sourcegraph, Google, AWS) before it leaves the machine.
+- **`src/correlation.ts`** — Matches a qualifying code insertion to a recent proxy-captured request/response pair using timing, file context, Levenshtein similarity, and confidence scoring. Also correlates against Claude Code hook events.
+- **`src/agentAdapters/`** — Pluggable adapters (10 total) that identify which tool produced the insertion. Each adapter declares capabilities and evidence.
+- **`src/eventSchema.ts`** — Provider-agnostic normalized event schema (version `lineagelens.provenance-event.v1`). All adapters produce the same shape.
+- **`src/lightweightRecord.ts`** — Pure helper (no VS Code imports) for building provenance records from CLI adapters, scripts, or other non-extension hosts.
+- **`src/hookListener.ts`** — Watches `~/.lineagelens/hook-events.jsonl` for Claude Code tool-use events written by the hook capture script.
 - **`src/storage/`** — Abstraction layer with two implementations: `LocalStorageService` (VS Code global state or workspace file) and `BackendStorageService` (sends records to the FastAPI backend over WebSocket or HTTP).
+
+### Agent Adapter Registry
+
+The agent adapter registry (`src/agentAdapters/registry.ts`) runs all registered adapters against each provenance event and selects the highest-confidence match. Adapters run in priority order; lower `order` value means the adapter is tried first when confidence ties occur.
+
+**All 10 registered adapters (priority order):**
+
+| Order | Adapter | Tool | Session Kind | Key Signals |
+|-------|---------|------|-------------|-------------|
+| 10 | `cursor` | Cursor IDE | `agentic` | `x-cursor-*` headers, `cursor` user-agent, `composer` payload |
+| 15 | `copilot` | GitHub Copilot | `assistant` | `api.githubcopilot.com`, `x-github-token`, `editor-version` |
+| 20 | `claude-code` | Claude Code CLI | `cli` / `agentic` | `anthropic-version`, `x-app: cli`, `claude-code/` user-agent |
+| 25 | `codeium` | Codeium / Windsurf | `agentic` | `codeium.com`, `x-codeium-api-key`, `windsurf` signals |
+| 30 | `aider` | Aider | `agentic` | `aider` user-agent, `pair programming` payload |
+| 35 | `continue` | Continue.dev | `agentic` | `x-continue-version`, `x-continue-unique-id` |
+| 40 | `cody` | Sourcegraph Cody | `agentic` | `cody-gateway.sourcegraph.com`, `x-sourcegraph-client` |
+| 45 | `amazon-q` | Amazon Q Developer | `assistant` | `amazonaws.com`, `x-amz-target`, `x-amz-request-id` |
+| 50 | `gemini-cli` | Gemini CLI | `cli` | `generativelanguage.googleapis.com`, `x-goog-api-client` |
+| 55 | `codex-cli` | OpenAI Codex CLI | `cli` | `openai-codex` user-agent, o-series models on `api.openai.com` |
+| 1000 | `legacy-heuristic` | Unknown | `unknown` | Keyword matching, lowest confidence, always fires last |
+
+Each adapter returns a `NormalizedAgentContext` with: `toolName`, `provider`, `sessionId`, `conversationId`, `runId`, `modelName`, `userAgent`, `operationType`, `confidence`, `evidence[]`, `sessionKind`, `host`, `sessionSignature`.
+
+The `inferProvider` function in `src/agentAdapters/shared.ts` resolves provider from host and model name for all supported providers: Anthropic, OpenAI, GitHub, Google, AWS, Codeium, Sourcegraph, OpenRouter.
+
+### Lightweight Adapter Boundary
+
+`src/lightweightRecord.ts` provides a pure TypeScript helper for building provenance records outside the VS Code extension — from a CLI, script, manual reviewer flow, or another editor integration. It accepts a minimal payload and produces the same `ProviderAgnosticProvenanceEvent` contract the extension uses.
+
+Minimum required fields: `eventId`, `timestampIso`, `filePath`, `fileUri`, `languageId`, `insertedText`.
+
+Optional fields enable richer records: `fullPromptMessages`, `rawModelResponse`, `modelName`, `agentContext`, `contextSnapshot`, `gitBranch`, `insertedChunks`, `captureStatus`.
+
+The helper automatically infers `promptStatus` from the presence of prompt/response data, synthesizes a `PromptCorrelationResult`, and sets `shimName: 'lightweight-adapter'` so the backend can identify the source.
+
+Three operating profiles:
+- **`base`**: Everything stays in VS Code storage or workspace file.
+- **`plus`**: Backend stores provenance; Neo4j and vector search are optional.
+- **`max`**: Full graph lineage (Neo4j) and vector search enabled.
 
 ### FastAPI Backend
 
-The backend is a Python 3.11+ async FastAPI application. It handles:
+Python 3.11+ async FastAPI application. Handles:
 
 - User authentication (JWT, workspace-scoped)
 - Provenance record ingest and storage
@@ -102,60 +144,57 @@ The backend is a Python 3.11+ async FastAPI application. It handles:
 - Governance insights dashboard
 - Real-time WebSocket ingest
 
-Entry point: `backend/app/main.py`
+Entry point: `backend/app/main.py`. Default port: `8787`.
 
 ### PostgreSQL + pgvector
 
-PostgreSQL is the primary data store. The `pgvector` extension adds a 256-dimensional vector column to `provenance_records`, enabling cosine-distance semantic search over inserted code and context.
+PostgreSQL is the primary data store. The `pgvector` extension adds a 256-dimensional vector column to `provenance_records`, enabling cosine-distance semantic search.
 
 Two tables:
 - `provenance_records` — one row per captured AI insertion
 - `user_accounts` — one row per user, workspace-scoped with role and token versioning
 
-SQLAlchemy async ORM with `asyncpg` driver. Database migrations managed by Alembic.
+SQLAlchemy async ORM with `asyncpg` driver. Migrations managed by Alembic.
 
 ### Neo4j (Max only)
 
 Neo4j stores code lineage as a directed graph. On ingest, the backend creates:
-- An `AIGeneratedBlock` node (represents a logical block of AI-generated code)
-- A `ProvenanceBlockVersion` node (represents one version of that block)
+- An `AIGeneratedBlock` node (logical block of AI-generated code)
+- A `ProvenanceBlockVersion` node (one version of that block)
 - A `HAS_VERSION` relationship linking block to version
 - A `LATEST_VERSION` pointer
 
-Neo4j is disabled in Base and Plus modes (`NEO4J_ENABLED: false`). In Max mode it provides graph traversal for lineage evolution queries: which AI block was refactored, extended, or deleted, and by which session.
+Disabled in Base and Plus (`NEO4J_ENABLED: false`). In Max mode it provides graph traversal for lineage evolution queries.
 
 ### AI Analysis Layer
 
-Two AI capabilities are supported:
+**Embeddings.** The backend generates a 256-dimensional embedding per record. Provider is configurable:
+- `hash` (Base default) — deterministic hash-based embedding, no API key required
+- `openai` (Plus/Max) — `text-embedding-3-small`, enables semantic similarity search
 
-**Embeddings.** The backend generates a 256-dimensional embedding of each inserted code snippet + context. Provider is configurable:
-- `hash` (default for Base) - deterministic hash-based embedding, no API key required
-- `openai` (Plus/Max) - `text-embedding-3-small` via OpenAI API, enables true semantic similarity search
-
-**LLM Explain.** The backend calls an OpenAI-compatible chat completions endpoint to generate plain-English explanations of provenance records. Model defaults to `gpt-4o-mini`. Falls back to a template-based explanation when no API key is configured.
-
-The extension also supports a local Ollama-based explanation mode (e.g., `qwen2.5-coder:7b`) for fully offline use.
+**LLM Explain.** Calls an OpenAI-compatible chat completions endpoint to generate plain-English explanations. Model defaults to `gpt-4o-mini`. Falls back to template-based explanation when no API key is configured. The extension also supports local Ollama (e.g., `qwen2.5-coder:7b`) for fully offline explanations.
 
 ### Data Flow: End-to-End
 
 ```
 1. Developer receives AI-generated code in VS Code
-2. Extension's file watcher detects the change
-3. Insertion is extracted and net line count is computed (threshold: 4 lines)
-4. Local LLM proxy is checked for a matching request/response pair (15s window)
-5. Agent adapter identifies the tool (Cursor, Claude Code, Aider, etc.)
-6. A ProvenanceRecord is assembled with:
+2. Extension file watcher detects the change
+3. Insertion is extracted; net line count is computed (threshold: 4 lines)
+4. Local LLM proxy is checked for a matching request/response pair (15 s window)
+   OR: Claude Code hook listener checks for matching hook events
+5. Agent adapter registry identifies the tool (10 adapters, best confidence wins)
+6. ProvenanceRecord is assembled:
    - Inserted code, surrounding context, cursor position
-   - Matched prompt/response (if captured)
-   - Normalized event (provider-agnostic schema)
+   - Matched prompt/response (if captured) or hook event
+   - Normalized event (provider-agnostic schema v1)
    - AST node-type snapshot (Tree-sitter)
-   - Deterministic local embeddings
+   - Local embeddings
    - Risk metadata
-7. Record is sent to backend over WebSocket (falls back to HTTP)
-8. Backend normalizes and validates the payload
+7. Record is sent to backend over WebSocket (falls back to HTTP POST /ingest)
+8. Backend normalizes and validates the payload (ingest_normalizer.py)
 9. Backend generates 256-dim embedding vector (hash or OpenAI)
 10. Record is written to PostgreSQL (provenance_records)
-11. If Neo4j is enabled, lineage nodes are created in graph DB
+11. If Neo4j is enabled: AIGeneratedBlock + ProvenanceBlockVersion are created
 12. Record is indexed for vector search
 13. Developer can search, view, explain, or review the record from the sidebar
 ```
@@ -166,57 +205,53 @@ The extension also supports a local Ollama-based explanation mode (e.g., `qwen2.
 
 ### Provenance Capture
 
-The foundational feature. LineageLens captures every significant AI code insertion (≥4 net added lines by default) with full context:
+LineageLens captures every significant AI code insertion (≥4 net added lines by default) with full context:
 
 - The inserted code itself
 - Surrounding code (200-token window before and after)
 - The originating AI prompt and raw model response (when proxy captures them)
 - The model name, provider, parameters, session/run/conversation IDs
 - Git branch, file path, cursor position
-- A provider-agnostic normalized event (`lineagelens.provenance-event.v1`)
+- Provider-agnostic normalized event (`lineagelens.provenance-event.v1`)
 - The raw detection payload for future reprocessing
 
 Capture degrades gracefully when full proxy capture is impossible:
-- **`full`** — Both prompt and response are captured
-- **`metadata_only`** — Non-POST request, metadata only (no body)
-- **`tunnel_only`** — HTTPS CONNECT tunnel recorded, but encrypted payload not decrypted
-- **`unavailable`** — Opaque tool, only the file diff is captured
+- **`full`** — Both prompt and response captured
+- **`metadata_only`** — Non-POST request; metadata only, no body
+- **`tunnel_only`** — HTTPS CONNECT tunnel recorded; encrypted payload not decrypted
+- **`unavailable`** — Opaque tool; only the file diff is captured
 
-Even opaque tools (tools that don't route through the local proxy) produce useful provenance records: the diff, context snapshot, AST, and risk metadata are always captured.
+Even opaque tools produce useful records: the diff, context snapshot, AST, and risk metadata are always captured.
 
 ### Code Lineage Tracking
 
-**Local lineage** (available in all modes) infers relationships between provenance records in the same file using AST token Jaccard similarity. Relationship types: `INITIAL`, `EXTENDED`, `REFACTORED`, `MOVED`, `DELETED`, `UNKNOWN`.
-**Graph lineage** (Max only) stores lineage in Neo4j as a directed graph of `AIGeneratedBlock -> ProvenanceBlockVersion` nodes. This enables queries like "show me all versions of this function and the sessions that produced each version."
+**Local lineage** (all modes) infers relationships between provenance records in the same file using AST token Jaccard similarity. Relationship types: `INITIAL`, `EXTENDED`, `REFACTORED`, `MOVED`, `DELETED`, `UNKNOWN`. Can be refreshed from the latest git commit using `lineagelens.refreshLocalLineage`.
 
-Local lineage can be refreshed from the latest git commit using `lineagelens.refreshLocalLineage`.
+**Graph lineage** (Max only) stores lineage in Neo4j as a directed graph of `AIGeneratedBlock → ProvenanceBlockVersion` nodes.
 
 ### AI-Assisted Explanation
 
-The explain feature takes a provenance record and generates a plain-English explanation: what the AI was asked to do, what it produced, what risk signals are present, and why the developer might care.
-
 Two paths:
-- **Backend explain** (Plus/Max): Calls an OpenAI-compatible chat completions endpoint with a structured system prompt. Model, API URL, and timeout are configurable. Falls back to a template if the LLM is unavailable.
-- **Local explain** (Base/local mode): Template-based by default. Optionally calls a local Ollama instance (e.g., `qwen2.5-coder:7b`) for LLM-quality explanations without an API key.
+- **Backend explain** (Plus/Max): OpenAI-compatible chat completions with a structured system prompt. Model, API URL, and timeout are configurable. Falls back to template if LLM is unavailable.
+- **Local explain** (Base): Template-based by default. Optionally calls a local Ollama instance for LLM-quality explanations without an API key.
 
 ### Semantic Search
 
-**Plus/Max only.** The `/search` endpoint accepts a text query and optional filters (model, date range, file path, workspace). If a query string is provided, the backend generates an embedding and uses pgvector cosine distance to find semantically similar records. Without a query, recent records are returned with filter support.
+**Plus/Max only.** The `/search` endpoint accepts a text query and optional filters (model, date range, file path, workspace). If a query is provided, the backend generates an embedding and uses pgvector cosine distance to find semantically similar records. Without a query, recent records are returned with filter support.
 
-The VS Code extension's search sidebar exposes these filters in a webview panel. Selecting a result opens the file at the relevant position and loads the provenance record in the sidebar.
+The VS Code extension exposes search filters in a webview panel. Selecting a result opens the file at the relevant position and loads the provenance record in the sidebar.
 
-
-**Base mode** disables semantic search entirely - the `/search` endpoint returns 403 with an upgrade message.
+Base mode: `/search` returns 403 with an upgrade message.
 
 ### Governance Insights Dashboard
 
-**Plus/Max only.** The `/insights/dashboard` endpoint computes a rich analytics payload from all provenance records in a workspace:
+**Plus/Max only.** The `/insights/dashboard` endpoint computes a rich analytics payload:
 - **Summary counts**: total records, unique models, unique files, AI insertion density
 - **Compliance controls**: prompt capture coverage, high-risk review pressure, critical record count, agentic session visibility, correlation confidence, file hotspot concentration
 - **Risk trends**: how risk levels have changed over time
-- **File hotspots**: files with the highest AI insertion density
-- **Model analytics**: which models are producing the most insertions and highest-risk code
-- **High-risk records**: records with critical or high risk scores surfaced immediately
+- **File hotspots**: files with highest AI insertion density
+- **Model analytics**: which models produce the most insertions and highest-risk code
+- **High-risk records**: critical/high risk scores surfaced immediately
 - **Agent sessions**: grouped by session/run/conversation ID (or a 20-minute session-gap heuristic), with prompt capture rate, high-risk count, net lines added, and files touched
 
 Risk scoring evaluates: secret patterns, command execution, dynamic evaluation, unsafe SQL, auth/token patterns, file system operations, network calls, broad exception handling, and path signals (auth, CI, database schema, infrastructure files).
@@ -225,37 +260,35 @@ Risk scoring evaluates: secret patterns, command execution, dynamic evaluation, 
 
 A command-driven review of the currently open file. The reviewer reads the file, queries relevant provenance records, and runs either:
 - **Heuristic review**: deterministic checks for provenance-linked risk signals, security patterns, large changes, and weak correlation
-- **OpenAI-compatible review**: sends context to a configured model for a structured analysis response
+- **OpenAI-compatible review**: sends context to a configured model for structured analysis
 
 Results are surfaced in the governance dashboard webview.
 
 ### Team Management
 
-**Plus/Max only.** Two endpoints:
-- `GET /team/members` - Lists all active users in a workspace with per-user provenance record counts, role, and join date
-- `POST /team/invite` - Admin-only endpoint that creates a new user in the same workspace. Validates password strength, normalizes username, enforces uniqueness, and handles concurrent registration races with proper 409 responses
+**Plus/Max only.**
+- `GET /team/members` — Lists all active workspace users with per-user record counts, role, and join date
+- `POST /team/invite` — Admin-only; creates a new user in the same workspace. Validates password strength, normalizes username, enforces uniqueness, handles concurrent registration races with 409 responses.
 
-Team management is fully disabled in Base mode.
+Disabled in Base mode.
+
 ### WebSocket Real-Time Ingest
 
-`WS /ws/capture` — The primary ingest channel. The extension maintains a WebSocket connection to the backend and sends provenance records as they are captured. Falls back to HTTP POST `/ingest` on connection failure. Retries are configurable.
+`WS /ws/capture` — Primary ingest channel. The extension maintains a WebSocket connection and sends records as they are captured. Falls back to HTTP `POST /ingest` on connection failure. Retries are configurable.
 
 ---
 
-## SECTION 4: MODES (Solo, Team, Enterprise)
-## SECTION 4: MODES (Base, Plus, Max)
-### How Modes Work
 ## SECTION 4: MODES (Base, Plus, Max)
 
 ### How Modes Work
 
-The backend reads `BACKEND_MODE` from the environment (`solo`, `team`, or `enterprise`). A FastAPI dependency (`require_non_solo`) is applied as a route-level guard to features that require Plus or higher. The health endpoint always exposes `productMode` so the VS Code extension can detect which tier is running and adapt its UI accordingly.
+The backend reads `BACKEND_MODE` from the environment (`solo`, `team`, or `enterprise`). A FastAPI dependency (`require_non_solo`) is applied as a route-level guard to features requiring Plus or higher. The health endpoint always exposes `productMode` so the VS Code extension can detect which tier is running.
 
 ### Base Mode
 
-`BACKEND_MODE=solo` -> `productMode=base`
+`BACKEND_MODE=solo` → `productMode=base`
 
-**Designed for:** Individual developers. One person, one machine, local Docker deployment.
+**Designed for:** Individual developers. One person, one machine, local deployment.
 
 **Includes:**
 - Full provenance capture (HTTP ingest + WebSocket)
@@ -265,9 +298,9 @@ The backend reads `BACKEND_MODE` from the environment (`solo`, `team`, or `enter
 - Health endpoint
 
 **Disabled:**
-- Semantic search (`/search`) -> 403
-- Insights dashboard (`/insights/dashboard`) -> 403
-- Team management (`/team/members`, `/team/invite`) -> 403
+- Semantic search (`/search`) → 403
+- Insights dashboard (`/insights/dashboard`) → 403
+- Team management (`/team/*`) → 403
 
 **Infrastructure:**
 - PostgreSQL only (no Neo4j)
@@ -275,19 +308,19 @@ The backend reads `BACKEND_MODE` from the environment (`solo`, `team`, or `enter
 - Small connection pool (`DB_POOL_SIZE=3`)
 - Conservative rate limits (5 concurrent WebSocket connections)
 
-**Quickstart:** `bash quickstart-base.sh`
+**Quickstart:** `bash scripts/quickstart-base.sh`
 
 ### Plus Mode
 
-`BACKEND_MODE=team` -> `productMode=plus`
+`BACKEND_MODE=team` → `productMode=plus`
 
-**Designed for:** Engineering teams of 5-50 people sharing a backend.
+**Designed for:** Engineering teams of 5–50 people.
 
-**Includes everything in Base, plus:**
+**Adds over Base:**
 - Semantic search (`/search`) with pgvector cosine distance
 - Governance insights dashboard (`/insights/dashboard`)
 - Team member listing (`/team/members`)
-- Admin-invite for new users (`/team/invite`)
+- Admin-invite (`/team/invite`)
 
 **Infrastructure:**
 - PostgreSQL + pgvector with real embedding vectors
@@ -295,29 +328,25 @@ The backend reads `BACKEND_MODE` from the environment (`solo`, `team`, or `enter
 - Larger connection pool (`DB_POOL_SIZE=10`, `DB_MAX_OVERFLOW=20`)
 - Higher rate limits (30 concurrent WebSocket connections)
 
-**Quickstart:** `bash quickstart-plus.sh`
+**Quickstart:** `bash scripts/quickstart-plus.sh`
 
 ### Max Mode
 
-`BACKEND_MODE=enterprise` -> `productMode=max`
+`BACKEND_MODE=enterprise` → `productMode=max`
 
-**Designed for:** Large engineering organizations with compliance requirements.
+**Designed for:** Large organizations with compliance requirements.
 
-**Includes everything in Plus, plus:**
+**Adds over Plus:**
 - Neo4j graph lineage (`NEO4J_ENABLED=true`)
-- Full lineage graph traversal via Neo4j queries
 - `AIGeneratedBlock` and `ProvenanceBlockVersion` nodes in Neo4j
 - Lineage evolution tracking across ingest cycles
 - Zombie Neo4j node cleanup on Postgres commit failure (atomic consistency)
-
-**Infrastructure:**
-- PostgreSQL + pgvector + Neo4j (three-service Docker Compose)
 - Production-grade secrets validation (JWT_REFRESH_SECRET_KEY must differ from JWT_SECRET_KEY)
-- CORS wildcard blocked in production
+- CORS wildcard blocked
 
-**Quickstart:** `bash quickstart-max.sh`
+**Quickstart:** `bash scripts/quickstart-max.sh`
 
-### Feature Comparison Table
+### Feature Comparison
 
 | Feature                    | Base | Plus | Max |
 |----------------------------|------|------|-----|
@@ -325,10 +354,13 @@ The backend reads `BACKEND_MODE` from the environment (`solo`, `team`, or `enter
 | WebSocket ingest           | yes  | yes  | yes |
 | LLM explain                | yes  | yes  | yes |
 | JWT auth + logout          | yes  | yes  | yes |
+| Lightweight adapter ingest | yes  | yes  | yes |
 | Semantic search            | no   | yes  | yes |
 | Insights dashboard         | no   | yes  | yes |
 | Team management            | no   | yes  | yes |
 | OpenAI embeddings          | no   | opt  | opt |
+| Neo4j graph lineage        | no   | no   | yes |
+| Vector search              | no   | no   | yes |
 
 ---
 
@@ -336,7 +368,7 @@ The backend reads `BACKEND_MODE` from the environment (`solo`, `team`, or `enter
 
 ### API Routes
 
-All routes are registered in `backend/app/main.py`. The backend runs on port `8787` by default.
+All routes registered in `backend/app/main.py`. Backend runs on port `8787` by default.
 
 **Authentication** (`backend/app/api/routes/auth.py`)
 ```
@@ -366,7 +398,7 @@ POST /search          Vector or filtered search across workspace records
 **Explain** (`backend/app/api/routes/explain.py`)
 ```
 POST /explain              Generate plain-English explanation of a record
-GET  /explain/system-prompt  Return the explanation system prompt (authenticated)
+GET  /explain/system-prompt  Return explanation system prompt (authenticated)
 ```
 
 **Insights** (Plus/Max only) (`backend/app/api/routes/insights.py`)
@@ -382,7 +414,7 @@ POST /team/invite    Admin-only: create new user in workspace
 
 **Health** (`backend/app/main.py`)
 ```
-GET /health   Always returns productMode + status. Exposes environment/features in non-production.
+GET /health   Returns productMode + status. Exposes features in non-production.
 ```
 
 ### Services Layer
@@ -394,7 +426,7 @@ GET /health   Always returns productMode + status. Exposes environment/features 
 | `provenance_service.py` | Ingest normalization, DB write, Neo4j write, search, serialization |
 | `ingest_normalizer.py` | Extracts fields from raw payload, warns on missing client UUID |
 | `embedding_service.py` | Generates 256-dim vectors (hash or OpenAI provider) |
-| `ast_normalizer.py` | Extracts structural AST node types from inserted code (Python, JS, TS, TSX/JSX) |
+| `ast_normalizer.py` | Extracts structural AST node types from inserted code |
 | `neo4j_service.py` | Creates/deletes lineage nodes in Neo4j, ensures constraints |
 | `explanation_service.py` | Builds explain prompt, calls LLM or falls back to template |
 | `insights_service.py` | Computes risk scores, aggregations, compliance controls, agent sessions |
@@ -412,7 +444,7 @@ GET /health   Always returns productMode + status. Exposes environment/features 
 | `id` | Integer PK | Auto-increment surrogate key |
 | `uuid` | UUID | Client-provided or generated; unique index |
 | `workspace_id` | String(128) | Tenant isolation key |
-| `user_id` | UUID nullable | FK to `user_accounts.id`; added in migration 202501160001 |
+| `user_id` | UUID nullable | FK to `user_accounts.id` |
 | `request_uuid` | UUID nullable | Correlation UUID from proxy |
 | `file_path` | Text | Workspace-relative or absolute |
 | `file_uri` | Text nullable | VS Code URI |
@@ -443,7 +475,7 @@ Composite indexes: `(workspace_id, timestamp_iso)`, `(workspace_id, model_name)`
 | `username` | String(128) unique | Case-normalized on registration |
 | `password_hash` | String(512) | bcrypt hash |
 | `workspace_id` | String(128) | Workspace the user belongs to |
-| `role` | String(32) | `member` or `admin`; `server_default="member"` |
+| `role` | String(32) | `member` or `admin` |
 | `is_active` | Boolean | Soft-delete flag |
 | `token_version` | Integer | Increments on logout to invalidate all tokens |
 | `created_at / updated_at` | DateTime(tz) | Timestamps |
@@ -478,11 +510,10 @@ Composite indexes: `(workspace_id, timestamp_iso)`, `(workspace_id, model_name)`
 
 5. POST /auth/logout
    - Increment user.token_version in DB
-   - All existing access + refresh tokens for this user are now invalid
-   - Next refresh attempt fails at step 4
+   - All existing access + refresh tokens are now invalid
 ```
 
-### Data Ingestion Pipeline
+### Ingest Pipeline
 
 ```
 POST /ingest or WS /ws/capture
@@ -493,7 +524,7 @@ POST /ingest or WS /ws/capture
   ├── Extract inserted_code, file_path, timestamp
   ├── Extract prompt_messages, model_name, raw_model_response
   ├── Warn if no client-provided UUID (retries will duplicate)
-  └── Return normalized IngestPayload
+  └── Return NormalizedIngestPayload
 
          │
          ▼
@@ -510,13 +541,13 @@ POST /ingest or WS /ws/capture
 
 ### Middleware Stack
 
-Applied in order (outermost first):
+Applied outermost first:
 
 1. `TrustedHostMiddleware` — if `BACKEND_TRUSTED_HOSTS` is set
 2. `CORSMiddleware` — explicit origins, no wildcard in production
 3. `apply_security_headers` — X-Content-Type-Options, X-Frame-Options, Referrer-Policy, COOP, CORP, Permissions-Policy, HSTS (production only)
-4. `enforce_http_payload_size` — streaming body read, 2MB default limit, prevents OOM from chunked encoding
-5. `enforce_http_rate_limit` — in-memory sliding window, 120 req/60s default, exempt `/health`
+4. `enforce_http_payload_size` — streaming body read, 2 MB default limit
+5. `enforce_http_rate_limit` — in-memory sliding window, 120 req/60 s default, exempt `/health`
 
 ---
 
@@ -524,28 +555,25 @@ Applied in order (outermost first):
 
 ### Docker Compose Bundles
 
-Three separate Docker Compose configurations, one per tier:
-
-| File | Tier | Services |
-|---|---|---|
 | File | Tier | Services |
 |---|---|---|
 | `deploy/docker-compose.base.yml` | Base | postgres, backend |
 | `deploy/docker-compose.plus.yml` | Plus | postgres, backend |
 | `deploy/docker-compose.max.yml` | Max | postgres, neo4j, backend |
 
-All backends build from `backend/Dockerfile`. Postgres uses `pgvector/pgvector:pg16` image. Neo4j uses the official `neo4j` image.
+All backends build from `backend/Dockerfile`. Postgres uses `pgvector/pgvector:pg16`. Neo4j uses the official `neo4j` image.
 
 ### Quickstart Scripts
 
 ```
-scripts/quickstart-base.sh       # Base: 7-step setup
-scripts/quickstart-plus.sh       # Plus: 7-step setup
-scripts/quickstart-max.sh        # Max: 7-step setup
+scripts/quickstart-base.sh    # Base: 7-step setup
+scripts/quickstart-plus.sh    # Plus: 7-step setup
+scripts/quickstart-max.sh     # Max: 7-step setup
 ```
+
 Each script:
 1. Checks prerequisites (docker, openssl, curl, python3)
-2. Stops any existing containers (preserving volumes)
+2. Stops existing containers (preserving volumes)
 3. Generates secrets with `openssl rand` if `.env` is absent; validates existing `.env` if present
 4. Starts PostgreSQL and waits for health
 5. Runs `alembic upgrade head`
@@ -559,11 +587,9 @@ Each script:
 | Variable | Description |
 |---|---|
 | `POSTGRES_PASSWORD` | PostgreSQL root password |
-| `JWT_SECRET_KEY` | Access token signing key (min 32 chars, no defaults) |
+| `JWT_SECRET_KEY` | Access token signing key (min 32 chars) |
 | `JWT_REFRESH_SECRET_KEY` | Refresh token signing key (must differ from access key in production) |
 | `DATABASE_URL` | Full asyncpg connection string |
-
-**Backend mode control**
 
 **Backend mode control**
 
@@ -578,7 +604,7 @@ Each script:
 
 | Variable | Description |
 |---|---|
-| `EMBEDDING_PROVIDER` | `hash` (no key needed) or `openai` |
+| `EMBEDDING_PROVIDER` | `hash` (no key) or `openai` |
 | `EMBEDDING_API_KEY` | OpenAI API key (when provider=openai) |
 | `EMBEDDING_MODEL_NAME` | Default: `text-embedding-3-small` |
 
@@ -586,12 +612,12 @@ Each script:
 
 | Variable | Description |
 |---|---|
-| `EXPLAIN_LLM_API_KEY` | OpenAI API key (optional; fallback to template if absent) |
+| `EXPLAIN_LLM_API_KEY` | OpenAI API key (optional; falls back to template) |
 | `EXPLAIN_LLM_MODEL` | Default: `gpt-4o-mini` |
 | `EXPLAIN_LLM_API_URL` | OpenAI-compatible endpoint |
 | `EXPLAIN_LLM_TIMEOUT_SECONDS` | Default: 25 |
 
-**Connection pool (tune for load)**
+**Connection pool**
 
 | Variable | Base default | Plus default |
 |---|---|---|
@@ -621,9 +647,9 @@ Each script:
 **Production** (`APP_ENV=production`):
 - `/health` exposes only `status`, `app`, `version`, `productMode`
 - CORS origins must be explicit (no `*`)
-- `JWT_REFRESH_SECRET_KEY` must be set and differ from `JWT_SECRET_KEY`
+- `JWT_REFRESH_SECRET_KEY` must differ from `JWT_SECRET_KEY`
 - Neo4j password must be non-default
-- `Strict-Transport-Security` header added to all responses
+- `Strict-Transport-Security` added to all responses
 
 ---
 
@@ -638,86 +664,84 @@ All protected endpoints require a valid JWT Bearer token. Token validation check
 - Issuer (`JWT_ISSUER`)
 - Required scopes (`provenance:write provenance:read`)
 
-Workspace scope is enforced on every record operation: the `workspace_id` in the auth context is always used for data access, never the workspace_id from the request payload (which is only accepted for normalization fallback).
+Workspace scope is enforced on every record operation: the `workspace_id` from the auth context is always used for data access, never the workspace_id from the request payload.
 
 ### Token Revocation
 
-Tokens include a `token_version` claim. On logout, the backend increments `user_accounts.token_version`. Any subsequent refresh token exchange that carries the old `token_version` is rejected with 401. This provides effective session revocation without a token blacklist.
+Tokens include a `token_version` claim. On logout, the backend increments `user_accounts.token_version`. Any subsequent refresh token exchange with the old `token_version` is rejected with 401. No token blacklist required.
 
-**Backward compatibility:** The missing `token_version` claim is treated as `0`, matching the DB default, so existing tokens issued before this feature was added continue to work until the user's next refresh.
+**Backward compatibility:** Missing `token_version` claim is treated as `0`, matching the DB default.
 
 ### Password Security
 
-- Passwords are hashed with bcrypt before storage
+- bcrypt hash before storage
 - Minimum length enforced by `AUTH_PASSWORD_MIN_LENGTH` (default 8)
-- Common/weak passwords are blocked by the strength validator
-- Usernames are normalized (lowercase, stripped) on registration and login to prevent duplicate account confusion
+- Common/weak passwords blocked by strength validator
+- Usernames normalized (lowercase, stripped) on registration and login
 
 ### Data Isolation
 
-All provenance records and team operations are scoped to `workspace_id`. There is no cross-workspace data access. The `workspace_id` is extracted from the authenticated JWT, not from user-supplied request parameters, preventing workspace ID injection.
+All provenance records and team operations are scoped to `workspace_id`. No cross-workspace data access. The `workspace_id` is extracted from the authenticated JWT, not from user-supplied request parameters.
 
 ### Payload Protection
 
-- HTTP payload size limit: 2MB (enforced as a streaming read, not a buffered check — prevents chunked OOM attacks)
-- WebSocket message size limit: 2MB
-- Rate limiting: in-memory sliding window per client IP for both HTTP and WebSocket
+- HTTP payload size limit: 2 MB (streaming read — prevents chunked OOM attacks)
+- WebSocket message size limit: 2 MB
+- Rate limiting: in-memory sliding window per client IP for HTTP and WebSocket
 - All rate limit decisions include `Retry-After`, `X-RateLimit-Limit`, and `X-RateLimit-Remaining` headers
 
 ### Extension-Side Security
 
-- JWT tokens are stored in VS Code Secret Storage (OS keychain), not in extension settings
+- JWT tokens stored in VS Code Secret Storage (OS keychain), not extension settings
 - Reviewer API key stored in VS Code Secret Storage
-- Proxy header redaction: sensitive headers are stripped before storing in provenance records
+- Proxy header redaction: sensitive headers stripped before storing in provenance records
 - Environment snapshot excludes variables with names matching `key`, `secret`, `password`, `token`, `auth`
 
 ### Known Risk Areas
 
-**In-memory rate limiter.** The rate limiter stores state in process memory. Multi-process or multi-replica deployments will not share rate limit counters. For production scale, replace with a Redis-backed limiter.
+**In-memory rate limiter.** Multi-process or multi-replica deployments do not share rate limit counters. Replace with Redis-backed limiter for production scale.
 
-**HTTPS CONNECT traffic.** The local LLM proxy captures HTTPS CONNECT tunnels but does not decrypt them. Tools that use strict certificate pinning or mutual TLS will produce `tunnel_only` records, not full captures. This is intentional — the system never acts as a MITM for encrypted traffic.
+**HTTPS CONNECT traffic.** The local proxy captures CONNECT tunnels but does not decrypt them. Tools with strict certificate pinning or mutual TLS produce `tunnel_only` records. The system never acts as a MITM for encrypted traffic.
 
-**Neo4j transaction atomicity.** If a Postgres commit succeeds but a Neo4j write fails, the record exists in Postgres without a lineage node. Conversely, if Postgres commit fails after a Neo4j write, the cleanup path deletes the orphaned Neo4j node. This is a best-effort cleanup, not a distributed transaction.
+**Neo4j transaction atomicity.** If Postgres commit succeeds but Neo4j write fails, the record exists in Postgres without a lineage node. The cleanup path deletes orphaned Neo4j nodes on Postgres commit failure. Best-effort cleanup, not a distributed transaction.
 
 ---
 
 ## SECTION 8: KNOWN ISSUES & LIMITATIONS
 
-### Current Platform Limitations
+### Platform
 
-**VS Code only.** The detection host is a VS Code extension. JetBrains, Neovim, CLI ingest, and manual import are designed for in the architecture (the provider-agnostic schema and adapter system are ready) but not yet implemented.
+**VS Code only.** The detection host is a VS Code extension. JetBrains, Neovim, CLI ingest, and manual import are supported by the architecture (provider-agnostic schema, 10-adapter system, lightweight record builder) but not yet implemented as standalone hosts.
 
-**External adapter loading.** Agent adapters (Cursor, Claude Code, Aider, legacy heuristic) are internal modules registered at compile time. External plugin loading (npm package adapters, user-defined adapters) is not implemented.
+**External adapter loading.** The 10 built-in adapters are registered at compile time. External plugin loading is not implemented.
 
-**Manual import.** There is no UI command to manually import a provenance record from a file diff or pasted context. Must be detected automatically.
+**Manual import.** No UI command to manually import a provenance record from a file diff or pasted context. Must be detected automatically or sent via the lightweight adapter helper.
 
 ### Backend Lineage Depth
 
-**Neo4j lineage is initial-only.** At ingest, the backend creates an `AIGeneratedBlock` and a `ProvenanceBlockVersion`. Rich relationship evolution (extended, refactored, moved, deleted) is implemented on the extension/local side but not yet replicated to Neo4j on subsequent ingest events. The graph currently shows initial insertions, not evolution.
+**Neo4j lineage is initial-only.** At ingest the backend creates an `AIGeneratedBlock` and a `ProvenanceBlockVersion`. Rich relationship evolution (`EXTENDED`, `REFACTORED`, `MOVED`, `DELETED`) is implemented on the extension/local side but not yet replicated to Neo4j on subsequent ingest events.
 
 ### Performance Limitations
 
-**In-memory rate limiter.** See Security section. Not suitable for multi-replica deployments.
+**In-memory rate limiter.** Not suitable for multi-replica deployments.
 
-**No pagination on search.** The search endpoint returns up to `SEARCH_DEFAULT_LIMIT` records (default 20, max 200). There is no cursor-based pagination for large result sets.
+**No pagination on search.** Returns up to `SEARCH_DEFAULT_LIMIT` records (default 20, max 200). No cursor-based pagination.
 
-**Insights computed on the fly.** The `/insights/dashboard` endpoint recomputes aggregations from raw records on every request. For workspaces with tens of thousands of records, this will become slow. No caching or pre-aggregation is implemented yet.
+**Insights computed on the fly.** `/insights/dashboard` recomputes aggregations from raw records on every request. No caching or pre-aggregation yet.
 
-**pgvector IVFFLAT index not created.** The embedding vector column exists but does not have an approximate nearest-neighbor index. For large corpora, exact cosine scan will degrade. An `CREATE INDEX ... USING ivfflat` migration is needed before vector search becomes fast at scale.
+**pgvector IVFFLAT index not created.** A `CREATE INDEX ... USING ivfflat` migration is needed before vector search becomes fast at scale (>100k records).
 
 ### Edge Cases
 
-**Duplicate records on HTTP retry.** If the extension fails to receive an ingest acknowledgment and retries, and the provenance record lacks a client-provided UUID, a second UUID is generated and a duplicate record is stored. The ingest normalizer warns on missing UUID but does not block ingest. Fix: always set a UUID in the client payload before the first send attempt.
+**Duplicate records on HTTP retry.** If the extension fails to receive an ingest acknowledgment and retries without a client-provided UUID, a second UUID is generated and a duplicate record is stored. Fix: always set a UUID in the client payload before the first send.
 
-**Chunked transfer encoding without Content-Length.** This is handled: the body size middleware reads the stream chunk-by-chunk and enforces the limit without buffering the full body first.
-
-**Null role serialization.** Legacy user records created before the `role` column was added could have `NULL` role. This is guarded: the team service uses `getattr(user, "role", None) or "member"` to avoid serializing `None` as the string `"None"`.
+**Null role serialization.** Legacy user records without a `role` column value are guarded: `getattr(user, "role", None) or "member"`.
 
 ### Test Coverage Gaps
 
-- No backend integration tests for the ingest, search, or WebSocket endpoints against a live database
-- No contract tests verifying the normalized event schema across all adapters end-to-end through ingest
-- Extension tests do not cover the full sidebar or dashboard rendering paths
+- No backend integration tests for ingest, search, or WebSocket endpoints against a live database
+- No contract tests verifying the normalized event schema across all 10 adapters end-to-end through ingest
+- Extension tests do not cover full sidebar or dashboard rendering paths
 
 ---
 
@@ -725,13 +749,9 @@ All provenance records and team operations are scoped to `workspace_id`. There i
 
 ### What Makes LineageLens Unique
 
-No other tool tracks the provenance of AI-generated code. There are tools that:
-- Review code for bugs (linters, CodeQL, SonarQube)
-- Review code for security (Snyk, Semgrep)
-- Track who changed code (git blame)
-- Generate code explanations (LLM chat)
+No other tool tracks the provenance of AI-generated code. Tools exist that review code for bugs, security issues, or style. None answer:
 
-None of them answer: **"This function was written by an AI — which one, in response to what prompt, and what risk signals did the generated code contain at the time of insertion?"**
+**"This function was written by an AI — which one, in response to what prompt, with what model, and what risk signals did the generated code contain at insertion time?"**
 
 LineageLens is the first system that captures provenance at insertion time, stores it persistently, and surfaces it at review time.
 
@@ -743,56 +763,47 @@ LineageLens is the first system that captures provenance at insertion time, stor
 | Operates at runtime or static analysis | Operates at write time |
 | Knows the author is a human | Knows which AI tool wrote it |
 | Requires a bug to exist | Captures context before a bug appears |
-| Has no concept of "prompt" | Stores the prompt that produced the code |
-| No model provenance | Tracks model name, version, parameters |
+| No concept of "prompt" | Stores the prompt that produced the code |
+| No model provenance | Tracks model name, version, parameters, session |
 
-### Key Value Proposition
+### Key Value Propositions
 
-**For developers:** "When something goes wrong in AI-generated code, know exactly what was asked, what the model produced, and what the surrounding context was — without trying to reconstruct it from memory."
+**For developers:** When something goes wrong in AI-generated code, know exactly what was asked, what the model produced, and what the surrounding context was — without reconstructing it from memory.
 
-**For engineering leads:** "See your team's AI coding patterns: which models, which files, how much, and what risk level — across all developers in the workspace."
+**For engineering leads:** See your team's AI coding patterns: which models, which files, how much, what risk level — across all developers in the workspace.
 
-**For compliance/security teams:** "AI-generated code is now in your codebase. LineageLens gives you the audit trail to prove what was generated, when, by which model, and whether it contained sensitive patterns at insertion time."
+**For compliance/security teams:** AI-generated code is in your codebase. LineageLens gives you the audit trail to prove what was generated, when, by which model, and whether it contained sensitive patterns at insertion time.
 
 ---
 
 ## SECTION 10: BUSINESS MODEL
 
-**Base** - Free or low one-time price
+**Base** — Free or low one-time price
 - Single user, self-hosted Docker
 - Capture + explain only
 - No team features, no semantic search
-- Target: individual developers experimenting with AI tools, small freelancers
+- Target: individual engineers experimenting with AI tools
 
-**Plus** - Monthly subscription per workspace
-- 5-50 developers
+**Plus** — Monthly subscription per workspace
+- 5–50 developers
 - Full feature set: capture, semantic search, governance dashboard, team management
 - Self-hosted Docker (customer's infrastructure)
 - Target: engineering teams at product companies, agencies, startups
 
-**Max** - Annual contract
+**Max** — Annual contract
 - Unlimited users, multi-workspace support
-- Neo4j graph lineage in addition to all Plus features
+- Neo4j graph lineage + all Plus features
 - Priority support, SLA, audit export
-- Can include managed hosting as an add-on
-- Target: regulated industries (fintech, healthcare), large engineering organizations, companies with AI governance requirements
+- Managed hosting available as add-on
+- Target: regulated industries (fintech, healthcare), large engineering organizations with AI governance requirements
 
-### Why Self-Hosted?
+### Why Self-Hosted
 
-The primary objection to a SaaS provenance tool is data sensitivity. Provenance records contain the actual prompts developers sent and the actual code that was generated - potentially including business logic, security code, and proprietary algorithms. Self-hosted deployment eliminates this objection: data never leaves the customer's infrastructure.
-
-This also means zero infrastructure cost for the vendor in the primary distribution model, which is favorable unit economics for a startup.
+Provenance records contain actual prompts and actual generated code — potentially including business logic, security code, and proprietary algorithms. Self-hosted deployment eliminates data-sensitivity objections: nothing leaves the customer's infrastructure. It also means zero infrastructure cost for the vendor in the primary distribution model.
 
 ### Why Subscription Works
 
-Provenance is not a one-time problem. As long as a team is writing AI-assisted code - which is ongoing - they need ongoing provenance capture and retention. The value compounds: the older the provenance record store, the more useful it is for audit, debugging, and governance. Teams do not churn from a tool that holds months of their AI coding history.
-
-### Revenue Model
-
-- Base: freemium gateway (drives awareness, converts developers who want Plus features)
-- Plus: primary revenue unit (per-workspace monthly subscription)
-- Max: high-ACV annual contracts with support and SLA components
-
+Provenance is not a one-time problem. Teams writing AI-assisted code need ongoing capture and retention. The value compounds: the older the provenance record store, the more useful it is for audit, debugging, and governance. Teams do not churn from a tool that holds months of their AI coding history.
 
 ---
 
@@ -800,38 +811,37 @@ Provenance is not a one-time problem. As long as a team is writing AI-assisted c
 
 ### Near-Term (Next 3–6 months)
 
-**Multi-IDE support.** The provider-agnostic schema (`lineagelens.provenance-event.v1`) and adapter system are designed for this. JetBrains plugin and Neovim plugin are the highest-value targets. A standalone CLI ingest command would cover CI/CD ingest use cases.
+**Multi-IDE support.** The provider-agnostic schema and 10-adapter system are ready. JetBrains plugin and Neovim plugin are the highest-value targets. A standalone CLI ingest command using `lightweightRecord.ts` would cover CI/CD ingest.
 
-**Manual import.** A command that accepts a file diff, optional prompt, and optional session metadata, and creates a provenance record without requiring automatic detection. Needed for batch import of historical AI contributions.
+**Manual import.** A command that accepts a file diff, optional prompt, and optional session metadata and creates a provenance record without automatic detection.
 
-**Paginated search.** Cursor-based pagination for search results. Required before Plus workspaces with large record stores can use search effectively.
+**Paginated search.** Cursor-based pagination for search results.
 
-**pgvector IVFFLAT index.** An Alembic migration to add an approximate nearest-neighbor index to the `embedding_vector` column. Required for semantic search at scale (>100k records).
+**pgvector IVFFLAT index.** Alembic migration for approximate nearest-neighbor index on `embedding_vector`.
 
-**Insights pre-aggregation.** Cache or pre-compute governance dashboard aggregations so the endpoint responds in milliseconds rather than seconds for large workspaces.
+**Insights pre-aggregation.** Cache or pre-compute governance dashboard aggregations.
 
-### Medium-Term (6-12 months)
+### Medium-Term (6–12 months)
 
-**Rich Neo4j lineage evolution.** On ingest, detect when a new record represents a refactor, extension, or replacement of an existing AI block. Write `EXTENDED`, `REFACTORED`, `MOVED`, and `DELETED` relationships to Neo4j. Enable lineage graph traversal queries from the extension.
+**Rich Neo4j lineage evolution.** On ingest, detect when a new record is a refactor, extension, or replacement of an existing AI block. Write `EXTENDED`, `REFACTORED`, `MOVED`, `DELETED` relationships to Neo4j.
 
-**External adapter plugin system.** Define a versioned adapter interface that can be loaded as an npm package. Allow teams or vendors to publish adapters for new AI tools without forking the extension.
+**External adapter plugin system.** Versioned adapter interface loadable as an npm package. Teams publish adapters for new AI tools without forking the extension.
 
-**Contract test fixtures.** One canonical test fixture per adapter covering: normalized event output, backend ingest payload, search result shape, and dashboard contribution. Prevents regressions when adapters or schema versions change.
+**Contract test fixtures.** One canonical test fixture per adapter covering normalized event output, backend ingest payload, search result shape, and dashboard contribution.
 
-**Audit export.** Export a workspace's provenance records in structured JSON or CSV format for compliance workflows, legal discovery, or offline analysis.
+**Audit export.** Export workspace provenance records in structured JSON or CSV for compliance workflows.
 
-**Schema version migration.** Handler for future `schemaVersion` upgrades. When a record with `schemaVersion: 2` arrives, run a migration pipeline to produce the `v2` normalized event from the stored `rawData` field.
+**Schema version migration.** Handler for `schemaVersion` upgrades.
 
 ### Long-Term (12+ months)
 
-**Managed cloud option.** A hosted version where LineageLens operates the infrastructure. Solves the deployment friction for teams that cannot run Docker. Requires a data residency and privacy story (encryption at rest, customer-managed keys, region selection).
+**Managed cloud option.** Hosted LineageLens for teams that cannot run Docker. Requires data residency and privacy story (encryption at rest, customer-managed keys, region selection).
 
-**Multi-workspace organization accounts.** Max accounts with multiple workspace groups, cross-workspace governance analytics, and organization-level risk reporting.
-**AI-powered provenance review.** A review agent that continuously monitors incoming provenance records, identifies high-risk patterns, and opens automated review tasks in the team's issue tracker.
+**Multi-workspace organization accounts.** Max accounts with multiple workspace groups and organization-level risk reporting.
 
-**IDE-agnostic browser extension.** Capture provenance for web-based AI coding environments (GitHub Codespaces, Replit, Cursor web) using a browser extension that proxies API traffic from the browser.
+**AI-powered provenance review.** A review agent that monitors incoming records, identifies high-risk patterns, and opens automated review tasks in the team's issue tracker.
 
-**LLM fine-tuning integration.** Export provenance records as training data annotations. Know which AI-generated code was accepted, modified, or reverted — and use that signal to improve fine-tuned models for a team's specific codebase.
+**LLM fine-tuning integration.** Export provenance records as training data annotations.
 
 ---
 
@@ -845,7 +855,22 @@ Provenance is not a one-time problem. As long as a team is writing AI-assisted c
 | Local LLM proxy | `src/proxy.ts` |
 | Correlation engine | `src/correlation.ts` |
 | Normalized event schema | `src/eventSchema.ts` |
-| Agent adapters | `src/agentAdapters/` |
+| Lightweight record builder | `src/lightweightRecord.ts` |
+| Hook listener | `src/hookListener.ts` |
+| Agent adapters (all) | `src/agentAdapters/` |
+| Cursor adapter | `src/agentAdapters/cursor.ts` |
+| GitHub Copilot adapter | `src/agentAdapters/copilot.ts` |
+| Claude Code adapter | `src/agentAdapters/claudeCode.ts` |
+| Codeium / Windsurf adapter | `src/agentAdapters/codeium.ts` |
+| Aider adapter | `src/agentAdapters/aider.ts` |
+| Continue.dev adapter | `src/agentAdapters/continue.ts` |
+| Sourcegraph Cody adapter | `src/agentAdapters/cody.ts` |
+| Amazon Q adapter | `src/agentAdapters/amazonQ.ts` |
+| Gemini CLI adapter | `src/agentAdapters/geminiCli.ts` |
+| OpenAI Codex CLI adapter | `src/agentAdapters/codex.ts` |
+| Legacy heuristic adapter | `src/agentAdapters/legacy.ts` |
+| Adapter registry | `src/agentAdapters/registry.ts` |
+| Shared adapter utilities | `src/agentAdapters/shared.ts` |
 | Storage abstraction | `src/storage/StorageService.ts` |
 | Backend entry | `backend/app/main.py` |
 | Settings | `backend/app/core/config.py` |
@@ -858,7 +883,6 @@ Provenance is not a one-time problem. As long as a team is writing AI-assisted c
 | Neo4j service | `backend/app/services/neo4j_service.py` |
 | Deploy configs | `deploy/` |
 | Quickstart scripts | `scripts/quickstart-{base,plus,max}.sh` |
-| Reset scripts | `scripts/reset-{base,plus,max}.sh` |
 
 ### Alembic Migrations (in order)
 
@@ -879,3 +903,19 @@ Provenance is not a one-time problem. As long as a team is writing AI-assisted c
 | Neo4j Bolt | 7687 |
 | Neo4j Browser | 7474 |
 | Local LLM Proxy (extension) | 8080 |
+
+### Provider → Adapter Mapping
+
+| Provider / Host | Adapter |
+|---|---|
+| `anthropic.com` + Claude models | `claude-code` |
+| `api.githubcopilot.com` | `copilot` |
+| `codeium.com` / `windsurf.codeium.com` | `codeium` |
+| `api.openai.com` + aider signals | `aider` |
+| `api.openai.com` + o-series / codex CLI | `codex-cli` |
+| `x-continue-version` header | `continue` |
+| `cody-gateway.sourcegraph.com` | `cody` |
+| `amazonaws.com` + CodeWhisperer/Q targets | `amazon-q` |
+| `generativelanguage.googleapis.com` | `gemini-cli` |
+| `cursor.com` / `cursor` user-agent | `cursor` |
+| Unknown / no strong signals | `legacy-heuristic` |

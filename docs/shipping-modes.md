@@ -22,7 +22,7 @@ Artifacts:
 
 - `lineagelens-plus-<version>.zip`
 - `deploy/docker-compose.plus.yml`
-- `deploy/.env.example`
+- `deploy/.env.plus.example`
 - `docs/native-backend.md`
 - `scripts/run-backend-native.ps1`
 - `scripts/test-backend-native.ps1`
@@ -36,7 +36,7 @@ Artifacts:
 
 - `lineagelens-max-<version>.zip`
 - `deploy/docker-compose.max.yml`
-- `deploy/.env.example`
+- `deploy/.env.max.example`
 - `docs/native-backend.md`
 - `scripts/run-backend-native.ps1`
 - `scripts/test-backend-native.ps1`

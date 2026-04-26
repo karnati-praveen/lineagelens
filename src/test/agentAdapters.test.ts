@@ -104,7 +104,7 @@ test('aider adapter detects pair-programming style prompts', () => {
   assert.equal(detected?.operationType, 'multi-file-run');
 });
 
-test('legacy fallback returns a heuristic context when only copilot-style signals are present', () => {
+test('copilot adapter detects GitHub Copilot traffic via host and user-agent', () => {
   const detected = createDefaultAgentAdapterRegistry().detect(
     buildInput({
       targetHost: 'api.githubcopilot.com',
@@ -114,9 +114,10 @@ test('legacy fallback returns a heuristic context when only copilot-style signal
     })
   );
 
-  assert.equal(detected?.adapterName, 'legacy-heuristic');
-  assert.equal(detected?.matchSource, 'heuristic');
+  assert.equal(detected?.adapterName, 'copilot');
+  assert.equal(detected?.matchSource, 'adapter');
   assert.equal(detected?.sessionKind, 'assistant');
+  assert.equal(detected?.toolName, 'GitHub Copilot');
 });
 
 function buildInput(overrides: Partial<FixtureOverrides> = {}): AgentAdapterInput {
@@ -161,7 +162,7 @@ function buildCapturedCorrelation(
     },
     targetHost: overrides.targetHost ?? 'api.openai.com',
     requestHeaders: {
-      'user-agent': overrides.userAgent ?? 'Cursor/1.0',
+      'user-agent': overrides.userAgent ?? 'test-agent/1.0',
       'x-request-id': overrides.requestUuid ?? '11111111-1111-4111-8111-111111111111',
       ...(overrides.requestHeaders ?? {})
     },

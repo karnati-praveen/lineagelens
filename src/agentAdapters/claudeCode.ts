@@ -1,16 +1,16 @@
-import type { AgentAdapter, AgentAdapterInput, NormalizedAgentContext } from './types';
+import type { AgentAdapter, AgentAdapterInput, AgentEvidence, NormalizedAgentContext } from './types';
 import {
+  buildDetectionPayloadBlob,
   buildSessionSignature,
   clampConfidence,
   classifyOperationType,
-  createEvidence,
   findHeaderValue,
   hashContext,
   inferProvider,
   normalizeModelName,
   normalizeUserAgent,
-  safeSerialize,
-  toText
+  pushEvidence,
+  sumEvidenceWeights
 } from './shared';
 
 export function createClaudeCodeAdapter(): AgentAdapter {
@@ -39,15 +39,12 @@ export function createClaudeCodeAdapter(): AgentAdapter {
         normalizeUserAgent(findHeaderValue(headers, 'user-agent')) ||
         normalizeUserAgent(findHeaderValue(headers, 'x-client-name'));
       const targetHost = input.correlation.targetHost?.trim().toLowerCase() ?? null;
-      const payloadBlob = [
-        safeSerialize(input.correlation.fullPromptMessages),
-        safeSerialize(input.correlation.parameters),
-        toText(input.correlation.systemPrompt),
-        toText(input.correlation.rawModelResponse),
-        input.insertedText
-      ]
-        .join('\n')
-        .toLowerCase();
+      const payloadBlob = buildDetectionPayloadBlob({
+        fullPromptMessages: input.correlation.fullPromptMessages,
+        parameters: input.correlation.parameters,
+        systemPrompt: input.correlation.systemPrompt,
+        insertedText: input.insertedText
+      });
 
       // CLI-specific headers sent by the Anthropic SDK and Claude Code CLI
       const anthropicVersion = findHeaderValue(headers, 'anthropic-version');
@@ -102,14 +99,13 @@ export function createClaudeCodeAdapter(): AgentAdapter {
 
       const sessionKind = isCliMode ? 'cli' : 'agentic';
 
-      const evidence = [
-        createEvidence('user-agent', 'user-agent', userAgent ?? 'claude-code', 0.3, 'Claude Code user agent matched.'),
-        createEvidence('header', 'targetHost', targetHost ?? 'unknown', 0.18, 'Anthropic API host matched.'),
-        createEvidence('header', 'anthropic-version', anthropicVersion ?? '', 0.12, 'Anthropic SDK version header present.'),
-        createEvidence('header', 'x-app', xApp ?? '', 0.15, 'CLI application marker header.'),
-        createEvidence('system-prompt', 'systemPrompt', input.correlation.systemPrompt, 0.18, 'Claude-style system prompt fingerprint observed.'),
-        createEvidence('payload', 'messages', input.correlation.fullPromptMessages, 0.12, 'Prompt payload shape matched Claude Code traffic.')
-      ];
+      const evidence: AgentEvidence[] = [];
+      pushEvidence(evidence, userAgent?.toLowerCase().includes('claude') ?? false, 'user-agent', 'user-agent', userAgent, 0.3, 'Claude Code user agent matched.');
+      pushEvidence(evidence, targetHost?.includes('anthropic.com') ?? false, 'header', 'targetHost', targetHost, 0.18, 'Anthropic API host matched.');
+      pushEvidence(evidence, anthropicVersion !== null, 'header', 'anthropic-version', anthropicVersion, 0.12, 'Anthropic SDK version header present.');
+      pushEvidence(evidence, xApp !== null, 'header', 'x-app', xApp, 0.15, 'CLI application marker header.');
+      pushEvidence(evidence, typeof input.correlation.systemPrompt === 'string' && /claude/i.test(input.correlation.systemPrompt), 'system-prompt', 'systemPrompt', input.correlation.systemPrompt, 0.18, 'Claude-style system prompt fingerprint observed.');
+      pushEvidence(evidence, Array.isArray(input.correlation.fullPromptMessages) && input.correlation.fullPromptMessages.length > 0, 'payload', 'messages', input.correlation.fullPromptMessages, 0.12, 'Prompt payload shape matched Claude Code traffic.');
 
       return {
         toolName: 'Claude Code',
@@ -121,7 +117,7 @@ export function createClaudeCodeAdapter(): AgentAdapter {
         userAgent,
         workspaceHint: input.workspaceHint,
         operationType,
-        confidence: clampConfidence(0.9 + evidence.reduce((sum, entry) => sum + entry.weight, 0) * 0.05),
+        confidence: clampConfidence(0.5 + sumEvidenceWeights(evidence) * 0.6),
         evidence,
         adapterName: 'claude-code',
         matchSource: 'adapter',

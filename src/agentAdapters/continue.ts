@@ -13,10 +13,10 @@ import {
   sumEvidenceWeights
 } from './shared';
 
-export function createAiderAdapter(): AgentAdapter {
+export function createContinueAdapter(): AgentAdapter {
   return {
-    name: 'aider',
-    order: 30,
+    name: 'continue',
+    order: 35,
     capabilities: [
       'tool-name',
       'provider',
@@ -46,10 +46,18 @@ export function createAiderAdapter(): AgentAdapter {
         insertedText: input.insertedText
       });
 
+      const continueVersion = findHeaderValue(headers, 'x-continue-version');
+      const continueUniqueId = findHeaderValue(headers, 'x-continue-unique-id');
+      const continueClient = findHeaderValue(headers, 'x-continue-client');
+
       const matched =
-        userAgent?.toLowerCase().includes('aider') ||
-        payloadBlob.includes('aider') ||
-        payloadBlob.includes('pair programming');
+        userAgent?.toLowerCase().includes('continue') ||
+        continueVersion !== null ||
+        continueUniqueId !== null ||
+        continueClient !== null ||
+        payloadBlob.includes('continuedev') ||
+        payloadBlob.includes('continue.dev') ||
+        payloadBlob.includes('"continue"');
 
       if (!matched) {
         return undefined;
@@ -64,29 +72,28 @@ export function createAiderAdapter(): AgentAdapter {
       });
 
       const sessionId =
-        findHeaderValue(headers, 'x-aider-session-id') ||
-        findHeaderValue(headers, 'x-aider-run-id') ||
+        findHeaderValue(headers, 'x-continue-session-id') ||
+        continueUniqueId ||
         findHeaderValue(headers, 'x-request-id') ||
-        `aider-${hashContext([targetHost, userAgent, modelName, input.workspaceHint, input.timestampIso])}`;
+        `continue-${hashContext([targetHost, userAgent, modelName, input.workspaceHint, input.timestampIso])}`;
 
       const conversationId =
-        findHeaderValue(headers, 'x-aider-conversation-id') ||
-        findHeaderValue(headers, 'x-conversation-id') ||
+        findHeaderValue(headers, 'x-continue-conversation-id') ||
+        findHeaderValue(headers, 'x-continue-chat-id') ||
         sessionId;
 
       const runId =
-        findHeaderValue(headers, 'x-aider-run-id') ||
-        findHeaderValue(headers, 'x-session-id') ||
-        sessionId;
+        findHeaderValue(headers, 'x-continue-run-id') ||
+        null;
 
       const evidence: AgentEvidence[] = [];
-      pushEvidence(evidence, userAgent?.toLowerCase().includes('aider') ?? false, 'user-agent', 'user-agent', userAgent, 0.28, 'Aider user agent matched.');
-      pushEvidence(evidence, payloadBlob.includes('aider') || payloadBlob.includes('pair programming'), 'payload', 'prompt', payloadBlob.slice(0, 240), 0.2, 'Prompt payload contains Aider fingerprints.');
-      pushEvidence(evidence, Boolean(modelName), 'routing', 'modelName', modelName || 'unknown', 0.1, 'Model metadata observed.');
-      pushEvidence(evidence, Boolean(targetHost), 'header', 'targetHost', targetHost ?? 'unknown', 0.1, 'Target host was consistent with AI request routing.');
+      pushEvidence(evidence, userAgent?.toLowerCase().includes('continue') ?? false, 'user-agent', 'user-agent', userAgent, 0.26, 'Continue.dev user agent matched.');
+      pushEvidence(evidence, continueVersion !== null, 'header', 'x-continue-version', continueVersion, 0.22, 'Continue.dev version header present.');
+      pushEvidence(evidence, continueUniqueId !== null, 'header', 'x-continue-unique-id', continueUniqueId, 0.18, 'Continue.dev unique ID header present.');
+      pushEvidence(evidence, payloadBlob.includes('continuedev') || payloadBlob.includes('continue.dev') || payloadBlob.includes('"continue"'), 'payload', 'prompt', payloadBlob.slice(0, 200), 0.14, 'Payload fingerprint consistent with Continue.dev traffic.');
 
       return {
-        toolName: 'Aider',
+        toolName: 'Continue',
         provider,
         sessionId,
         conversationId,
@@ -97,12 +104,12 @@ export function createAiderAdapter(): AgentAdapter {
         operationType,
         confidence: clampConfidence(0.5 + sumEvidenceWeights(evidence) * 0.6),
         evidence,
-        adapterName: 'aider',
+        adapterName: 'continue',
         matchSource: 'adapter',
         sessionKind: 'agentic',
         host: targetHost,
         sessionSignature: buildSessionSignature({
-          toolName: 'Aider',
+          toolName: 'Continue',
           provider,
           modelName: modelName || null,
           sessionKind: 'agentic',

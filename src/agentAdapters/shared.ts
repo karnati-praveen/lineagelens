@@ -64,17 +64,62 @@ export function normalizeUserAgent(value: unknown): string | null {
   return text.length > 0 ? text : null;
 }
 
+export function buildDetectionPayloadBlob(input: {
+  fullPromptMessages: unknown;
+  parameters: unknown;
+  systemPrompt: unknown;
+  insertedText: string;
+}): string {
+  return [
+    safeSerialize(input.fullPromptMessages),
+    safeSerialize(input.parameters),
+    toText(input.systemPrompt),
+    input.insertedText
+  ]
+    .join('\n')
+    .toLowerCase();
+}
+
 export function inferProvider(targetHost: string | null, modelName: string, rawBlob: string): string | null {
-  if (targetHost?.includes('anthropic.com') || modelName.includes('claude') || rawBlob.includes('claude')) {
+  const normalizedModel = modelName.toLowerCase();
+
+  if (targetHost?.includes('anthropic.com') || normalizedModel.includes('claude')) {
     return 'Anthropic';
   }
 
-  if (targetHost?.includes('openai.com') || modelName.includes('gpt') || rawBlob.includes('openai')) {
+  if (
+    targetHost?.includes('openai.com') ||
+    /\b(gpt|o1|o3|o4(?:[-\s]?mini)?|codex)\b/.test(normalizedModel)
+  ) {
     return 'OpenAI';
   }
 
-  if (targetHost?.includes('githubcopilot') || rawBlob.includes('copilot')) {
+  if (targetHost?.includes('githubcopilot')) {
     return 'GitHub';
+  }
+
+  if (
+    targetHost?.includes('generativelanguage.googleapis.com') ||
+    targetHost?.includes('aiplatform.googleapis.com') ||
+    normalizedModel.includes('gemini')
+  ) {
+    return 'Google';
+  }
+
+  if (
+    targetHost?.includes('codewhisperer.') ||
+    targetHost?.includes('q.us-east-1.amazonaws.com') ||
+    targetHost?.includes('amazonq.')
+  ) {
+    return 'AWS';
+  }
+
+  if (targetHost?.includes('codeium.com') || targetHost?.includes('windsurf.codeium.com')) {
+    return 'Codeium';
+  }
+
+  if (targetHost?.includes('sourcegraph.com') || targetHost?.includes('cody-gateway.sourcegraph.com')) {
+    return 'Sourcegraph';
   }
 
   if (targetHost?.includes('openrouter.ai')) {
@@ -110,7 +155,7 @@ export function classifyOperationType(input: {
     return 'explain';
   }
 
-  if (/chat|conversation|prompt|reply/.test(text)) {
+  if (/\b(chat session|in conversation|replying to|assistant reply)\b/.test(text)) {
     return 'chat';
   }
 
@@ -118,7 +163,8 @@ export function classifyOperationType(input: {
 }
 
 function countDistinctFiles(text: string): number {
-  const matches = text.match(/(?:[A-Za-z]:)?[\\/][^\s'"`]+?\.[a-z0-9]+/gi) ?? [];
+  const matches =
+    text.match(/(?:\.\.?[\\/]|(?:[A-Za-z]:)?[\\/]|(?:[a-z0-9_.-]+[\\/])+)[^\s'"`]+?\.[a-z0-9]+/gi) ?? [];
   return new Set(matches.map((value) => value.toLowerCase())).size;
 }
 
@@ -146,9 +192,29 @@ export function clampConfidence(value: number): number {
   return Number(Math.max(0, Math.min(1, value)).toFixed(4));
 }
 
+export function pushEvidence(
+  evidence: AgentEvidence[],
+  condition: boolean,
+  source: AgentEvidence['source'],
+  field: string,
+  value: unknown,
+  weight: number,
+  note?: string
+): void {
+  if (!condition) {
+    return;
+  }
+
+  evidence.push(createEvidence(source, field, value, weight, note));
+}
+
+export function sumEvidenceWeights(evidence: readonly AgentEvidence[]): number {
+  return evidence.reduce((sum, entry) => sum + entry.weight, 0);
+}
+
 export function hashContext(parts: Array<string | null | undefined>): string {
   const normalized = parts.map((part) => (part ?? '').trim()).join('|');
-  return createHash('sha1').update(normalized).digest('hex').slice(0, 16);
+  return createHash('sha256').update(normalized).digest('hex').slice(0, 16);
 }
 
 export function buildSessionSignature(context: {
