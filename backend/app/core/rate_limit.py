@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from ipaddress import ip_address
 from threading import Lock
 
 
@@ -83,3 +84,31 @@ def client_identifier(
 ) -> str:
     host = (client_host or "").strip()
     return host if host else fallback
+
+
+def _is_trusted_proxy_host(host: str | None) -> bool:
+    normalized = (host or "").strip()
+    if not normalized:
+        return False
+    if normalized.lower() == "localhost":
+        return True
+    try:
+        parsed = ip_address(normalized)
+    except ValueError:
+        return False
+    return parsed.is_loopback or parsed.is_private
+
+
+def effective_client_ip(
+    peer_host: str | None,
+    forwarded_for_header: str,
+    real_ip_header: str,
+) -> str:
+    """Return the real client IP, honouring X-Forwarded-For behind trusted proxies."""
+    if _is_trusted_proxy_host(peer_host):
+        forwarded_chain = [e.strip() for e in forwarded_for_header.split(",") if e.strip()]
+        if forwarded_chain:
+            return client_identifier(forwarded_chain[0])
+        if real_ip_header.strip():
+            return client_identifier(real_ip_header.strip())
+    return client_identifier(peer_host)

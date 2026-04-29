@@ -45,6 +45,7 @@ export type ProvenanceSearchResultItem = {
   filePath: string | null;
   snippet: string;
   mode: ProvenanceMode;
+  record?: Record<string, unknown>;
 };
 
 export type LineageUpdateResult = {
@@ -191,6 +192,11 @@ export interface ProvenanceStorageService extends vscode.Disposable {
 
   updateLineageFromLatestCommit(resource?: vscode.Uri): Promise<LineageUpdateResult>;
   getModeWarnings(): string[];
+
+  exportAuditCsv(
+    filters: { dateFrom?: string; dateTo?: string; developer?: string; filePath?: string },
+    resource?: vscode.Uri
+  ): Promise<string | null>;
 }
 
 export function getConfiguredMode(resource?: vscode.Uri): ProvenanceMode {

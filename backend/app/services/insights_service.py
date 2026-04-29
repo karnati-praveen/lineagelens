@@ -5,7 +5,9 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import and_, desc, func, select
+from sqlalchemy import and_, cast, desc, func, select
+from sqlalchemy import Integer as SAInteger
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ProvenanceRecord, UserAccount
@@ -76,7 +78,34 @@ async def build_member_stats(session: AsyncSession, workspace_id: str) -> list[A
         str(row.user_id): row.cnt for row in counts_result if row.user_id is not None
     }
 
-    return build_team_member_stats(users, record_counts)
+    # Sum net added lines per user from provenance_payload JSONB
+    lines_stmt = (
+        select(
+            ProvenanceRecord.user_id,
+            func.sum(
+                func.coalesce(
+                    cast(
+                        ProvenanceRecord.provenance_payload["netAddedLines"].astext,
+                        SAInteger,
+                    ),
+                    0,
+                )
+            ).label("total_lines"),
+        )
+        .where(ProvenanceRecord.workspace_id == workspace_id)
+        .group_by(ProvenanceRecord.user_id)
+    )
+    try:
+        lines_result = await session.execute(lines_stmt)
+        net_added_lines_by_user: dict[str, int] = {
+            str(row.user_id): int(row.total_lines or 0)
+            for row in lines_result
+            if row.user_id is not None
+        }
+    except Exception:
+        net_added_lines_by_user = {}
+
+    return build_team_member_stats(users, record_counts, net_added_lines_by_user)
 
 
 def _top_high_risk_previews(high_risk: list[dict[str, Any]]) -> list[dict[str, Any]]:

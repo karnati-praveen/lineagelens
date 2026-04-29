@@ -11,6 +11,7 @@ class TeamMemberStats(BaseModel):
     username: str
     role: str
     record_count: int = Field(alias="recordCount")
+    net_added_lines: int = Field(default=0, alias="netAddedLines")
     joined_at_iso: str | None = Field(alias="joinedAtIso")
 
     model_config = ConfigDict(populate_by_name=True)

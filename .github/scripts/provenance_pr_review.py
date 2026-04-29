@@ -164,11 +164,22 @@ def load_env_config() -> EnvConfig:
     with open(event_path, "r", encoding="utf-8") as handle:
         event_payload = json.load(handle)
 
-    pr = event_payload.get("pull_request")
-    if not isinstance(pr, dict) or "number" not in pr:
-        raise RuntimeError("GITHUB_EVENT_PATH does not contain pull_request payload.")
-
-    pr_number = int(pr["number"])
+    if event_name == "workflow_dispatch":
+        pr_number_raw = os.getenv("PR_NUMBER", "").strip()
+        if not pr_number_raw:
+            raise RuntimeError(
+                "PR_NUMBER environment variable must be set for workflow_dispatch runs. "
+                "Pass it via the pr_number workflow input."
+            )
+        try:
+            pr_number = int(pr_number_raw)
+        except ValueError:
+            raise RuntimeError(f"PR_NUMBER is not a valid integer: {pr_number_raw!r}")
+    else:
+        pr = event_payload.get("pull_request")
+        if not isinstance(pr, dict) or "number" not in pr:
+            raise RuntimeError("GITHUB_EVENT_PATH does not contain pull_request payload.")
+        pr_number = int(pr["number"])
     workspace_id = optional_env("PROVENANCE_WORKSPACE_ID")
 
     search_limit_raw = optional_env("PROVENANCE_SEARCH_LIMIT")

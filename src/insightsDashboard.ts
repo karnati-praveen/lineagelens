@@ -20,6 +20,15 @@ type DashboardMessage =
     }
   | {
       type: 'exportMarkdown';
+    }
+  | {
+      type: 'exportCsv';
+      payload?: {
+        dateFrom?: string;
+        dateTo?: string;
+        developer?: string;
+        filePath?: string;
+      };
     };
 
 export class InsightsDashboardViewProvider
@@ -131,6 +140,11 @@ export class InsightsDashboardViewProvider
 
     if (message.type === 'exportMarkdown') {
       await this.exportMarkdownReport();
+      return;
+    }
+
+    if (message.type === 'exportCsv') {
+      await this.exportCsvReport(message.payload ?? {});
     }
   }
 
@@ -249,6 +263,50 @@ export class InsightsDashboardViewProvider
         text: 'Governance report exported to ' + targetUri.fsPath
       }
     });
+  }
+
+  private async exportCsvReport(filters: {
+    dateFrom?: string;
+    dateTo?: string;
+    developer?: string;
+    filePath?: string;
+  }): Promise<void> {
+    const defaultName = 'lineagelens-audit-' + new Date().toISOString().slice(0, 10) + '.csv';
+    const activeUri = vscode.window.activeTextEditor?.document.uri;
+
+    const targetUri = await vscode.window.showSaveDialog({
+      title: 'Export Audit Report (CSV)',
+      defaultUri: vscode.workspace.workspaceFolders?.[0]
+        ? vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, defaultName)
+        : undefined,
+      filters: { CSV: ['csv'] }
+    });
+
+    if (!targetUri) return;
+
+    try {
+      const storageService = this.getStorageService();
+      const csvContent = await storageService.exportAuditCsv(filters, activeUri);
+
+      if (!csvContent) {
+        await this.postMessage({
+          type: 'status',
+          payload: { text: 'No records found for the current filters. Nothing exported.' }
+        });
+        return;
+      }
+
+      await vscode.workspace.fs.writeFile(targetUri, Buffer.from(csvContent, 'utf8'));
+      await this.postMessage({
+        type: 'status',
+        payload: { text: 'Audit report exported to ' + targetUri.fsPath }
+      });
+    } catch (error: unknown) {
+      await this.postMessage({
+        type: 'error',
+        payload: { error: 'Export failed: ' + (error instanceof Error ? error.message : String(error)) }
+      });
+    }
   }
 
   private getCurrentFilePath(): string | undefined {
@@ -470,6 +528,7 @@ export class InsightsDashboardViewProvider
       <button id="review-btn">Review Current File</button>
       <button id="config-btn">Configure Reviewer Key</button>
       <button id="export-btn">Export Markdown</button>
+      <button id="export-csv-btn">Export Audit Report (CSV)</button>
     </div>
     <div class="muted" id="current-file">Current file: n/a</div>
   </div>
@@ -558,6 +617,16 @@ export class InsightsDashboardViewProvider
 
     document.getElementById('export-btn').addEventListener('click', () => {
       vscode.postMessage({ type: 'exportMarkdown' });
+    });
+
+    document.getElementById('export-csv-btn').addEventListener('click', () => {
+      vscode.postMessage({
+        type: 'exportCsv',
+        payload: {
+          dateFrom: normalizeDate(dateFromInput.value),
+          dateTo: normalizeDate(dateToInput.value)
+        }
+      });
     });
 
     window.addEventListener('message', (event) => {
@@ -686,21 +755,39 @@ export class InsightsDashboardViewProvider
         );
       }, 'No high-risk records in the selected scope.');
 
+      const totalRecords = Number(summary.totalRecords || 0);
       renderRows(hotspotsView, dashboard.hotspots || [], (item) => {
+        const fileRecords = Number(item.recordCount || 0);
+        const fileShare = totalRecords > 0 ? Math.round((fileRecords / totalRecords) * 100) : 0;
+        const fileName = (item.filePath || 'n/a').split(/[\\/]/).pop() || item.filePath;
+        const latestDate = item.latestTimestampIso ? new Date(item.latestTimestampIso).toLocaleDateString() : 'n/a';
         return (
           '<div class="row">' +
-            '<div class="title">' + escapeHtml(item.filePath || 'n/a') + '</div>' +
-            '<div class="meta"><span>records=' + escapeHtml(String(item.recordCount || 0)) + '</span><span>high-risk=' + escapeHtml(String(item.highRiskCount || 0)) + '</span><span>avg-risk=' + escapeHtml(String(item.avgRiskScore || 0)) + '</span></div>' +
-            '<div class="muted">latest=' + escapeHtml(item.latestTimestampIso || 'n/a') + '</div>' +
+            '<div class="title">' + escapeHtml(fileName) + '</div>' +
+            '<div class="muted" style="font-size:10px">' + escapeHtml(item.filePath || '') + '</div>' +
+            '<div class="meta">' +
+              '<span>AI insertions=' + escapeHtml(String(fileRecords)) + ' (' + escapeHtml(String(fileShare)) + '% of total)</span>' +
+              '<span>high-risk=' + escapeHtml(String(item.highRiskCount || 0)) + '</span>' +
+              '<span>avg-risk=' + escapeHtml(String(item.avgRiskScore || 0)) + '</span>' +
+              '<span>last AI change=' + escapeHtml(latestDate) + '</span>' +
+            '</div>' +
           '</div>'
         );
       }, 'No file hotspots available.');
 
+      const totalModelRecords = (dashboard.modelAnalytics || []).reduce((s, m) => s + Number(m.recordCount || 0), 0);
       renderRows(modelsView, dashboard.modelAnalytics || [], (item) => {
+        const modelCount = Number(item.recordCount || 0);
+        const modelShare = totalModelRecords > 0 ? Math.round((modelCount / totalModelRecords) * 100) : 0;
         return (
           '<div class="row">' +
             '<div class="title">' + escapeHtml(item.model || 'unknown') + '</div>' +
-            '<div class="meta"><span>records=' + escapeHtml(String(item.recordCount || 0)) + '</span><span>capture=' + escapeHtml(percent(item.promptCaptureRate)) + '</span><span>avg-risk=' + escapeHtml(String(item.avgRiskScore || 0)) + '</span><span>high-risk=' + escapeHtml(String(item.highRiskCount || 0)) + '</span></div>' +
+            '<div class="meta">' +
+              '<span>insertions=' + escapeHtml(String(modelCount)) + ' (' + escapeHtml(String(modelShare)) + '%)</span>' +
+              '<span>prompt capture=' + escapeHtml(percent(item.promptCaptureRate)) + '</span>' +
+              '<span>avg risk=' + escapeHtml(String(item.avgRiskScore || 0)) + '</span>' +
+              '<span>high risk=' + escapeHtml(String(item.highRiskCount || 0)) + '</span>' +
+            '</div>' +
           '</div>'
         );
       }, 'No model analytics available.');
@@ -729,19 +816,24 @@ export class InsightsDashboardViewProvider
         );
       }, 'No agent sessions detected in the selected scope.');
 
+      const totalTeamLines = memberStats.reduce((s, m) => s + Number(m.netAddedLines || 0), 0);
       renderRows(membersView, memberStats, (item) => {
+        const memberLines = Number(item.netAddedLines || 0);
+        const memberShare = totalTeamLines > 0 ? Math.round((memberLines / totalTeamLines) * 100) : 0;
+        const joinDate = item.joinedAtIso ? new Date(item.joinedAtIso).toLocaleDateString() : 'n/a';
         return (
           '<div class="row">' +
             '<div class="title">' + escapeHtml(item.username || 'Unknown Member') + '</div>' +
             '<div class="meta">' +
               '<span class="pill ' + escapeHtml(String(item.role || 'member')) + '">' + escapeHtml(String(item.role || 'member')) + '</span>' +
-              '<span>records=' + escapeHtml(String(item.recordCount || 0)) + '</span>' +
-              '<span>joined=' + escapeHtml(item.joinedAtIso || 'n/a') + '</span>' +
+              '<span>insertions=' + escapeHtml(String(item.recordCount || 0)) + '</span>' +
+              '<span>AI lines=' + escapeHtml(String(memberLines)) + '</span>' +
+              '<span>team share=' + escapeHtml(String(memberShare)) + '%</span>' +
+              '<span>joined=' + escapeHtml(joinDate) + '</span>' +
             '</div>' +
-            '<div class="muted">id=' + escapeHtml(item.id || 'n/a') + '</div>' +
           '</div>'
         );
-      }, 'No team member data available.');
+      }, 'No team member data available. Backend mode required for team stats.');
 
       const warnings = Array.isArray(dashboard.warnings) ? dashboard.warnings : [];
       setStatus(
