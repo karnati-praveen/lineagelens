@@ -8,11 +8,11 @@ This file is a compact guide to the repository layout so an AI can quickly under
 LineageLens/
   README.md              # User-facing overview and operating modes
   prafea                 # Long-form architecture and feature reference
-  package.json           # VS Code extension manifest, commands, settings, scripts
+  package.json           # Extension manifest, commands, settings, and build scripts
   tsconfig.json          # TypeScript compiler settings
   deploy/                # Backend stack and release compose bundles
   backend/               # FastAPI backend application
-  src/                   # VS Code extension source
+  src/                   # Capture layer source
   docs/                  # All project documentation
   media/                 # Icons and other static assets
   scripts/               # PowerShell build and deployment scripts
@@ -26,7 +26,7 @@ LineageLens/
 ## What Each Main Folder Does
 
 ### `src/`
-Detection host source code (currently a VS Code extension). This is where editor integration, local storage, adapter detection for Claude Code/Cursor/Aider, provenance record building, search UI, dashboard UI, and backend client live.
+Capture layer source. Editor integration, local storage, adapter detection for Claude Code/Cursor/Aider/Copilot and other tools, provenance record building, search UI, dashboard UI, and backend client.
 
 Important subfolders and files:
 
@@ -37,7 +37,7 @@ src/
   backendAuth.ts            # Backend authentication helpers
   correlation.ts            # Matches editor insertions to proxy captures
   eventSchema.ts            # Provider-agnostic provenance event schema
-  lightweightRecord.ts      # VS Code-free lightweight record builder
+  lightweightRecord.ts      # Editor-free lightweight record builder
   insights.ts               # Risk scoring and dashboard logic
   insightsDashboard.ts      # Dashboard webview UI
   reviewer.ts               # Current-file review workflow
@@ -83,7 +83,7 @@ All project documentation lives here.
 - `docs/SHIP_PRODUCTS_COMMANDS.md` — build and deployment commands for all three modes.
 
 ### `media/`
-Static assets for the extension, such as the icon used in the VS Code UI.
+Static assets such as the extension icon and sidebar graphics.
 
 ### `dist/` and `out/`
 Generated build output.
@@ -99,7 +99,7 @@ Generated dependency directories.
 
 ## Key Runtime Flow
 
-1. The VS Code extension activates from `src/extension.ts`.
+1. The capture layer activates from `src/extension.ts`.
 2. Editor changes are correlated with proxy captures in `src/correlation.ts` and `src/proxy.ts`.
 3. The extension builds a provenance record in `src/provenance.ts` and `src/eventSchema.ts`.
 4. Records are stored locally through `src/storage/LocalStorageService.ts` or sent to the backend through `src/storage/BackendStorageService.ts`.
@@ -111,7 +111,7 @@ Generated dependency directories.
 If you want the shortest path to understanding the system, read in this order:
 
 1. `README.md` for the user-facing mode split; `docs/architecture.md` for the full architecture overview.
-2. `src/extension.ts` for the extension entry point.
+2. `src/extension.ts` for the capture layer entry point.
 3. `src/eventSchema.ts` and `src/lightweightRecord.ts` for the shared provenance contract.
 4. `src/storage/StorageService.ts` and the files under `src/storage/` for local versus backend behavior.
 5. `backend/app/main.py` and `backend/app/services/ingest_normalizer.py` for backend startup and ingest normalization.
@@ -119,9 +119,9 @@ If you want the shortest path to understanding the system, read in this order:
 
 ## Notes For AI Readers
 
-- The product is a provenance system for AI-generated code. VS Code is the current observation host, not the product's identity.
+- The product is a provenance system for AI-generated code. The VS Code extension is the current observation host — it is not the product's identity. The capture contract is editor-agnostic.
 - Any tool that writes files (Claude Code, Cursor, Aider, Copilot, etc.) can have its insertions tracked. The adapter layer identifies which tool wrote the code from traffic, headers, and payload fingerprints.
 - Local mode works without backend dependencies.
 - Backend basic mode works without Neo4j or vector search.
 - Backend full mode enables the graph/vector features.
-- A standalone CLI ingest path (no VS Code) is not yet built but the architecture supports it.
+- A standalone CLI ingest path (no editor dependency) is not yet built but the architecture supports it.

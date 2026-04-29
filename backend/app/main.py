@@ -1,7 +1,5 @@
 from contextlib import asynccontextmanager
-from ipaddress import ip_address
 import logging
-import os
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from app.api.routes.auth import router as auth_router
+from app.api.routes.export import router as export_router
 from app.api.routes.ingest import router as ingest_router
 from app.api.routes.provenance import router as provenance_router
 from app.api.routes.search import router as search_router
@@ -19,20 +18,14 @@ from app.api.routes.insights import router as insights_router
 from app.api.routes.team import router as team_router
 from app.api.routes.ws_capture import router as ws_capture_router
 from app.core.config import Settings, get_settings
-from app.core.rate_limit import InMemoryRateLimiter, client_identifier
-from app.db.session import create_engine_from_env, create_session_factory, initialize_database
+from app.core.rate_limit import InMemoryRateLimiter, client_identifier, effective_client_ip
+from app.db.session import create_engine_from_settings, create_session_factory, initialize_database
 from app.services.neo4j_service import Neo4jLineageService
 
 
 logger = logging.getLogger(__name__)
 DEFAULT_APP_TITLE = "AI Provenance Backend"
 DEFAULT_APP_VERSION = "0.1.0"
-
-
-def parse_csv_env(name: str, default: str) -> list[str]:
-    raw_value = os.getenv(name, default)
-    entries = [entry.strip() for entry in raw_value.split(",") if entry.strip()]
-    return list(dict.fromkeys(entries))
 
 
 def get_runtime_settings(request: Request) -> Settings:
@@ -42,34 +35,13 @@ def get_runtime_settings(request: Request) -> Settings:
     return get_settings()
 
 
-def _is_trusted_proxy_host(host: str | None) -> bool:
-    normalized = (host or "").strip()
-    if not normalized:
-        return False
-    if normalized.lower() == "localhost":
-        return True
-
-    try:
-        parsed = ip_address(normalized)
-    except ValueError:
-        return False
-
-    return parsed.is_loopback or parsed.is_private
-
-
 def get_client_ip(request: Request) -> str:
     peer_host = request.client.host if request.client else None
-    if _is_trusted_proxy_host(peer_host):
-        forwarded_for = request.headers.get("x-forwarded-for", "")
-        forwarded_chain = [entry.strip() for entry in forwarded_for.split(",") if entry.strip()]
-        if forwarded_chain:
-            return client_identifier(forwarded_chain[0])
-
-        real_ip = request.headers.get("x-real-ip")
-        if real_ip and real_ip.strip():
-            return client_identifier(real_ip.strip())
-
-    return client_identifier(peer_host)
+    return effective_client_ip(
+        peer_host,
+        request.headers.get("x-forwarded-for", ""),
+        request.headers.get("x-real-ip", ""),
+    )
 
 
 class SecurityHeadersMiddleware:
@@ -183,7 +155,7 @@ class RequestGuardsMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    engine = create_engine_from_env()
+    engine = create_engine_from_settings(settings)
     session_factory = create_session_factory(engine)
 
     app.state.settings = settings
@@ -212,12 +184,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-_allowed_hosts = parse_csv_env("BACKEND_TRUSTED_HOSTS", "")
-_cors_origins = parse_csv_env(
-    "BACKEND_CORS_ORIGINS",
-    "http://127.0.0.1:3000,http://localhost:3000",
-)
-_cors_origins_raw = os.getenv("BACKEND_CORS_ORIGINS", "")
+_startup_settings = get_settings()
+_allowed_hosts = _startup_settings.trusted_hosts
+_cors_origins = _startup_settings.cors_origins
 
 app.add_middleware(RequestGuardsMiddleware)
 if _allowed_hosts:
@@ -226,7 +195,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_origin_regex=None,
-    allow_credentials=bool(_cors_origins_raw.strip()),
+    allow_credentials=bool(_cors_origins),
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
     max_age=600,
@@ -239,6 +208,7 @@ app.include_router(provenance_router)
 app.include_router(search_router)
 app.include_router(explain_router)
 app.include_router(insights_router)
+app.include_router(export_router)
 app.include_router(team_router)
 app.include_router(ws_capture_router)
 

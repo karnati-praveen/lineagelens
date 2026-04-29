@@ -4,8 +4,8 @@ LineageLens ships from one codebase in three release modes.
 
 ## LineageLens Base
 
-- Extension plus optional self-hosted backend (bundled for convenience).
-- Default mode (`aiCodeProvenance.mode = local`) stores data locally; no backend setup required.
+- Proxy capture layer with local-only storage. No backend required.
+- Records are stored as a JSON file on disk; no services to run.
 - Best for single-user and offline workflows.
 
 Artifact target:
@@ -14,9 +14,9 @@ Artifact target:
 
 ## LineageLens Plus
 
-- Extension plus backend-basic.
-- Shared ingest, auth, search, and dashboard.
-- No Neo4j dependency.
+- Proxy capture layer plus shared backend.
+- Adds shared ingest, auth, semantic search, and governance dashboard.
+- No Neo4j or vector search dependency.
 
 Artifacts:
 
@@ -29,8 +29,8 @@ Artifacts:
 
 ## LineageLens Max
 
-- Extension plus backend-full.
-- Shared ingest, auth, search, dashboard, vector search, and Neo4j lineage.
+- Proxy capture layer plus full backend.
+- Adds graph lineage (Neo4j), vector search, and full provenance intelligence on top of Plus.
 
 Artifacts:
 

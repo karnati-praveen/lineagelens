@@ -67,7 +67,13 @@ async def get_current_auth_context(
         ) from error
 
     # Verify token_version to prevent use of tokens revoked on logout or password change.
-    token_version_claim = int(auth.token_payload.get("token_version", -1))
+    try:
+        token_version_claim = int(auth.token_payload.get("token_version", -1))
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Malformed token_version claim.",
+        )
     if token_version_claim >= 0:
         try:
             user_id = PyUUID(auth.subject)

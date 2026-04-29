@@ -2,13 +2,16 @@ import json
 import logging
 from datetime import UTC, datetime
 from typing import Annotated, Any
+from uuid import UUID as PyUUID
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
-from app.core.rate_limit import InMemoryRateLimiter, client_identifier
-from app.core.security import AuthError, authenticate_websocket, ensure_workspace_scope
+from app.core.rate_limit import InMemoryRateLimiter, effective_client_ip
+from app.core.security import AuthContext, AuthError, authenticate_websocket, ensure_workspace_scope
+from app.db.models import UserAccount
 from app.db.session import get_session_factory_from_app
 from app.services.ingest_normalizer import extract_workspace_id, normalize_ingest_payload
 from app.services.neo4j_service import Neo4jLineageService
@@ -46,11 +49,52 @@ def get_ws_rate_limiter(websocket: WebSocket) -> InMemoryRateLimiter:
     return limiter
 
 
+async def _verify_ws_token_against_db(
+    auth: AuthContext,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Raise HTTPException if the token has been revoked or the account is inactive."""
+    try:
+        token_version_claim = int(auth.token_payload.get("token_version", -1))
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Malformed token_version claim.",
+        )
+
+    if token_version_claim < 0:
+        return
+
+    try:
+        user_id = PyUUID(auth.subject)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token subject.",
+        )
+
+    async with session_factory() as session:
+        result = await session.execute(
+            select(UserAccount.token_version, UserAccount.is_active).where(UserAccount.id == user_id)
+        )
+        row = result.one_or_none()
+
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked.")
+
+    db_token_version, is_active = row
+    if not is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account is inactive.")
+    if db_token_version != token_version_claim:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked.")
+
+
 async def _setup_ws_connection(
     websocket: WebSocket,
     settings: Settings,
     rate_limiter: InMemoryRateLimiter,
     client_ip: str,
+    session_factory: async_sessionmaker[AsyncSession],
 ) -> Any | None:
     if settings.rate_limit_enabled:
         decision = rate_limiter.check(
@@ -64,7 +108,7 @@ async def _setup_ws_connection(
             return None
 
     try:
-        return authenticate_websocket(websocket, settings)
+        auth = authenticate_websocket(websocket, settings)
     except AuthError as error:
         logger.warning("WebSocket capture auth failed: %s", error)
         await websocket.close(code=4401, reason=str(error))
@@ -73,6 +117,15 @@ async def _setup_ws_connection(
         logger.exception("Unexpected error during websocket auth: %s", error)
         await websocket.close(code=1011, reason="Authentication failure")
         return None
+
+    try:
+        await _verify_ws_token_against_db(auth, session_factory)
+    except HTTPException as error:
+        logger.warning("WebSocket token revocation check failed: subject=%s detail=%s", auth.subject, error.detail)
+        await websocket.close(code=4401, reason=error.detail)
+        return None
+
+    return auth
 
 
 async def _process_one_ws_message(
@@ -204,8 +257,13 @@ async def ws_capture(
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_ws_session_factory)],
     rate_limiter: Annotated[InMemoryRateLimiter, Depends(get_ws_rate_limiter)],
 ) -> None:
-    client_ip = client_identifier(websocket.client.host if websocket.client else None)
-    auth = await _setup_ws_connection(websocket, settings, rate_limiter, client_ip)
+    peer_host = websocket.client.host if websocket.client else None
+    client_ip = effective_client_ip(
+        peer_host,
+        websocket.headers.get("x-forwarded-for", ""),
+        websocket.headers.get("x-real-ip", ""),
+    )
+    auth = await _setup_ws_connection(websocket, settings, rate_limiter, client_ip, session_factory)
     if auth is None:
         return
 

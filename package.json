@@ -1,7 +1,7 @@
 {
   "name": "lineagelens",
   "displayName": "LineageLens",
-  "description": "Detects and records qualifying AI-generated code insertion events.",
+  "description": "AI code intelligence platform — git blame for AI-generated code. Captures every AI insertion and traces it back to its prompt, model, and developer. Works with any editor, any AI tool, any team.",
   "keywords": [
     "ai",
     "provenance",
@@ -101,6 +101,10 @@
       {
         "command": "aiInsertionDetector.refreshLocalLineage",
         "title": "AI Provenance: Refresh Local Lineage (Latest Commit)"
+      },
+      {
+        "command": "lineagelens.traceLine",
+        "title": "Trace this line with LineageLens"
       }
     ],
     "keybindings": [
@@ -146,6 +150,11 @@
         {
           "command": "aiInsertionDetector.showProvenance",
           "when": "editorHasSelection"
+        },
+        {
+          "command": "lineagelens.traceLine",
+          "when": "editorTextFocus",
+          "group": "lineagelens@1"
         }
       ],
       "commandPalette": [
@@ -175,6 +184,9 @@
         },
         {
           "command": "aiInsertionDetector.refreshLocalLineage"
+        },
+        {
+          "command": "lineagelens.traceLine"
         }
       ]
     },

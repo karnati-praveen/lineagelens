@@ -1,5 +1,10 @@
 import type { AgentAdapter, AgentAdapterInput, NormalizedAgentContext } from './types';
 import { normalizeAgentContext } from './shared';
+import {
+  assertAdapterOrdersUnique,
+  assertContextInvariants,
+  assertFallbackNotSelectedOverSpecialist
+} from './invariants';
 import { createCursorAdapter } from './cursor';
 import { createClaudeCodeAdapter } from './claudeCode';
 import { createCopilotAdapter } from './copilot';
@@ -16,6 +21,7 @@ export class AgentAdapterRegistry {
   private readonly adapters: AgentAdapter[];
 
   public constructor(adapters: AgentAdapter[]) {
+    assertAdapterOrdersUnique(adapters);
     this.adapters = [...adapters].sort((left, right) => left.order - right.order);
   }
 
@@ -60,6 +66,10 @@ export class AgentAdapterRegistry {
     if (!best) {
       return null;
     }
+
+    const registeredNames = new Set(this.adapters.map((a) => a.name));
+    assertContextInvariants(best, registeredNames);
+    assertFallbackNotSelectedOverSpecialist(best, candidates);
 
     const { adapterOrder: _adapterOrder, ...context } = best;
     return context;

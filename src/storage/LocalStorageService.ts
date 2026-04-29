@@ -289,7 +289,8 @@ export class LocalStorageService implements ProvenanceStorageService {
         timestampIso: sanitizeNullableString(entry.record.timestampIso),
         filePath: sanitizeNullableString(entry.record.file.path),
         snippet: extractSnippet(entry.record),
-        mode: this.mode
+        mode: this.mode,
+        record: entry.record as unknown as Record<string, unknown>
       });
     }
 
@@ -448,6 +449,73 @@ export class LocalStorageService implements ProvenanceStorageService {
       'Plus/Max sharing requires backend mode.',
       'Neo4j lineage graph and vector similarity search are available only in backend mode.'
     ];
+  }
+
+  public async exportAuditCsv(
+    filters: { dateFrom?: string; dateTo?: string; developer?: string; filePath?: string },
+    resource?: vscode.Uri
+  ): Promise<string | null> {
+    const store = await this.readStore(resource);
+    const dateFromEpoch = filters.dateFrom ? new Date(filters.dateFrom).getTime() : undefined;
+    const dateToEpoch = filters.dateTo ? new Date(filters.dateTo).getTime() : undefined;
+    const devFilter = (filters.developer ?? '').trim().toLowerCase();
+    const fileFilter = (filters.filePath ?? '').trim().toLowerCase();
+
+    const rows = store.records.filter((entry) => {
+      const ts = new Date(entry.record.timestampIso ?? '').getTime();
+      if (dateFromEpoch && !Number.isNaN(dateFromEpoch) && ts < dateFromEpoch) return false;
+      if (dateToEpoch && !Number.isNaN(dateToEpoch) && ts > dateToEpoch) return false;
+      if (fileFilter && !entry.record.file.path.toLowerCase().includes(fileFilter)) return false;
+      if (devFilter) {
+        const snap = entry.record.contextSnapshot;
+        const devVal = [
+          String((snap as Record<string, unknown> | null)?.['gitUser'] ?? ''),
+          String((snap as Record<string, unknown> | null)?.['username'] ?? '')
+        ].join(' ').toLowerCase();
+        if (!devVal.includes(devFilter)) return false;
+      }
+      return true;
+    });
+
+    if (rows.length === 0) return null;
+
+    const escCsv = (v: unknown): string => {
+      const s = String(v ?? '').replace(/"/g, '""');
+      return '"' + s + '"';
+    };
+
+    const header = [
+      'uuid', 'timestamp', 'file_path', 'model', 'developer', 'git_branch',
+      'tool', 'net_added_lines', 'prompt_summary', 'inserted_code_preview'
+    ].map(escCsv).join(',');
+
+    const lines = rows.map((entry) => {
+      const r = entry.record;
+      const snap = r.contextSnapshot as Record<string, unknown> | null;
+      const agentCtx = r.metadata?.agentContext as Record<string, unknown> | null | undefined;
+
+      const promptRaw = r.prompt.fullMessages;
+      const promptSummary = typeof promptRaw === 'string'
+        ? promptRaw.slice(0, 300)
+        : promptRaw != null
+          ? JSON.stringify(promptRaw).slice(0, 300)
+          : '';
+
+      return [
+        entry.uuid,
+        r.timestampIso,
+        r.file.path,
+        String(r.prompt.modelName ?? ''),
+        String(snap?.['gitUser'] ?? snap?.['username'] ?? ''),
+        String(r.repository.gitBranch ?? ''),
+        String(agentCtx?.['toolName'] ?? ''),
+        r.insertion.netAddedLines,
+        promptSummary,
+        r.insertion.extractedInsertedCodeBlock.slice(0, 300)
+      ].map(escCsv).join(',');
+    });
+
+    return [header, ...lines].join('\r\n');
   }
 
   private async requestOllamaExplanation(

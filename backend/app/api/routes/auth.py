@@ -156,7 +156,13 @@ async def refresh_access_token(
 
     # Verify token_version to support stateless revocation: logout and password
     # changes increment user.token_version, making all prior tokens invalid.
-    token_version_claim = int(refresh_auth.token_payload.get("token_version", 0))
+    try:
+        token_version_claim = int(refresh_auth.token_payload.get("token_version", 0))
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Malformed token_version claim.",
+        )
     if token_version_claim != user.token_version:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

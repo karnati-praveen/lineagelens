@@ -195,6 +195,28 @@ export class BackendStorageService implements ProvenanceStorageService {
     return [];
   }
 
+  public async exportAuditCsv(
+    filters: { dateFrom?: string; dateTo?: string; developer?: string; filePath?: string },
+    resource?: vscode.Uri
+  ): Promise<string | null> {
+    const baseUrl = this.getBackendBaseUrl(resource);
+    const params = new URLSearchParams();
+    if (filters.dateFrom) params.set('dateFrom', filters.dateFrom);
+    if (filters.dateTo) params.set('dateTo', filters.dateTo);
+    if (filters.developer) params.set('developer', filters.developer);
+    if (filters.filePath) params.set('filePath', filters.filePath);
+
+    const qs = params.toString();
+    const url = joinUrl(baseUrl, '/export/audit') + (qs ? '?' + qs : '');
+    const response = await this.requestJson('GET', url, resource);
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return response.body;
+    }
+
+    throw new Error('Export failed: backend returned ' + String(response.statusCode));
+  }
+
   private async fetchRecordByUuid(
     baseUrl: string,
     uuid: string,
@@ -418,13 +440,16 @@ function parseSearchResults(rawBody: string): Array<Omit<ProvenanceSearchResultI
       sanitizeSnippet(toStringValue(getAtPath(candidate, ['record', 'insertedText']))) ||
       '(no snippet)';
 
+    const fullRecord = isRecord(candidate.record) ? (candidate.record as Record<string, unknown>) : undefined;
+
     results.push({
       uuid,
       score,
       model,
       timestampIso,
       filePath,
-      snippet
+      snippet,
+      record: fullRecord
     });
   }
 

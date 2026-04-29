@@ -1,6 +1,7 @@
 ﻿import * as http from 'http';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { TraceLinePanelManager } from './traceLinePanel';
 import { StructuredLogger } from './logger';
 import simpleGit from 'simple-git';
 import { v4 as uuidv4 } from 'uuid';
@@ -285,6 +286,17 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('aiInsertionDetector.refreshLocalLineage', async () => {
       await refreshLocalLineage();
+    }),
+    vscode.commands.registerCommand('lineagelens.traceLine', async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || editor.document.uri.scheme !== 'file') {
+        vscode.window.showWarningMessage('LineageLens: open a file in the editor to trace a line.');
+        return;
+      }
+      await ensureRuntimeInitialized(editor.document.uri);
+      const filePath = editor.document.uri.fsPath;
+      const line = editor.selection.active.line;
+      await TraceLinePanelManager.show(filePath, line, getStorageService(), context.extensionUri, log);
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       const activeUri = vscode.window.activeTextEditor?.document.uri;

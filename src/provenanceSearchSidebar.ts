@@ -351,6 +351,22 @@ export class ProvenanceSearchSidebarViewProvider
 
     .muted { color: var(--vscode-descriptionForeground); }
 
+    .file-group { margin-bottom: 10px; }
+
+    .file-group-header {
+      font-size: 11px; font-weight: 700; padding: 4px 6px;
+      background: color-mix(in srgb, var(--vscode-editor-background) 80%, var(--vscode-panel-border));
+      border-radius: 4px 4px 0 0; border: 1px solid var(--vscode-panel-border);
+      border-bottom: none; word-break: break-all;
+    }
+
+    .file-group-count { font-weight: 400; color: var(--vscode-descriptionForeground); }
+
+    .file-group-path { font-size: 10px; font-weight: 400; }
+
+    .file-group .result-item { border-radius: 0; border-top: none; }
+    .file-group .result-item:last-child { border-radius: 0 0 4px 4px; }
+
     .inline {
       display: flex;
       align-items: center;
@@ -511,36 +527,53 @@ export class ProvenanceSearchSidebarViewProvider
         return;
       }
 
-      resultsView.innerHTML = results
-        .map((result, index) => {
+      // Group by file
+      const grouped = new Map();
+      results.forEach((result) => {
+        const fp = result.filePath ? String(result.filePath) : '(unknown)';
+        if (!grouped.has(fp)) grouped.set(fp, []);
+        grouped.get(fp).push(result);
+      });
+
+      let html = '';
+      grouped.forEach((groupResults, filePath) => {
+        const fileName = filePath.split(/[\\/]/).pop() || filePath;
+        html += '<div class="file-group">';
+        html += '<div class="file-group-header">' + escapeHtml(fileName) +
+          ' <span class="file-group-count">(' + groupResults.length + ')</span>' +
+          '<span class="file-group-path muted"> ' + escapeHtml(filePath) + '</span></div>';
+
+        groupResults.forEach((result) => {
           const uuid = result.uuid ? String(result.uuid) : '';
-          const filePath = result.filePath ? String(result.filePath) : '';
-          const score = typeof result.score === 'number' ? result.score.toFixed(4) : 'n/a';
+          const score = typeof result.score === 'number' ? result.score.toFixed(3) : 'n/a';
           const model = result.model ? String(result.model) : 'n/a';
-          const timestamp = result.timestampIso ? String(result.timestampIso) : 'n/a';
+          const rawTs = result.timestampIso ? String(result.timestampIso) : '';
+          const timestamp = rawTs ? new Date(rawTs).toLocaleString() : 'n/a';
           const snippet = result.snippet ? String(result.snippet) : '';
           const canOpen = uuid.length > 0;
           const safeUuid = escapeHtml(uuid);
           const safeFile = escapeHtml(filePath);
 
-          return (
+          html +=
             '<div class="result-item">' +
               '<div class="result-header">' +
                 '<div class="result-uuid">' + safeUuid + '</div>' +
-                '<button data-index="' + String(index) + '" data-uuid="' + safeUuid + '" data-file="' + safeFile + '" ' +
+                '<button data-uuid="' + safeUuid + '" data-file="' + safeFile + '" ' +
                   (canOpen ? '' : 'disabled') + '>Open</button>' +
               '</div>' +
               '<div class="meta">' +
-                '<span>score=' + escapeHtml(score) + '</span>' +
-                '<span>model=' + escapeHtml(model) + '</span>' +
-                '<span>time=' + escapeHtml(timestamp) + '</span>' +
+                '<span>' + escapeHtml(timestamp) + '</span>' +
+                '<span>' + escapeHtml(model) + '</span>' +
+                (score !== 'n/a' ? '<span>score ' + escapeHtml(score) + '</span>' : '') +
               '</div>' +
-              '<div class="meta"><span>file=' + escapeHtml(filePath || 'n/a') + '</span></div>' +
               '<pre class="snippet">' + escapeHtml(snippet || '(no snippet)') + '</pre>' +
-            '</div>'
-          );
-        })
-        .join('');
+            '</div>';
+        });
+
+        html += '</div>';
+      });
+
+      resultsView.innerHTML = html;
 
       const buttons = resultsView.querySelectorAll('button[data-uuid]');
       buttons.forEach((button) => {
@@ -549,10 +582,7 @@ export class ProvenanceSearchSidebarViewProvider
           const filePath = button.getAttribute('data-file') || '';
           vscode.postMessage({
             type: 'openResult',
-            payload: {
-              uuid,
-              filePath
-            }
+            payload: { uuid, filePath }
           });
         });
       });
