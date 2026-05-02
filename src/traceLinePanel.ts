@@ -77,7 +77,7 @@ function renderPrompt(promptMessages: unknown): string {
 }
 
 function escHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 }
 
 function createNonce(): string {
@@ -296,12 +296,12 @@ export class TraceLinePanelManager {
 
       // Exclude any records that don't belong to the clicked file — the backend
       // filter is best-effort and may include nearby paths on some storage backends.
-      const normalizedFilePath = filePath.replace(/\\/g, '/').toLowerCase();
+      const normalizedFilePath = filePath.replaceAll('\\', '/').toLowerCase();
       const fileRecords = results
         .map((r) => toTraceRecord(r))
         .filter((r) => {
           if (!r.filePath) return false;
-          return r.filePath.replace(/\\/g, '/').toLowerCase() === normalizedFilePath;
+          return r.filePath.replaceAll('\\', '/').toLowerCase() === normalizedFilePath;
         });
 
       const match = findBestMatch(fileRecords, line);

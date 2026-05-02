@@ -64,19 +64,39 @@ cmd $COMPOSE version
 
 ok "All prerequisites met."
 
-# ── 2. Clean up any leftover containers ───────────────────────────────────────
-step "2/7" "Cleaning up any existing containers"
+# ── 2. Remove any conflicting containers and stale volumes ────────────────────
+step "2/7" "Removing conflicting Postgres containers and stale volumes"
 
-# Stop and remove containers (but NOT volumes — keeps existing data safe).
-# This prevents 'container name already in use' errors.
+# a) Stop this project's own containers (clean slate)
 if $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" ps -q 2>/dev/null | grep -q .; then
-    info "Found existing containers. Stopping them first..."
-    echo -e "  ${YELLOW}\$${RESET}  $COMPOSE --project-name $PROJECT_NAME -f $COMPOSE_FILE down --remove-orphans"
+    info "Stopping existing $PROJECT_NAME containers..."
     $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" down --remove-orphans
-    ok "Existing containers stopped."
-else
-    ok "No existing containers found."
+    ok "Project containers stopped."
 fi
+
+# b) Kill ANY other container using our ports so they don't block startup
+for PORT in 5432 8787 8788; do
+    CIDS=$(docker ps -q --filter "publish=$PORT" 2>/dev/null || true)
+    if [[ -n "$CIDS" ]]; then
+        info "Port $PORT in use by container(s) [$CIDS] — stopping them..."
+        docker stop $CIDS >/dev/null 2>&1 || true
+        ok "Port $PORT freed."
+    fi
+done
+
+# c) Remove this project's Postgres volume so Postgres always inits cleanly
+#    with the correct password from .env (avoids auth failures on re-run)
+for VOL in \
+    "${PROJECT_NAME}_postgres_team_data" \
+    "lineagelens-plus_postgres_team_data"; do
+    if docker volume ls -q 2>/dev/null | grep -qx "$VOL"; then
+        info "Removing stale volume: $VOL"
+        docker volume rm "$VOL" >/dev/null 2>&1 || true
+        ok "Removed: $VOL"
+    fi
+done
+
+ok "Port and volume conflicts resolved."
 
 # ── 3. Generate secrets & write .env ─────────────────────────────────────────
 step "3/7" "Generating secrets"
@@ -196,10 +216,14 @@ echo -e "${BOLD}${GREEN}╔═════════════════�
 echo -e "${BOLD}${GREEN}║   LineageLens Plus is ready!             ║${RESET}"
 echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════╝${RESET}"
 echo ""
-echo -e "  API:    ${CYAN}$BACKEND_URL${RESET}"
-echo -e "  Health: ${CYAN}$BACKEND_URL/health${RESET}"
+echo -e "  ${BOLD}Dashboard:${RESET} ${CYAN}$BACKEND_URL/dashboard${RESET}  ← open this in your browser"
+echo -e "  API:       ${CYAN}$BACKEND_URL${RESET}"
+echo -e "  Proxy:     ${CYAN}http://localhost:8788${RESET}"
 echo ""
-echo -e "  ${BOLD}Register your first admin user:${RESET}"
+echo -e "  ${BOLD}Open the dashboard to register and manage your workspace:${RESET}"
+echo -e "  ${CYAN}$BACKEND_URL/dashboard${RESET}"
+echo ""
+echo -e "  ${BOLD}Or register via API:${RESET}"
 echo ""
 echo -e "  ${YELLOW}\$${RESET}  curl -s -X POST $BACKEND_URL/auth/register \\"
 echo       "       -H 'Content-Type: application/json' \\"

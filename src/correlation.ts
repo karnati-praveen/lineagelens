@@ -429,14 +429,14 @@ export function correlateInsertionWithHookEvents(
       : DEFAULT_CORRELATION_WINDOW_MS;
 
   const insertionMs = new Date(input.insertionTimestampIso).getTime();
-  if (isNaN(insertionMs)) {
+  if (Number.isNaN(insertionMs)) {
     return buildNotCapturedResult('invalid-insertion-timestamp', correlationWindowMs, DEFAULT_SIMILARITY_THRESHOLD);
   }
 
-  const normalizedInsertionPath = input.filePath.replace(/\\/g, '/').toLowerCase();
+  const normalizedInsertionPath = input.filePath.replaceAll('\\', '/').toLowerCase();
 
   const candidates = input.hookEvents.filter((event) => {
-    const eventPath = extractHookEventFilePath(event).replace(/\\/g, '/').toLowerCase();
+    const eventPath = extractHookEventFilePath(event).replaceAll('\\', '/').toLowerCase();
     if (!eventPath || !normalizedInsertionPath.endsWith(eventPath) && !eventPath.endsWith(normalizedInsertionPath)) {
       return false;
     }
@@ -450,7 +450,8 @@ export function correlateInsertionWithHookEvents(
 
   // Pick the most recent matching event within the window
   const best = candidates.reduce((prev, curr) =>
-    curr.capturedAtMs > prev.capturedAtMs ? curr : prev
+    curr.capturedAtMs > prev.capturedAtMs ? curr : prev,
+    candidates[0]
   );
 
   const timingDifferenceMs = insertionMs - best.capturedAtMs;
@@ -524,7 +525,7 @@ export function calculateLevenshteinSimilarity(
 }
 
 function normalizeForSimilarity(value: string): string {
-  return value.replace(/\r\n/g, '\n').replace(/\s+/g, ' ').trim().toLowerCase();
+  return value.replaceAll('\r\n', '\n').replaceAll(/\s+/g, ' ').trim().toLowerCase();
 }
 
 function computeLevenshteinDistance(left: string, right: string): number {
@@ -611,7 +612,7 @@ function matchFileContextTokens(
 }
 
 function buildFileContextTokens(filePath: string): string[] {
-  const normalizedPath = filePath.replace(/\\/g, '/').toLowerCase();
+  const normalizedPath = filePath.replaceAll('\\', '/').toLowerCase();
   const baseName = path.basename(normalizedPath).toLowerCase();
   const extension = path.extname(baseName).toLowerCase();
   const directorySegments = normalizedPath.split('/').filter((segment) => segment.length > 0);
@@ -763,7 +764,7 @@ function tokenAppearsInText(text: string, token: string): boolean {
 }
 
 function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function buildCaptureEvidence(candidate: CorrelationCandidate): CaptureEvidence {

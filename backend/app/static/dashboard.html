@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LineageLens Dashboard</title>
+<style>
+:root {
+  --bg:#0f1923; --bg2:#162232; --bg3:#1e3048; --accent:#3b82f6; --accent2:#60a5fa;
+  --text:#e2e8f0; --text2:#94a3b8; --border:#2d4a6a;
+  --danger:#ef4444; --warn:#f59e0b; --ok:#22c55e; --r:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;min-height:100vh}
+
+/* ── Login ── */
+.login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}
+.login-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:40px;width:100%;max-width:380px}
+.login-logo{text-align:center;margin-bottom:28px}
+.login-logo h1{font-size:22px;font-weight:700}
+.login-logo h1 span{color:var(--accent2)}
+.login-logo p{color:var(--text2);font-size:13px;margin-top:4px}
+
+/* ── Form ── */
+label{display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em}
+input,select{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:9px 12px;color:var(--text);font-size:14px;outline:none;transition:border-color .15s}
+input:focus,select:focus{border-color:var(--accent)}
+.field{margin-bottom:14px}
+
+/* ── Buttons ── */
+button{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:6px;border:none;cursor:pointer;font-size:13px;font-weight:500;transition:opacity .15s}
+button.p{background:var(--accent);color:#fff}
+button.s{background:var(--bg3);color:var(--text);border:1px solid var(--border)}
+button.d{background:var(--danger);color:#fff}
+button:hover{opacity:.82}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.full{width:100%;justify-content:center;padding:10px}
+
+/* ── App shell ── */
+.app{display:flex;flex-direction:column;min-height:100vh}
+.topbar{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 24px;display:flex;align-items:center;gap:20px;height:52px;flex-shrink:0}
+.brand{font-weight:700;font-size:15px;white-space:nowrap}
+.brand span{color:var(--accent2)}
+.topbar-nav{display:flex;gap:2px;flex:1;overflow-x:auto}
+.tab{padding:6px 14px;border-radius:6px 6px 0 0;border:none;background:transparent;color:var(--text2);cursor:pointer;font-size:13px;font-weight:500;white-space:nowrap;border-bottom:2px solid transparent;transition:all .15s}
+.tab:hover{background:var(--bg3);color:var(--text)}
+.tab.on{background:var(--bg3);color:var(--text);border-bottom-color:var(--accent)}
+.topbar-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.bdg{background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600}
+.bdg.adm{border-color:var(--accent);color:var(--accent2)}
+.bdg.plus{border-color:#a78bfa;color:#c4b5fd}
+.bdg.max{border-color:var(--warn);color:#fcd34d}
+.bdg.base{border-color:var(--border);color:var(--text2)}
+
+/* ── Content ── */
+.content{padding:28px 32px;flex:1;max-width:1320px;width:100%;margin:0 auto}
+.view{display:none}
+.view.on{display:block}
+
+/* ── Metrics grid ── */
+.mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;margin-bottom:24px}
+.mcard{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:16px}
+.mlabel{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+.mval{font-size:24px;font-weight:700}
+.mval.danger{color:var(--danger)}
+.mval.warn{color:var(--warn)}
+.mval.ok{color:var(--ok)}
+.mval.accent{color:var(--accent2)}
+
+/* ── Compliance grid ── */
+.cgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin-bottom:24px}
+.ccard{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px}
+.cname{font-weight:600;font-size:13px;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.cval{font-size:20px;font-weight:700;margin-bottom:4px}
+.csub{font-size:12px;color:var(--text2)}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex-shrink:0}
+.dot.ok{background:var(--ok)}
+.dot.fail{background:var(--danger)}
+.dot.warn{background:var(--warn)}
+
+/* ── Tables ── */
+.twrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:20px}
+.thead-row{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.ttitle{font-weight:600;font-size:13px}
+table{width:100%;border-collapse:collapse}
+th{padding:9px 14px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);border-bottom:1px solid var(--border)}
+td{padding:9px 14px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:top}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(255,255,255,.02)}
+
+/* ── Risk ── */
+.rsk{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.rsk.critical{background:rgba(239,68,68,.3);color:#fca5a5}
+.rsk.high{background:rgba(239,68,68,.2);color:var(--danger)}
+.rsk.medium{background:rgba(245,158,11,.2);color:var(--warn)}
+.rsk.low{background:rgba(34,197,94,.2);color:var(--ok)}
+
+/* ── Filters ── */
+.filters{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;margin-bottom:18px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.ff{display:flex;flex-direction:column;gap:5px;min-width:150px}
+.ff label{margin-bottom:0}
+.ff input,.ff select{padding:7px 10px;font-size:13px}
+
+/* ── Search results ── */
+.ritem{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:10px;cursor:pointer;transition:border-color .15s}
+.ritem:hover{border-color:var(--accent)}
+.rmeta{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;font-size:12px;color:var(--text2)}
+.code-snip{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);padding:4px 8px;border-radius:4px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;margin-top:6px}
+
+/* ── Record ── */
+.rsec{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);margin-bottom:14px;overflow:hidden}
+.rsec-h{padding:11px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px}
+.rsec-b{padding:16px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:7px 20px;align-items:baseline}
+.kk{color:var(--text2);font-size:12px;white-space:nowrap}
+.kv-v{font-size:13px;word-break:break-all}
+pre{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:12px;overflow-x:auto;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto}
+
+/* ── Team invite ── */
+.invite-box{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:18px;margin-bottom:20px}
+.invite-box h3{margin-bottom:14px;font-size:14px}
+.form-row{display:flex;gap:10px;flex-wrap:wrap}
+.form-row .field{flex:1;min-width:150px;margin-bottom:0}
+
+/* ── Alerts ── */
+.al{padding:11px 14px;border-radius:var(--r);margin-bottom:14px;font-size:13px}
+.al.err{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:#fca5a5}
+.al.ok{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);color:#86efac}
+.al.info{background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);color:#93c5fd}
+
+/* ── Loading / empty ── */
+.spin{display:inline-block;width:15px;height:15px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.loading{display:flex;align-items:center;gap:10px;color:var(--text2);padding:32px;justify-content:center}
+.empty{text-align:center;padding:48px 24px;color:var(--text2);font-size:13px}
+
+/* ── Section title ── */
+.stitle{font-size:16px;font-weight:600;margin-bottom:16px;display:flex;align-items:center;gap:10px}
+.stitle .sub{font-size:13px;font-weight:400;color:var(--text2)}
+
+code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);padding:2px 6px;border-radius:4px}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="v-login" class="login-wrap">
+  <div class="login-card">
+    <div class="login-logo"><h1>Lineage<span>Lens</span></h1><p>AI Code Provenance Dashboard</p></div>
+    <div id="al-login"></div>
+    <div class="field"><label>Workspace ID</label><input id="l-ws" type="text" placeholder="your-workspace" autocomplete="off"></div>
+    <div class="field"><label>Username</label><input id="l-user" type="text" placeholder="username" autocomplete="username"></div>
+    <div class="field"><label>Password</label><input id="l-pass" type="password" placeholder="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
+    <button class="p full" onclick="doLogin()">Sign In</button>
+    <div style="margin-top:12px;text-align:center;font-size:12px;color:var(--text2)">No account? <a href="#" onclick="showReg(event)" style="color:var(--accent2)">Register</a></div>
+  </div>
+</div>
+
+<!-- REGISTER -->
+<div id="v-reg" class="login-wrap" style="display:none">
+  <div class="login-card">
+    <div class="login-logo"><h1>Lineage<span>Lens</span></h1><p>Create Account</p></div>
+    <div id="al-reg"></div>
+    <div class="field"><label>Workspace ID</label><input id="r-ws" type="text" placeholder="your-workspace"></div>
+    <div class="field"><label>Username</label><input id="r-user" type="text" placeholder="username"></div>
+    <div class="field"><label>Password</label><input id="r-pass" type="password" placeholder="min 8 characters" onkeydown="if(event.key==='Enter')doRegister()"></div>
+    <button class="p full" onclick="doRegister()">Create Account</button>
+    <div style="margin-top:12px;text-align:center;font-size:12px;color:var(--text2)"><a href="#" onclick="showLogin(event)" style="color:var(--accent2)">← Back to Sign In</a></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="v-app" class="app" style="display:none">
+  <div class="topbar">
+    <div class="brand">Lineage<span>Lens</span></div>
+    <nav class="topbar-nav">
+      <button class="tab on" data-t="dashboard" onclick="go('dashboard')">Dashboard</button>
+      <button class="tab" data-t="search" onclick="go('search')">Search</button>
+      <button class="tab" data-t="record" onclick="go('record')">Record Viewer</button>
+      <button class="tab adm-tab" data-t="export" onclick="go('export')" style="display:none">Export</button>
+      <button class="tab adm-tab" data-t="team" onclick="go('team')" style="display:none">Team</button>
+    </nav>
+    <div class="topbar-right">
+      <span id="mode-bdg" class="bdg plus">plus</span>
+      <span id="role-bdg" class="bdg"></span>
+      <span id="uname" style="color:var(--text)"></span>
+      <button class="s" style="padding:5px 12px;font-size:12px" onclick="doLogout()">Sign Out</button>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- DASHBOARD -->
+    <div id="t-dashboard" class="view on">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+        <div class="stitle">Governance Overview</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="d-from" type="date" style="padding:6px 10px;font-size:12px;width:145px">
+          <input id="d-to" type="date" style="padding:6px 10px;font-size:12px;width:145px">
+          <button class="s" style="padding:6px 14px;font-size:12px" onclick="loadDash()">Refresh</button>
+        </div>
+      </div>
+      <div id="dash-body"><div class="loading"><div class="spin"></div> Loading…</div></div>
+    </div>
+
+    <!-- SEARCH -->
+    <div id="t-search" class="view">
+      <div class="stitle">Provenance Search</div>
+      <div class="filters">
+        <div class="ff"><label>Keywords</label><input id="s-kw" type="text" placeholder="function name, snippet…" onkeydown="if(event.key==='Enter')doSearch()"></div>
+        <div class="ff"><label>Model</label><input id="s-model" type="text" placeholder="gpt-4o, claude…"></div>
+        <div class="ff"><label>File path</label><input id="s-file" type="text" placeholder="src/auth.py"></div>
+        <div class="ff"><label>Date from</label><input id="s-from" type="date"></div>
+        <div class="ff"><label>Date to</label><input id="s-to" type="date"></div>
+        <button class="p" onclick="doSearch()">Search</button>
+      </div>
+      <div id="search-body"></div>
+    </div>
+
+    <!-- RECORD VIEWER -->
+    <div id="t-record" class="view">
+      <div class="stitle">Record Viewer</div>
+      <div style="display:flex;gap:10px;margin-bottom:20px">
+        <input id="rec-uuid" type="text" placeholder="Paste record UUID…" style="flex:1;max-width:440px">
+        <button class="p" onclick="loadRec()">Load</button>
+      </div>
+      <div id="rec-body"></div>
+    </div>
+
+    <!-- EXPORT -->
+    <div id="t-export" class="view">
+      <div class="stitle">Audit Export <span class="sub">Admin only · up to 10,000 rows</span></div>
+      <div class="filters">
+        <div class="ff"><label>Date from</label><input id="e-from" type="date"></div>
+        <div class="ff"><label>Date to</label><input id="e-to" type="date"></div>
+        <div class="ff"><label>Developer</label><input id="e-dev" type="text" placeholder="git username"></div>
+        <div class="ff"><label>File path</label><input id="e-file" type="text" placeholder="src/auth.py"></div>
+        <button class="p" onclick="doExport()">Download CSV</button>
+      </div>
+      <div id="al-export"></div>
+    </div>
+
+    <!-- TEAM -->
+    <div id="t-team" class="view">
+      <div class="stitle">Team</div>
+      <div id="invite-box" class="invite-box" style="display:none">
+        <h3>Invite Member</h3>
+        <div id="al-invite"></div>
+        <div class="form-row">
+          <div class="field"><label>Username</label><input id="inv-u" type="text" placeholder="username"></div>
+          <div class="field"><label>Password</label><input id="inv-p" type="password" placeholder="min 8 chars"></div>
+          <div class="field"><label>Role</label><select id="inv-r"><option value="member">Member</option><option value="admin">Admin</option></select></div>
+        </div>
+        <div style="margin-top:12px"><button class="p" onclick="doInvite()">Invite</button></div>
+      </div>
+      <div id="team-body"><div class="loading"><div class="spin"></div> Loading…</div></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+'use strict';
+let _tok = null;
+let _ref = null;
+let _user = null, _mode = 'plus', _rTimer = null;
+
+// ── API ──────────────────────────────────────────────────────────────────────
+async function req(method, path, body, noRefresh) {
+  const h = {'Content-Type':'application/json'};
+  if (_tok) h['Authorization'] = `Bearer ${_tok}`;
+  const res = await fetch(path, {method, headers: h, body: body ? JSON.stringify(body) : undefined});
+  if (res.status === 401 && !noRefresh) {
+    if (await tryRefresh()) return req(method, path, body, true);
+    doLogout(); return null;
+  }
+  const ct = res.headers.get('content-type') || '';
+  if (ct.includes('application/json')) {
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+    return d;
+  }
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res;
+}
+
+async function tryRefresh() {
+  if (!_ref) return false;
+  try {
+    const d = await req('POST', '/auth/refresh', {refreshToken: _ref}, true);
+    if (!d) return false;
+    setTok(d.accessToken, d.refreshToken, d.expiresInSeconds);
+    return true;
+  } catch { return false; }
+}
+
+function setTok(tok, ref, exp) {
+  _tok = tok; _ref = ref || _ref;
+  clearTimeout(_rTimer);
+  if (exp > 60) _rTimer = setTimeout(tryRefresh, (exp - 45) * 1000);
+}
+
+function clearTok() {
+  _tok = null; _ref = null; _user = null;
+  clearTimeout(_rTimer);
+}
+
+// ── AUTH VIEWS ────────────────────────────────────────────────────────────────
+function showLogin(e) { e?.preventDefault(); show('v-login'); hide('v-reg'); hide('v-app'); }
+function showReg(e) { e?.preventDefault(); hide('v-login'); show('v-reg'); hide('v-app'); }
+function showApp() { hide('v-login'); hide('v-reg'); show('v-app'); }
+
+function setAl(id, msg, type='err') {
+  const el = document.getElementById(id);
+  el.innerHTML = msg ? `<div class="al ${type}">${esc(msg)}</div>` : '';
+}
+
+async function doLogin() {
+  setAl('al-login','');
+  const ws=g('l-ws'), un=g('l-user'), pw=g('l-pass');
+  if (!ws||!un||!pw) { setAl('al-login','All fields required.'); return; }
+  try {
+    const d = await req('POST', '/auth/login', {username:un, password:pw, workspaceId:ws}, true);
+    setTok(d.accessToken, d.refreshToken, d.expiresInSeconds);
+    _user = d.user;
+    await initApp();
+  } catch(e) { setAl('al-login', e.message); }
+}
+
+async function doRegister() {
+  setAl('al-reg','');
+  const ws=g('r-ws'), un=g('r-user'), pw=g('r-pass');
+  if (!ws||!un||!pw) { setAl('al-reg','All fields required.'); return; }
+  try {
+    const d = await req('POST', '/auth/register', {username:un, password:pw, workspaceId:ws}, true);
+    setTok(d.accessToken, d.refreshToken, d.expiresInSeconds);
+    _user = d.user;
+    await initApp();
+  } catch(e) { setAl('al-reg', e.message); }
+}
+
+async function doLogout() {
+  try { await req('POST', '/auth/logout', {}); } catch {}
+  clearTok(); showLogin();
+}
+
+// ── INIT ─────────────────────────────────────────────────────────────────────
+async function initApp() {
+  if (!_user) {
+    try { _user = await req('GET', '/auth/me'); } catch { showLogin(); return; }
+  }
+  try {
+    const h = await fetch('/health').then(r=>r.json());
+    _mode = h.productMode || 'plus';
+  } catch {}
+
+  document.getElementById('uname').textContent = _user.username;
+  const rb = document.getElementById('role-bdg');
+  rb.textContent = _user.role; rb.className = `bdg${_user.role==='admin'?' adm':''}`;
+  const mb = document.getElementById('mode-bdg');
+  mb.textContent = _mode; mb.className = `bdg ${_mode}`;
+
+  if (_user.role === 'admin') {
+    document.querySelectorAll('.adm-tab').forEach(t => t.style.display='inline-flex');
+    document.getElementById('invite-box').style.display = 'block';
+  }
+  showApp();
+  go('dashboard');
+}
+
+// ── TABS ─────────────────────────────────────────────────────────────────────
+function go(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.t===name));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id===`t-${name}`));
+  if (name==='dashboard') loadDash();
+  if (name==='team') loadTeam();
+  if (name==='search') document.getElementById('s-kw').focus();
+}
+
+// ── DASHBOARD ─────────────────────────────────────────────────────────────────
+async function loadDash() {
+  const el = document.getElementById('dash-body');
+  el.innerHTML = '<div class="loading"><div class="spin"></div> Loading…</div>';
+  try {
+    const body = {workspace_id: _user?.workspaceId};
+    const df = g('d-from'), dt = g('d-to');
+    if (df) body.date_from = new Date(df).toISOString();
+    if (dt) body.date_to = new Date(dt+'T23:59:59').toISOString();
+    const d = await req('POST', '/insights/dashboard', body);
+    el.innerHTML = buildDash(d);
+  } catch(e) {
+    el.innerHTML = `<div class="al err">Dashboard error: ${esc(e.message)}</div>`;
+  }
+}
+
+function buildDash(d) {
+  const gs = d.governanceSummary || {};
+  const pct = v => v==null ? '—' : (typeof v==='number'&&v<=1 ? (v*100).toFixed(1) : Number(v).toFixed(1))+'%';
+  const num = v => v==null ? '—' : Number(v).toLocaleString();
+  const rCls = v => { const n=parseFloat(v); if(n>=.7)return 'danger'; if(n>=.4)return 'warn'; return 'ok'; };
+
+  let h = `<div class="mgrid">
+    ${mc('Total Records', num(gs.totalRecords), 'accent')}
+    ${mc('Prompt Capture', pct(gs.promptCaptureRate), gs.promptCaptureRate<.5?'warn':'ok')}
+    ${mc('Avg Risk', pct(gs.avgRiskScore), rCls(gs.avgRiskScore))}
+    ${mc('High Risk', num(gs.highRiskCount), gs.highRiskCount>0?'danger':'ok')}
+    ${mc('Critical', num(gs.criticalCount), gs.criticalCount>0?'danger':'ok')}
+    ${mc('Files', num(gs.uniqueFiles), '')}
+    ${mc('Models', num(gs.uniqueModels), '')}
+    ${mc('AI Lines Added', num(gs.aiNetLinesAdded), 'accent')}
+    ${mc('Team Members', num(gs.teamMemberCount), '')}
+    ${mc('Agent Sessions', num(gs.agentSessionCount), '')}
+  </div>`;
+
+  if (d.complianceControls?.length) {
+    h += '<div class="cgrid">' + d.complianceControls.map(c => {
+      const dc = c.status==='pass'?'ok':c.status==='warn'?'warn':'fail';
+      return `<div class="ccard"><div class="cname"><span class="dot ${dc}"></span>${esc(c.name)}</div>
+        <div class="cval">${esc(String(c.metric??''))}</div>
+        <div class="csub">${esc(c.summary||'')}</div></div>`;
+    }).join('') + '</div>';
+  }
+
+  if (d.highRiskRecords?.length) {
+    h += tw('High-Risk Records', `<table><thead><tr><th>File</th><th>Risk</th><th>Model</th><th>Timestamp</th><th>Tool</th><th></th></tr></thead><tbody>` +
+      d.highRiskRecords.map(r => {
+        const src=(r.normalizedEvent||{}).source||{};
+        const lvl=((r.riskAssessment||{}).level||'').toLowerCase();
+        return `<tr><td><code>${esc(r.filePath||'')}</code></td>
+          <td>${lvl?`<span class="rsk ${lvl}">${esc(lvl)}</span>`:''}</td>
+          <td>${esc(r.modelName||'')}</td><td>${fd(r.timestampIso)}</td>
+          <td>${esc(src.toolName||'')}</td>
+          <td><button class="s" style="padding:3px 10px;font-size:11px" onclick="openRec('${esc(r.uuid||'')}')">View</button></td></tr>`;
+      }).join('') + '</tbody></table>');
+  }
+
+  if (d.fileHotspots?.length) {
+    h += tw('File Hotspots', `<table><thead><tr><th>File</th><th>Records</th><th>%</th><th>High Risk</th><th>Avg Risk</th><th>Last AI Change</th></tr></thead><tbody>` +
+      d.fileHotspots.map(f => `<tr>
+        <td><code>${esc(f.fileName||'')}</code></td><td>${num(f.recordCount)}</td>
+        <td>${pct(f.pctOfTotal)}</td>
+        <td>${f.highRiskCount>0?`<span class="rsk high">${num(f.highRiskCount)}</span>`:num(f.highRiskCount)}</td>
+        <td>${pct(f.avgRisk)}</td><td>${fd(f.lastAiChangeDate)}</td></tr>`).join('') + '</tbody></table>');
+  }
+
+  if (d.modelAnalytics?.length) {
+    h += tw('Model Analytics', `<table><thead><tr><th>Model</th><th>Insertions</th><th>Share</th><th>Prompt Capture</th><th>Avg Risk</th><th>High Risk</th></tr></thead><tbody>` +
+      d.modelAnalytics.map(m => `<tr>
+        <td>${esc(m.modelName||'')}</td><td>${num(m.insertions)}</td>
+        <td>${pct(m.pctShare)}</td><td>${pct(m.promptCaptureRate)}</td>
+        <td>${pct(m.avgRisk)}</td><td>${num(m.highRiskCount)}</td></tr>`).join('') + '</tbody></table>');
+  }
+
+  if (d.riskTrends?.length) {
+    h += tw('Risk Trends', `<table><thead><tr><th>Period</th><th>Records</th><th>High Risk</th><th>Avg Risk</th><th>Prompt Capture</th></tr></thead><tbody>` +
+      d.riskTrends.map(t => `<tr>
+        <td>${esc(t.bucketLabel||'')}</td><td>${num(t.recordCount)}</td>
+        <td>${num(t.highRiskCount)}</td><td>${pct(t.avgRisk)}</td>
+        <td>${pct(t.promptCaptureRate)}</td></tr>`).join('') + '</tbody></table>');
+  }
+
+  return h || '<div class="empty">No data yet. Start capturing AI insertions and refresh.</div>';
+}
+
+function mc(lbl, val, cls) {
+  return `<div class="mcard"><div class="mlabel">${esc(lbl)}</div><div class="mval ${cls}">${val}</div></div>`;
+}
+function tw(title, inner) {
+  return `<div class="twrap"><div class="thead-row"><span class="ttitle">${esc(title)}</span></div>${inner}</div>`;
+}
+
+// ── SEARCH ────────────────────────────────────────────────────────────────────
+async function doSearch() {
+  const el = document.getElementById('search-body');
+  el.innerHTML = '<div class="loading"><div class="spin"></div> Searching…</div>';
+  try {
+    const body = {workspace_id: _user?.workspaceId};
+    const kw=g('s-kw'), mo=g('s-model'), fi=g('s-file'), sf=g('s-from'), st=g('s-to');
+    if (kw) body.keywords = kw;
+    if (mo) body.model = mo;
+    if (fi) body.file_path = fi;
+    if (sf) body.date_from = new Date(sf).toISOString();
+    if (st) body.date_to = new Date(st+'T23:59:59').toISOString();
+    const d = await req('POST', '/search', body);
+    const rs = d.results || d || [];
+    if (!rs.length) { el.innerHTML = '<div class="empty">No results found.</div>'; return; }
+    el.innerHTML = rs.map(r => {
+      const src=(r.normalizedEvent||{}).source||{};
+      const lvl=((r.riskAssessment||{}).level||'').toLowerCase();
+      const score = r.similarityScore!=null ? ` · ${Number(r.similarityScore).toFixed(3)}` : '';
+      return `<div class="ritem" onclick="openRec('${esc(r.uuid||'')}')">
+        <div class="rmeta">
+          <span>📄 ${esc(r.filePath||'—')}</span>
+          <span>🤖 ${esc(r.modelName||src.adapterName||'—')}</span>
+          <span>🕐 ${fd(r.timestampIso)}</span>
+          ${lvl?`<span class="rsk ${lvl}">${esc(lvl)}</span>`:''}
+          <span>${score}</span>
+        </div>
+        ${r.insertedCode?`<code class="code-snip">${esc(r.insertedCode.slice(0,200))}</code>`:''}
+      </div>`;
+    }).join('');
+  } catch(e) { el.innerHTML = `<div class="al err">${esc(e.message)}</div>`; }
+}
+
+// ── RECORD ────────────────────────────────────────────────────────────────────
+function openRec(uuid) {
+  document.getElementById('rec-uuid').value = uuid;
+  go('record');
+  loadRec();
+}
+
+async function loadRec() {
+  const uuid = g('rec-uuid').trim();
+  const el = document.getElementById('rec-body');
+  if (!uuid) { el.innerHTML = '<div class="al info">Enter a UUID above to load a record.</div>'; return; }
+  el.innerHTML = '<div class="loading"><div class="spin"></div> Loading record…</div>';
+  try {
+    const r = await req('GET', `/provenance/${encodeURIComponent(uuid)}`);
+    el.innerHTML = buildRec(r);
+  } catch(e) { el.innerHTML = `<div class="al err">${esc(e.message)}</div>`; }
+}
+
+function buildRec(r) {
+  const ev = r.normalizedEvent||{};
+  const src = ev.source||{}, diff = ev.diff||{}, model = ev.model||{};
+  const risk = r.riskAssessment||{}, snap = r.contextSnapshot||{}, cap = ev.capture||{};
+  const lvl = (risk.level||risk.riskLevel||'').toLowerCase();
+
+  let h = rs('Overview', `<div class="kv">
+    ${kv('UUID', r.uuid)} ${kv('Timestamp', fd(r.timestampIso))}
+    ${kv('File', r.filePath)} ${kv('Model', r.modelName||model.name)}
+    ${kv('Tool', src.toolName)} ${kv('Adapter', src.adapterName)}
+    ${kv('Net Lines', diff.netAddedLines??r.netAddedLines)} ${kv('Prompt Status', cap.promptStatus)}
+    ${lvl?`<div class="kk">Risk</div><div class="kv-v"><span class="rsk ${lvl}">${esc(lvl)}</span></div>`:''}
+  </div>`);
+
+  if (r.insertedCode) h += rs('Inserted Code', `<pre>${esc(r.insertedCode.slice(0,3000))}</pre>`);
+
+  if (r.promptMessages) {
+    let ph = '';
+    if (typeof r.promptMessages === 'string') {
+      ph = `<pre>${esc(r.promptMessages.slice(0,3000))}</pre>`;
+    } else if (Array.isArray(r.promptMessages)) {
+      ph = r.promptMessages.slice(0,5).map(m => {
+        const c = typeof m.content==='string' ? m.content : JSON.stringify(m.content,null,2);
+        return `<div style="margin-bottom:10px"><div style="font-size:11px;color:var(--text2);text-transform:uppercase;margin-bottom:4px">${esc(m.role||'')}</div><pre>${esc(c.slice(0,1500))}</pre></div>`;
+      }).join('');
+    }
+    h += rs('Prompt', ph);
+  }
+
+  if (Object.keys(snap).length) h += rs('Context Snapshot', `<pre>${esc(JSON.stringify(snap,null,2))}</pre>`);
+
+  h += `<div style="margin-top:14px;display:flex;gap:10px;align-items:center">
+    <button class="s" onclick="doExplain('${esc(r.uuid||'')}')">✨ Explain with AI</button>
+    <span id="exp-status" style="font-size:12px;color:var(--text2)"></span>
+  </div><div id="exp-result" style="margin-top:12px"></div>`;
+  return h;
+}
+
+async function doExplain(uuid) {
+  document.getElementById('exp-status').textContent = 'Generating…';
+  document.getElementById('exp-result').innerHTML = '';
+  try {
+    const d = await req('POST', '/explain', {uuid, workspace_id: _user?.workspaceId});
+    document.getElementById('exp-status').textContent = '';
+    const txt = d.explanation || d.text || JSON.stringify(d);
+    document.getElementById('exp-result').innerHTML = rs('AI Explanation', `<pre style="white-space:pre-wrap">${esc(txt)}</pre>`);
+  } catch(e) {
+    document.getElementById('exp-status').textContent = '';
+    document.getElementById('exp-result').innerHTML = `<div class="al err">${esc(e.message)}</div>`;
+  }
+}
+
+function rs(title, body) {
+  return `<div class="rsec"><div class="rsec-h">${esc(title)}</div><div class="rsec-b">${body}</div></div>`;
+}
+function kv(k, v) {
+  if (v==null||v==='') return '';
+  return `<div class="kk">${esc(k)}</div><div class="kv-v">${esc(String(v))}</div>`;
+}
+
+// ── EXPORT ────────────────────────────────────────────────────────────────────
+async function doExport() {
+  setAl('al-export','');
+  const p = new URLSearchParams();
+  const ef=g('e-from'), et=g('e-to'), ed=g('e-dev'), efi=g('e-file');
+  if (ef) p.set('dateFrom', new Date(ef).toISOString());
+  if (et) p.set('dateTo', new Date(et+'T23:59:59').toISOString());
+  if (ed) p.set('developer', ed);
+  if (efi) p.set('filePath', efi);
+  setAl('al-export','Preparing export…','info');
+  try {
+    const res = await fetch(`/export/audit?${p}`, {headers:{Authorization:`Bearer ${_tok}`}});
+    if (!res.ok) { const d=await res.json().catch(()=>({})); throw new Error(d.detail||`HTTP ${res.status}`); }
+    const count = res.headers.get('X-Record-Count')||'?';
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href=url; a.download=`lineagelens-audit-${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setAl('al-export',`Downloaded ${count} records.`,'ok');
+  } catch(e) { setAl('al-export', e.message); }
+}
+
+// ── TEAM ─────────────────────────────────────────────────────────────────────
+async function loadTeam() {
+  const el = document.getElementById('team-body');
+  el.innerHTML = '<div class="loading"><div class="spin"></div> Loading…</div>';
+  try {
+    const d = await req('GET', '/team/members');
+    const members = d.members || d || [];
+    if (!members.length) { el.innerHTML = '<div class="empty">No team members yet.</div>'; return; }
+    el.innerHTML = tw('Members', `<table><thead><tr><th>Username</th><th>Role</th><th>Insertions</th><th>AI Lines</th><th>Share</th><th>Joined</th></tr></thead><tbody>` +
+      members.map(m => `<tr>
+        <td>${esc(m.username)}</td>
+        <td><span class="bdg${m.role==='admin'?' adm':''}">${esc(m.role)}</span></td>
+        <td>${m.insertions??'—'}</td><td>${m.aiLines??'—'}</td>
+        <td>${m.pctShare!=null?(m.pctShare*100).toFixed(1)+'%':'—'}</td>
+        <td>${fd(m.joinedDate)}</td></tr>`).join('') + '</tbody></table>');
+  } catch(e) { el.innerHTML = `<div class="al err">${esc(e.message)}</div>`; }
+}
+
+async function doInvite() {
+  setAl('al-invite','');
+  const u=g('inv-u'), p=g('inv-p'), r=g('inv-r');
+  if (!u||!p) { setAl('al-invite','Username and password required.'); return; }
+  try {
+    await req('POST', '/team/invite', {username:u, password:p, role:r, workspaceId:_user?.workspaceId});
+    setAl('al-invite',`${u} invited.`,'ok');
+    document.getElementById('inv-u').value='';
+    document.getElementById('inv-p').value='';
+    loadTeam();
+  } catch(e) { setAl('al-invite', e.message); }
+}
+
+// ── UTILS ─────────────────────────────────────────────────────────────────────
+function g(id) { return document.getElementById(id)?.value||''; }
+function show(id) { document.getElementById(id).style.display='flex'; }
+function hide(id) { document.getElementById(id).style.display='none'; }
+function esc(s) { return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fd(iso) { if(!iso)return '—'; try{return new Date(iso).toLocaleString(undefined,{dateStyle:'short',timeStyle:'short'});}catch{return iso;} }
+
+// ── BOOT ─────────────────────────────────────────────────────────────────────
+showLogin();
+</script>
+</body>
+</html>

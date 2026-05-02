@@ -181,30 +181,32 @@ export async function startLocalLlmProxy(
   });
 
   proxy.on('proxyRes', (proxyRes, req, res) => {
-    const chunks: Buffer[] = [];
-    let responseBytes = 0;
-    let responseTruncated = false;
+    const captureChunks: Buffer[] = [];
+    let captureBytes = 0;
+    let captureTruncated = false;
+
+    const statusCode = proxyRes.statusCode ?? 502;
+    const outgoingHeaders = sanitizeOutgoingHeaders(proxyRes.headers);
+    if (!res.headersSent) {
+      res.writeHead(statusCode, outgoingHeaders);
+    }
 
     proxyRes.on('data', (chunk: Buffer | string) => {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      responseBytes += buffer.byteLength;
-      if (responseBytes <= MAX_RESPONSE_BODY_BYTES) {
-        chunks.push(buffer);
-      } else if (!responseTruncated) {
-        responseTruncated = true;
-        log('Response body truncated at ' + String(MAX_RESPONSE_BODY_BYTES) + ' bytes for capture.');
+      // Always forward every byte to the client — capture is observational only
+      res.write(buffer);
+      captureBytes += buffer.byteLength;
+      if (captureBytes <= MAX_RESPONSE_BODY_BYTES) {
+        captureChunks.push(buffer);
+      } else if (!captureTruncated) {
+        captureTruncated = true;
+        log('Response capture truncated at ' + String(MAX_RESPONSE_BODY_BYTES) + ' bytes.');
       }
     });
 
     proxyRes.on('end', () => {
-      const rawBuffer = Buffer.concat(chunks);
-      const statusCode = proxyRes.statusCode ?? 502;
-      const outgoingHeaders = sanitizeOutgoingHeaders(proxyRes.headers);
-
-      if (!res.headersSent) {
-        res.writeHead(statusCode, outgoingHeaders);
-      }
-      res.end(rawBuffer);
+      res.end();
+      const rawBuffer = Buffer.concat(captureChunks);
 
       const pendingId = pendingByRequest.get(req);
       if (pendingId) {
@@ -346,8 +348,14 @@ export async function startLocalLlmProxy(
       return;
     }
 
-    const parsedPayload = parseJson(rawBody);
-    const payloadRecord = isRecord(parsedPayload) ? parsedPayload : undefined;
+    const oversized = rawBody.length > MAX_REQUEST_BODY_BYTES;
+    const parsedPayload = oversized ? undefined : parseJson(rawBody);
+    const payloadRecord = (!oversized && isRecord(parsedPayload)) ? parsedPayload : undefined;
+
+    const captureStatus: CaptureStatus = oversized ? 'metadata_only' : 'full';
+    const captureReason = oversized
+      ? 'Request body exceeds capture limit; forwarded without full body capture.'
+      : null;
 
     const requestId = uuidv4();
     const createdAtMs = Date.now();
@@ -363,8 +371,8 @@ export async function startLocalLlmProxy(
         targetHost: target.host,
         targetPort: target.port,
         headers: normalizeIncomingHeaders(req.headers),
-        captureStatus: 'full',
-        captureReason: null,
+        captureStatus,
+        captureReason,
         requestMetadata: {
           method: req.method ?? 'POST',
           targetUrl: target.fullUrl,
@@ -373,10 +381,10 @@ export async function startLocalLlmProxy(
           path: target.path,
           headers: normalizeIncomingHeaders(req.headers),
           userAgent: firstHeaderValue(req.headers['user-agent']) ?? null,
-          captureStatus: 'full',
-          captureReason: null
+          captureStatus,
+          captureReason
         },
-        requestBody: {
+        requestBody: oversized ? null : {
           rawBodyUtf8: rawBody.toString('utf8'),
           rawBodyBase64: rawBody.toString('base64'),
           payload: parsedPayload,
@@ -387,20 +395,20 @@ export async function startLocalLlmProxy(
           parameters: payloadRecord
         },
         tunnelMetadata: null,
-        rawBodyUtf8: rawBody.toString('utf8'),
-        rawBodyBase64: rawBody.toString('base64'),
+        rawBodyUtf8: oversized ? '' : rawBody.toString('utf8'),
+        rawBodyBase64: oversized ? '' : rawBody.toString('base64'),
         payload: parsedPayload,
         messages: payloadRecord?.messages,
         model: payloadRecord?.model,
         temperature: payloadRecord?.temperature,
-        systemPrompt: extractSystemPrompt(payloadRecord),
+        systemPrompt: oversized ? undefined : extractSystemPrompt(payloadRecord),
         parameters: payloadRecord
       }
     };
 
     recentPairs.set(requestId, pair);
     pendingByRequest.set(req, requestId);
-    recordCapabilityObservation(capabilityTelemetry, target.host, 'full');
+    recordCapabilityObservation(capabilityTelemetry, target.host, captureStatus);
     pruneExpiredPairs(recentPairs, retentionMs);
 
     req.headers['content-length'] = String(rawBody.length);
@@ -785,26 +793,13 @@ function pruneExpiredPairs(pairs: Map<string, StoredPair>, retentionMs: number):
 function readRawBody(req: http.IncomingMessage): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
-    let totalBytes = 0;
-    let rejected = false;
 
     req.on('data', (chunk: Buffer | string) => {
-      if (rejected) return;
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      totalBytes += buffer.byteLength;
-      if (totalBytes > MAX_REQUEST_BODY_BYTES) {
-        rejected = true;
-        req.destroy();
-        reject(new Error('Request body exceeds the ' + String(MAX_REQUEST_BODY_BYTES) + '-byte limit.'));
-        return;
-      }
-      chunks.push(buffer);
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     });
 
     req.on('end', () => {
-      if (!rejected) {
-        resolve(Buffer.concat(chunks));
-      }
+      resolve(Buffer.concat(chunks));
     });
 
     req.on('error', (error: Error) => {

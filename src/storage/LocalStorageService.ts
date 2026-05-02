@@ -126,59 +126,65 @@ export class LocalStorageService implements ProvenanceStorageService {
   }
 
   public async ingest(record: ProvenanceRecord, resource?: vscode.Uri): Promise<ProvenanceIngestResult> {
-    const store = await this.readStore(resource);
-    const nowIso = new Date().toISOString();
     const uuid = record.uuid.trim().toLowerCase();
-
     if (!uuid) {
       throw new Error('Cannot store provenance record without a UUID.');
     }
 
-    const normalizedRecord = cloneRecord(record);
-    const existingIndex = store.records.findIndex((entry) => entry.uuid === uuid);
+    // Serialize the full read-modify-write inside the lock to prevent lost updates
+    const myWork = async (): Promise<ProvenanceIngestResult> => {
+      const store = await this.readStore(resource);
+      const nowIso = new Date().toISOString();
+      const normalizedRecord = cloneRecord(record);
+      const existingIndex = store.records.findIndex((entry) => entry.uuid === uuid);
 
-    if (existingIndex >= 0) {
-      const existing = store.records[existingIndex];
-      store.records[existingIndex] = {
-        ...existing,
-        record: normalizedRecord,
-        searchText: buildLocalStoreSearchText(normalizedRecord),
-        updatedAtIso: nowIso
-      };
-    } else {
-      const inferredLineage = inferLineageFromPrevious(store.records, normalizedRecord);
-
-      store.records.push({
-        uuid,
-        record: normalizedRecord,
-        searchText: buildLocalStoreSearchText(normalizedRecord),
-        storedAtIso: nowIso,
-        updatedAtIso: nowIso,
-        lineage: {
-          parentUuid: inferredLineage.parentUuid,
-          relationshipType: inferredLineage.relationshipType,
-          similarity: inferredLineage.similarity,
-          commitHash: null,
+      if (existingIndex >= 0) {
+        const existing = store.records[existingIndex];
+        store.records[existingIndex] = {
+          ...existing,
+          record: normalizedRecord,
+          searchText: buildLocalStoreSearchText(normalizedRecord),
           updatedAtIso: nowIso
-        }
-      });
-    }
+        };
+      } else {
+        const inferredLineage = inferLineageFromPrevious(store.records, normalizedRecord);
 
-    if (store.records.length > MAX_LOCAL_RECORDS) {
-      store.records.sort((a, b) => a.record.timestampIso.localeCompare(b.record.timestampIso));
-      store.records = store.records.slice(-MAX_LOCAL_RECORDS);
-    }
+        store.records.push({
+          uuid,
+          record: normalizedRecord,
+          searchText: buildLocalStoreSearchText(normalizedRecord),
+          storedAtIso: nowIso,
+          updatedAtIso: nowIso,
+          lineage: {
+            parentUuid: inferredLineage.parentUuid,
+            relationshipType: inferredLineage.relationshipType,
+            similarity: inferredLineage.similarity,
+            commitHash: null,
+            updatedAtIso: nowIso
+          }
+        });
+      }
 
-    store.updatedAtIso = nowIso;
-    await this.writeStore(resource, store);
+      if (store.records.length > MAX_LOCAL_RECORDS) {
+        store.records.sort((a, b) => a.record.timestampIso.localeCompare(b.record.timestampIso));
+        store.records = store.records.slice(-MAX_LOCAL_RECORDS);
+      }
 
-    return {
-      uuid,
-      transport: 'local-json',
-      mode: this.mode,
-      message: 'Stored provenance locally for offline use.',
-      warnings: this.getModeWarnings()
+      store.updatedAtIso = nowIso;
+      await this.doWriteStore(resource, store);
+
+      return {
+        uuid,
+        transport: 'local-json',
+        mode: this.mode,
+        message: 'Stored provenance locally for offline use.',
+        warnings: this.getModeWarnings()
+      };
     };
+
+    const myPromise = this.writeLock.then(myWork);
+    this.writeLock = myPromise.then(() => undefined, () => undefined);
+    return myPromise;
   }
 
   public async getProvenanceByUuid(
@@ -381,7 +387,7 @@ export class LocalStorageService implements ProvenanceStorageService {
     const changedFiles = parseChangedFileList(diffOutput)
       .filter((value) => value.length > 0);
 
-    const uniqueChangedFiles = [...new Set(changedFiles.map((value) => value.replace(/\\/g, '/')))];
+    const uniqueChangedFiles = [...new Set(changedFiles.map((value) => value.replaceAll('\\', '/')))];
     if (uniqueChangedFiles.length === 0) {
       return {
         mode: this.mode,
@@ -480,7 +486,7 @@ export class LocalStorageService implements ProvenanceStorageService {
     if (rows.length === 0) return null;
 
     const escCsv = (v: unknown): string => {
-      const s = String(v ?? '').replace(/"/g, '""');
+      const s = String(v ?? '').replaceAll('"', '""');
       return '"' + s + '"';
     };
 
@@ -1378,7 +1384,7 @@ function toErrorMessage(error: unknown): string {
 function fnv1aHex(value: string): string {
   let hash = 0x811c9dc5;
   for (let i = 0; i < value.length; i++) {
-    hash ^= value.charCodeAt(i);
+    hash ^= value.codePointAt(i) ?? 0;
     hash = Math.imul(hash, 0x01000193);
   }
   return (hash >>> 0).toString(16).padStart(8, '0');

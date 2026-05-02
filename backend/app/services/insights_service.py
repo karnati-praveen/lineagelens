@@ -203,6 +203,14 @@ def build_insights_dashboard(
     }
 
 
+def _rate_status(value: float, pass_threshold: float, warn_threshold: float) -> str:
+    return "pass" if value >= pass_threshold else "warning" if value >= warn_threshold else "fail"
+
+
+def _rate_status_lower(value: float, pass_threshold: float, warn_threshold: float) -> str:
+    return "pass" if value <= pass_threshold else "warning" if value <= warn_threshold else "fail"
+
+
 def build_compliance_controls(
     *,
     total_records: int,
@@ -220,32 +228,28 @@ def build_compliance_controls(
         control(
             "prompt-capture",
             "Prompt Capture Coverage",
-            "pass" if prompt_capture_rate >= 0.8 else "warning" if prompt_capture_rate >= 0.5 else "fail",
+            _rate_status(prompt_capture_rate, 0.8, 0.5),
             format_percent(prompt_capture_rate),
             "How consistently the system retained auditable prompt evidence.",
         ),
         control(
             "risk-density",
             "High-Risk Density",
-            "pass" if high_risk_ratio <= 0.1 else "warning" if high_risk_ratio <= 0.25 else "fail",
+            _rate_status_lower(high_risk_ratio, 0.1, 0.25),
             format_percent(high_risk_ratio),
             "Share of AI-generated records currently assessed as high risk.",
         ),
         control(
             "critical-records",
             "Critical Findings",
-            "pass" if critical_records == 0 else "warning" if critical_records <= 3 else "fail",
+            _rate_status_lower(critical_records, 0, 3),
             str(critical_records),
             "Count of AI-generated records that should be escalated immediately.",
         ),
         control(
             "correlation-quality",
             "Correlation Confidence",
-            "pass"
-            if average_correlation_confidence >= 0.7
-            else "warning"
-            if average_correlation_confidence >= 0.5
-            else "fail",
+            _rate_status(average_correlation_confidence, 0.7, 0.5),
             format_percent(average_correlation_confidence),
             "Average confidence that prompt/response evidence matches generated code.",
         ),
@@ -384,6 +388,33 @@ def build_risk_trends(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
+def _upsert_agent_session(
+    item: dict[str, Any],
+    agent_context: dict[str, Any],
+    sessions: list[dict[str, Any]],
+    latest_by_signature: dict[str, dict[str, Any]],
+    latest_by_native_id: dict[str, dict[str, Any]],
+) -> None:
+    native_key = get_native_session_key(agent_context)
+    signature = native_key or str(agent_context.get("sessionSignature") or "unknown")
+    timestamp = parse_timestamp(item["record"].get("timestampIso"))
+    current = latest_by_native_id.get(native_key) if native_key else None
+    if current is None:
+        current = latest_by_signature.get(signature)
+
+    if not current or (timestamp - current["endedAt"]).total_seconds() > AGENT_SESSION_GAP_SECONDS:
+        current = _start_agent_session(native_key, agent_context, item, timestamp)
+        sessions.append(current)
+        if native_key:
+            latest_by_native_id[native_key] = current
+        latest_by_signature[signature] = current
+    else:
+        current["records"].append((item["record"], item["risk"]["score"]))
+        current["endedAt"] = timestamp
+        if native_key:
+            latest_by_native_id[native_key] = current
+
+
 def build_agent_sessions(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ordered = sorted(
         [item for item in summaries if item["agentContext"]],
@@ -396,27 +427,8 @@ def build_agent_sessions(summaries: list[dict[str, Any]]) -> list[dict[str, Any]
 
     for item in ordered:
         agent_context = item["agentContext"]
-        if not isinstance(agent_context, dict):
-            continue
-
-        native_key = get_native_session_key(agent_context)
-        signature = native_key or str(agent_context.get("sessionSignature") or "unknown")
-        timestamp = parse_timestamp(item["record"].get("timestampIso"))
-        current = latest_by_native_id.get(native_key) if native_key else None
-        if current is None:
-            current = latest_by_signature.get(signature)
-
-        if not current or (timestamp - current["endedAt"]).total_seconds() > AGENT_SESSION_GAP_SECONDS:
-            current = _start_agent_session(native_key, agent_context, item, timestamp)
-            sessions.append(current)
-            if native_key:
-                latest_by_native_id[native_key] = current
-            latest_by_signature[signature] = current
-        else:
-            current["records"].append((item["record"], item["risk"]["score"]))
-            current["endedAt"] = timestamp
-            if native_key:
-                latest_by_native_id[native_key] = current
+        if isinstance(agent_context, dict):
+            _upsert_agent_session(item, agent_context, sessions, latest_by_signature, latest_by_native_id)
 
     rows = [_serialize_agent_session_row(session) for session in sessions]
     return sorted(rows, key=lambda row: row["endedAtIso"], reverse=True)[:12]
@@ -677,41 +689,38 @@ def _detect_tool_from_blob(raw_blob: str) -> tuple[str | None, str]:
     return None, "unknown"
 
 
-def get_agent_context(record: dict[str, Any]) -> dict[str, Any] | None:
-    stored = pick_first(record, [["metadata", "agentContext"]])
-    if isinstance(stored, dict):
-        return normalize_agent_context(stored, record)
+def _partial_context_stub(
+    correlation: dict[str, Any], record: dict[str, Any]
+) -> dict[str, Any] | None:
+    return normalize_agent_context(
+        {
+            "toolName": None,
+            "provider": None,
+            "sessionId": None,
+            "conversationId": None,
+            "runId": None,
+            "modelName": pick_first(record, [["prompt", "modelName"], ["model"], ["modelName"]]),
+            "userAgent": find_header_value(correlation.get("requestHeaders"), "user-agent"),
+            "workspaceHint": None,
+            "operationType": "unknown",
+            "confidence": 0.0,
+            "evidence": [],
+            "adapterName": "proxy-partial",
+            "matchSource": "heuristic",
+            "sessionKind": "unknown",
+            "host": str(correlation.get("targetHost") or "").strip().lower() or None,
+            "sessionSignature": str(
+                correlation.get("requestUuid") or correlation.get("proxyRequestTimestampIso") or "partial"
+            ),
+            "detectedAtIso": str(record.get("timestampIso") or ""),
+        },
+        record,
+    )
 
-    correlation = record.get("correlation")
-    if not isinstance(correlation, dict) or str(correlation.get("promptStatus") or "") != "captured":
-        return None
 
-    if str(correlation.get("captureStatus") or "full") != "full":
-        return normalize_agent_context(
-            {
-                "toolName": None,
-                "provider": None,
-                "sessionId": None,
-                "conversationId": None,
-                "runId": None,
-                "modelName": pick_first(record, [["prompt", "modelName"], ["model"], ["modelName"]]),
-                "userAgent": find_header_value(correlation.get("requestHeaders"), "user-agent"),
-                "workspaceHint": None,
-                "operationType": "unknown",
-                "confidence": 0.0,
-                "evidence": [],
-                "adapterName": "proxy-partial",
-                "matchSource": "heuristic",
-                "sessionKind": "unknown",
-                "host": str(correlation.get("targetHost") or "").strip().lower() or None,
-                "sessionSignature": str(
-                    correlation.get("requestUuid") or correlation.get("proxyRequestTimestampIso") or "partial"
-                ),
-                "detectedAtIso": str(record.get("timestampIso") or ""),
-            },
-            record,
-        )
-
+def _heuristic_context_from_correlation(
+    correlation: dict[str, Any], record: dict[str, Any]
+) -> dict[str, Any] | None:
     model_name = normalize_model_name(
         pick_first(record, [["prompt", "modelName"], ["model"], ["modelName"]])
     )
@@ -759,41 +768,56 @@ def get_agent_context(record: dict[str, Any]) -> dict[str, Any] | None:
 
     return normalize_agent_context(
         {
-        "toolName": tool_name,
-        "provider": provider,
-        "sessionId": find_header_value(headers, "x-request-id")
-        or str(correlation.get("requestUuid") or correlation.get("proxyRequestTimestampIso") or ""),
-        "conversationId": None,
-        "runId": None,
-        "workspaceHint": None,
-        "operationType": operation_type,
-        "confidence": 0.55 if tool_name else 0.42 if provider else 0.3,
-        "evidence": [
-            {
-                "source": "heuristic",
-                "field": "rawContextBlob",
-                "value": raw_blob[:240],
-                "weight": 0.2,
-            }
-        ],
-        "adapterName": "legacy-heuristic",
-        "matchSource": "heuristic",
-        "sessionKind": session_kind,
-        "host": target_host,
-        "userAgent": user_agent or None,
-        "modelName": model_name or None,
-        "sessionSignature": "|".join(
-            [
-                tool_name or "unknown-tool",
-                provider or "unknown-provider",
-                model_name or "unknown-model",
-                session_kind,
-            ]
-        ),
-        "detectedAtIso": str(record.get("timestampIso") or ""),
+            "toolName": tool_name,
+            "provider": provider,
+            "sessionId": find_header_value(headers, "x-request-id")
+                or str(correlation.get("requestUuid") or correlation.get("proxyRequestTimestampIso") or ""),
+            "conversationId": None,
+            "runId": None,
+            "workspaceHint": None,
+            "operationType": operation_type,
+            "confidence": 0.55 if tool_name else 0.42 if provider else 0.3,
+            "evidence": [
+                {
+                    "source": "heuristic",
+                    "field": "rawContextBlob",
+                    "value": raw_blob[:240],
+                    "weight": 0.2,
+                }
+            ],
+            "adapterName": "legacy-heuristic",
+            "matchSource": "heuristic",
+            "sessionKind": session_kind,
+            "host": target_host,
+            "userAgent": user_agent or None,
+            "modelName": model_name or None,
+            "sessionSignature": "|".join(
+                [
+                    tool_name or "unknown-tool",
+                    provider or "unknown-provider",
+                    model_name or "unknown-model",
+                    session_kind,
+                ]
+            ),
+            "detectedAtIso": str(record.get("timestampIso") or ""),
         },
         record,
     )
+
+
+def get_agent_context(record: dict[str, Any]) -> dict[str, Any] | None:
+    stored = pick_first(record, [["metadata", "agentContext"]])
+    if isinstance(stored, dict):
+        return normalize_agent_context(stored, record)
+
+    correlation = record.get("correlation")
+    if not isinstance(correlation, dict) or str(correlation.get("promptStatus") or "") != "captured":
+        return None
+
+    if str(correlation.get("captureStatus") or "full") != "full":
+        return _partial_context_stub(correlation, record)
+
+    return _heuristic_context_from_correlation(correlation, record)
 
 
 def average_correlation_confidence(records: list[dict[str, Any]]) -> float:
@@ -879,16 +903,20 @@ def get_native_session_key(agent_context: dict[str, Any]) -> str | None:
     return None
 
 
+def _str_field(v: Any) -> str | None:
+    return v if isinstance(v, str) else None
+
+
 def normalize_agent_context(value: dict[str, Any], record: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
 
-    tool_name = value.get("toolName") if isinstance(value.get("toolName"), str) else None
-    provider = value.get("provider") if isinstance(value.get("provider"), str) else None
-    session_id = value.get("sessionId") if isinstance(value.get("sessionId"), str) else None
-    conversation_id = value.get("conversationId") if isinstance(value.get("conversationId"), str) else None
-    run_id = value.get("runId") if isinstance(value.get("runId"), str) else None
-    workspace_hint = value.get("workspaceHint") if isinstance(value.get("workspaceHint"), str) else None
+    tool_name = _str_field(value.get("toolName"))
+    provider = _str_field(value.get("provider"))
+    session_id = _str_field(value.get("sessionId"))
+    conversation_id = _str_field(value.get("conversationId"))
+    run_id = _str_field(value.get("runId"))
+    workspace_hint = _str_field(value.get("workspaceHint"))
     operation_type = (
         value.get("operationType")
         if value.get("operationType") in {"edit", "refactor", "test-fix", "explain", "multi-file-run", "chat", "unknown"}
@@ -896,11 +924,11 @@ def normalize_agent_context(value: dict[str, Any], record: dict[str, Any]) -> di
     )
     confidence = to_number(value.get("confidence")) or 0.0
     evidence = value.get("evidence") if isinstance(value.get("evidence"), list) else []
-    adapter_name = value.get("adapterName") if isinstance(value.get("adapterName"), str) else None
+    adapter_name = _str_field(value.get("adapterName"))
     match_source = "adapter" if value.get("matchSource") == "adapter" else "heuristic"
     session_kind = value.get("sessionKind") if value.get("sessionKind") in {"agentic", "assistant", "unknown"} else "unknown"
-    host = value.get("host") if isinstance(value.get("host"), str) else None
-    user_agent = value.get("userAgent") if isinstance(value.get("userAgent"), str) else None
+    host = _str_field(value.get("host"))
+    user_agent = _str_field(value.get("userAgent"))
     model_name = normalize_model_name(value.get("modelName"))
     session_signature = str(value.get("sessionSignature") or "").strip()
     if not session_signature:

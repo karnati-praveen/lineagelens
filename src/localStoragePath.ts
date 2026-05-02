@@ -47,8 +47,8 @@ function resolveCustomFilePath(value: string | undefined, workspaceRoot?: string
   }
 
   const withVariables = trimmed
-    .replace(/\$\{workspaceFolder\}/g, workspaceRoot ?? '')
-    .replace(/\$\{workspaceRoot\}/g, workspaceRoot ?? '');
+    .replaceAll('${workspaceFolder}', workspaceRoot ?? '')
+    .replaceAll('${workspaceRoot}', workspaceRoot ?? '');
 
   const expanded =
     withVariables === '~' || withVariables.startsWith('~' + path.sep) || withVariables.startsWith('~/')

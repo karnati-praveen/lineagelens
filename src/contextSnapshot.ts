@@ -469,7 +469,7 @@ function parseDependencyExpression(
     return undefined;
   }
 
-  const withoutExtras = normalizedExpression.replace(/\[[^\]]+\]/g, '');
+  const withoutExtras = normalizedExpression.replaceAll(/\[[^\]]+\]/g, '');
   const match = withoutExtras.match(/^([A-Za-z0-9_.-]+)\s*(.*)$/);
   if (!match) {
     return undefined;
@@ -485,7 +485,7 @@ function parseDependencyExpression(
 }
 
 function stripQuotes(value: string): string {
-  return value.replace(/^['\"]|['\"]$/g, '');
+  return value.replaceAll(/^['\"]|['\"]$/g, '');
 }
 
 function buildDependencyPreview(entries: Array<[string, string]>): Record<string, string> {
@@ -795,7 +795,7 @@ function isLocalImport(importPath: string): boolean {
 }
 
 function normalizePackageKey(name: string): string {
-  return name.toLowerCase().replace(/_/g, '-');
+  return name.toLowerCase().replaceAll('_', '-');
 }
 
 async function readFileIfExists(filePath: string): Promise<string | undefined> {

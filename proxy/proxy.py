@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import os
+import posixpath
 import re
 import uuid
 from datetime import UTC, datetime
@@ -32,6 +33,15 @@ BACKEND_URL       = os.environ.get("BACKEND_URL", "http://backend:8787").rstrip(
 INGEST_TOKEN      = os.environ.get("BACKEND_INGEST_TOKEN", "")
 WORKSPACE_ID      = os.environ.get("PROXY_WORKSPACE_ID", "proxy-capture")
 PROXY_PORT        = int(os.environ.get("PROXY_PORT", "8788"))
+PROXY_HOST        = os.environ.get("PROXY_HOST", "0.0.0.0")
+MAX_BODY_BYTES    = int(os.environ.get("PROXY_MAX_BODY_BYTES", "2000000"))
+
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _sanitize_path(path: str) -> str:
+    """Normalise a proxy path to prevent directory traversal."""
+    return posixpath.normpath("/" + path).lstrip("/")
 
 _DROP_REQ  = {"host", "content-length", "transfer-encoding", "connection"}
 _DROP_RESP = {"content-encoding", "transfer-encoding", "connection", "content-length"}
@@ -149,7 +159,7 @@ async def _ingest(text: str, upstream_path: str) -> None:
                 headers={"Authorization": f"Bearer {INGEST_TOKEN}"},
             )
         if r.status_code in (200, 201):
-            logger.info("captured %d chars → backend (%s)", len(code), upstream_path)
+            logger.info("captured %d chars → backend", len(code))
         else:
             logger.warning("ingest %s: %s", r.status_code, r.text[:200])
     except Exception as exc:
@@ -169,64 +179,58 @@ async def proxy_health() -> dict:
     }
 
 
-@app.api_route(
-    "/{path:path}",
-    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
-)
-async def proxy_request(request: Request, path: str) -> Response:
-    url = f"{UPSTREAM_URL}/{path}"
-    if request.url.query:
-        url = f"{url}?{request.url.query}"
-
-    body    = await request.body()
-    headers = _fwd_headers(request.headers)
-
-    # ── streaming ─────────────────────────────────────────────────────────────
-    if _is_streaming(body):
-        client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=300.0))
-        try:
-            upstream = await client.send(
-                client.build_request(request.method, url, headers=headers, content=body),
-                stream=True,
-            )
-        except Exception as exc:
-            await client.aclose()
-            logger.error("upstream error: %s", exc)
-            return Response(content=f"Upstream error: {exc}", status_code=502)
-
-        collected: list[bytes] = []
-
-        async def stream_gen():
-            try:
-                async for chunk in upstream.aiter_bytes():
-                    collected.append(chunk)
-                    yield chunk
-            finally:
-                await upstream.aclose()
-                await client.aclose()
-                text = _text_from_sse(collected)
-                asyncio.create_task(_ingest(text, f"/{path}"))
-
-        return StreamingResponse(
-            stream_gen(),
-            status_code=upstream.status_code,
-            headers=_resp_headers(upstream.headers),
-            media_type=upstream.headers.get("content-type", "text/event-stream"),
+async def _handle_streaming(
+    method: str, url: str, headers: dict, body: bytes, safe_path: str
+) -> Response:
+    client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=300.0))
+    try:
+        upstream = await client.send(
+            client.build_request(method, url, headers=headers, content=body),
+            stream=True,
         )
+    except Exception as exc:
+        await client.aclose()
+        logger.error("upstream error: %s", exc)
+        return Response(content=f"Upstream error: {exc}", status_code=502)
 
-    # ── non-streaming ─────────────────────────────────────────────────────────
+    collected: list[bytes] = []
+
+    async def stream_gen():
+        try:
+            async for chunk in upstream.aiter_bytes():
+                collected.append(chunk)
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+            text = _text_from_sse(collected)
+            _task = asyncio.create_task(_ingest(text, f"/{safe_path}"))
+            _background_tasks.add(_task)
+            _task.add_done_callback(_background_tasks.discard)
+
+    return StreamingResponse(
+        stream_gen(),
+        status_code=upstream.status_code,
+        headers=_resp_headers(upstream.headers),
+        media_type=upstream.headers.get("content-type", "text/event-stream"),
+    )
+
+
+async def _handle_non_streaming(
+    method: str, url: str, headers: dict, body: bytes, safe_path: str
+) -> Response:
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=120.0)) as client:
-            upstream = await client.request(
-                request.method, url, headers=headers, content=body
-            )
+            upstream = await client.request(method, url, headers=headers, content=body)
     except Exception as exc:
         logger.error("upstream error: %s", exc)
         return Response(content=f"Upstream error: {exc}", status_code=502)
 
     text = _text_from_body(upstream.content)
     if text:
-        asyncio.create_task(_ingest(text, f"/{path}"))
+        _task = asyncio.create_task(_ingest(text, f"/{safe_path}"))
+        _background_tasks.add(_task)
+        _task.add_done_callback(_background_tasks.discard)
 
     return Response(
         content=upstream.content,
@@ -234,6 +238,39 @@ async def proxy_request(request: Request, path: str) -> Response:
         headers=_resp_headers(upstream.headers),
         media_type=upstream.headers.get("content-type"),
     )
+
+
+@app.api_route(
+    "/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
+)
+async def proxy_request(request: Request, path: str) -> Response:
+    safe_path = _sanitize_path(path)
+    url = f"{UPSTREAM_URL}/{safe_path}"
+    if request.url.query:
+        url = f"{url}?{request.url.query}"
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_BODY_BYTES:
+                return Response(content="Request body too large", status_code=413)
+        except ValueError:
+            return Response(content="Invalid Content-Length header", status_code=400)
+
+    body_parts: list[bytes] = []
+    seen_bytes = 0
+    async for chunk in request.stream():
+        seen_bytes += len(chunk)
+        if seen_bytes > MAX_BODY_BYTES:
+            return Response(content="Request body too large", status_code=413)
+        body_parts.append(chunk)
+    body = b"".join(body_parts)
+
+    headers = _fwd_headers(request.headers)
+    if _is_streaming(body):
+        return await _handle_streaming(request.method, url, headers, body, safe_path)
+    return await _handle_non_streaming(request.method, url, headers, body, safe_path)
 
 
 # ── entry point ───────────────────────────────────────────────────────────────
@@ -245,4 +282,4 @@ if __name__ == "__main__":
     logger.info("Backend  : %s", BACKEND_URL)
     logger.info("Workspace: %s", WORKSPACE_ID)
     logger.info("Token    : %s", "configured" if INGEST_TOKEN else "NOT SET — captures will be skipped")
-    uvicorn.run(app, host="0.0.0.0", port=PROXY_PORT, log_level="info")
+    uvicorn.run(app, host=PROXY_HOST, port=PROXY_PORT, log_level="info")

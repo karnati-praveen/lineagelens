@@ -283,7 +283,7 @@ async def ws_capture(
             pass
     finally:
         if auth is not None:
-            manager.disconnect(auth.workspace_id, websocket)
+            await manager.disconnect(auth.workspace_id, websocket)
 
 
 async def send_error(

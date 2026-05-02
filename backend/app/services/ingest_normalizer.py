@@ -102,6 +102,28 @@ def _patch_normalized_event_defaults(
         normalized_event["confidence"].setdefault("correlation", 0.0)
 
 
+def _resolve_capture_status(
+    capture: dict[str, Any],
+    payload: dict[str, Any],
+    metadata: dict[str, Any],
+    inserted_text: str,
+    prompt_messages: object | None,
+    raw_model_response: str | None,
+) -> str:
+    status = _normalize_capture_status(
+        _first_string(capture, ["level"])
+        or _first_string(payload, ["captureStatus"])
+        or _first_string(metadata, ["captureStatus"])
+        or _first_string(_extract_mapping(payload, ["normalizedEvent", "capture"]) or {}, ["level"])
+        or _first_string(_extract_mapping(payload, ["correlation"]) or {}, ["captureStatus"])
+    )
+    if status == "unavailable" and inserted_text.strip() and not _prompt_was_captured(
+        prompt_messages, raw_model_response
+    ):
+        return "file_diff"
+    return status
+
+
 def normalize_ingest_payload(
     payload: object,
     *,
@@ -150,19 +172,9 @@ def normalize_ingest_payload(
     if prompt_status is None:
         prompt_status = "captured" if _prompt_was_captured(prompt_messages, raw_model_response) else "not-captured"
 
-    capture_status = _normalize_capture_status(
-        _first_string(capture, ["level"])
-        or _first_string(payload, ["captureStatus"])
-        or _first_string(metadata, ["captureStatus"])
-        or _first_string(_extract_mapping(payload, ["normalizedEvent", "capture"]) or {}, ["level"])
-        or _first_string(_extract_mapping(payload, ["correlation"]) or {}, ["captureStatus"])
+    capture_status = _resolve_capture_status(
+        capture, payload, metadata, inserted_text, prompt_messages, raw_model_response
     )
-
-    if capture_status == "unavailable" and inserted_text.strip() and not _prompt_was_captured(
-        prompt_messages,
-        raw_model_response,
-    ):
-        capture_status = "file_diff"
 
     existing_normalized_event = _extract_mapping(payload, ["normalizedEvent"])
 
@@ -750,6 +762,18 @@ def _extract_inserted_text(payload: dict[str, Any]) -> str:
     return ""
 
 
+def _count_from_inserted_chunks(payload: dict[str, Any]) -> int | None:
+    inserted_chunks = _get_path(payload, ["insertion", "insertedChunks"])
+    if not isinstance(inserted_chunks, list):
+        return None
+    total = sum(
+        _to_int(c.get("addedLines")) or 0
+        for c in inserted_chunks
+        if isinstance(c, dict)
+    )
+    return total if total > 0 else None
+
+
 def _extract_net_added_lines(payload: dict[str, Any], inserted_text: str) -> int:
     for path in (
         ["netAddedLines"],
@@ -760,21 +784,48 @@ def _extract_net_added_lines(payload: dict[str, Any], inserted_text: str) -> int
         if value is not None:
             return value
 
-    inserted_chunks = _get_path(payload, ["insertion", "insertedChunks"])
-    if isinstance(inserted_chunks, list):
-        total = sum(
-            _to_int(c.get("addedLines")) or 0
-            for c in inserted_chunks
-            if isinstance(c, dict)
-        )
-        if total > 0:
-            return total
+    chunk_count = _count_from_inserted_chunks(payload)
+    if chunk_count is not None:
+        return chunk_count
 
     if inserted_text.strip():
-        newline_count = inserted_text.count("\n")
-        return max(1, newline_count + 1)
+        return max(1, inserted_text.count("\n") + 1)
 
     return 0
+
+
+def _resolve_prompt_messages(payload: dict[str, Any]) -> object | None:
+    return (
+        _get_path(payload, ["prompt", "fullMessages"])
+        or _get_path(payload, ["prompt", "body"])
+        or _get_path(payload, ["provenance", "fullPromptMessages"])
+        or _get_path(payload, ["normalizedEvent", "prompt", "body"])
+        or _get_path(payload, ["correlation", "fullPromptMessages"])
+        or _get_path(payload, ["messages"])
+        or _get_path(payload, ["promptMessages"])
+        or _get_path(payload, ["prompt_messages"])
+    )
+
+
+def _resolve_model_name(
+    payload: dict[str, Any],
+    prompt: dict[str, Any] | None,
+    provenance: dict[str, Any] | None,
+    model: dict[str, Any],
+    source: dict[str, Any],
+    correlation: dict[str, Any],
+) -> str | None:
+    _model_str = payload.get("model") if isinstance(payload.get("model"), str) else None
+    return (
+        _first_string(prompt or {}, ["modelName"])
+        or _first_string(provenance or {}, ["modelName"])
+        or _first_string(model, ["name"])
+        or _first_string(source, ["modelName"])
+        or _first_string(correlation, ["modelName"])
+        or _model_str
+        or _first_string(payload, ["modelName"])
+        or _first_string(payload, ["model_name"])
+    )
 
 
 def _extract_prompt_payload(
@@ -787,32 +838,8 @@ def _extract_prompt_payload(
     model = _extract_mapping(payload, ["model"]) or {}
     response = _extract_mapping(payload, ["response"]) or {}
 
-    prompt_messages = (
-        # Structured nested paths (most specific first)
-        _get_path(payload, ["prompt", "fullMessages"])
-        or _get_path(payload, ["prompt", "body"])
-        or _get_path(payload, ["provenance", "fullPromptMessages"])
-        or _get_path(payload, ["normalizedEvent", "prompt", "body"])
-        # Correlation object (re-ingestion / proxy path)
-        or _get_path(payload, ["correlation", "fullPromptMessages"])
-        # Top-level alternatives sent by extensions
-        or _get_path(payload, ["messages"])
-        or _get_path(payload, ["promptMessages"])
-        or _get_path(payload, ["prompt_messages"])
-    )
-
-    # model.name when model is a dict; fall back to plain string payload.model / payload.modelName
-    _model_str = payload.get("model") if isinstance(payload.get("model"), str) else None
-    model_name = (
-        _first_string(prompt or {}, ["modelName"])
-        or _first_string(provenance or {}, ["modelName"])
-        or _first_string(model, ["name"])
-        or _first_string(source, ["modelName"])
-        or _first_string(correlation, ["modelName"])
-        or _model_str
-        or _first_string(payload, ["modelName"])
-        or _first_string(payload, ["model_name"])
-    )
+    prompt_messages = _resolve_prompt_messages(payload)
+    model_name = _resolve_model_name(payload, prompt, provenance, model, source, correlation)
 
     model_parameters = (
         _extract_mapping(prompt or {}, ["parameters"])

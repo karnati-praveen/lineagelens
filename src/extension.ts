@@ -226,6 +226,11 @@ export function activate(context: vscode.ExtensionContext): void {
     )
   );
 
+  // Seed snapshots for documents already open when the extension activates
+  for (const document of vscode.workspace.textDocuments) {
+    trackDocumentSnapshot(document);
+  }
+
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument((document) => {
       trackDocumentSnapshot(document);
@@ -895,7 +900,7 @@ function deterministicUnitVector(text: string, dimensions: number): number[] {
 function fnv1aHash(value: string): number {
   let hash = 0x811c9dc5;
   for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
+    hash ^= value.codePointAt(index) ?? 0;
     hash = Math.imul(hash, 0x01000193);
   }
 

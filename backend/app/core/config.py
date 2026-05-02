@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     rate_limit_ws_max_messages: int = Field(default=120, alias="RATE_LIMIT_WS_MAX_MESSAGES")
     rate_limit_ws_max_connections: int = Field(default=30, alias="RATE_LIMIT_WS_MAX_CONNECTIONS")
     rate_limit_max_tracked_keys: int = Field(default=50000, alias="RATE_LIMIT_MAX_TRACKED_KEYS")
+    ws_allow_subprotocol_token: bool = Field(default=False, alias="WS_ALLOW_SUBPROTOCOL_TOKEN")
 
     embedding_provider: str = Field(default="hash", alias="EMBEDDING_PROVIDER")
     embedding_api_url: str = Field(
@@ -178,6 +179,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_cors_for_environment(self) -> "Settings":
+        if "*" in self.cors_origins and len(self.cors_origins) > 1:
+            raise ValueError("BACKEND_CORS_ORIGINS wildcard '*' must not be combined with explicit origins.")
         if self.app_env.strip().lower() == "production" and not self.cors_origins:
             raise ValueError("BACKEND_CORS_ORIGINS must not be empty in production.")
         if self.app_env.strip().lower() == "production" and any(

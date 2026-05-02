@@ -1,7 +1,10 @@
 import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import cast
 import uuid as uuid_pkg
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.schemas.provenance import SearchRequest
@@ -47,6 +50,7 @@ class FakeSession:
 
     async def execute(self, statement: object) -> FakeExecuteResult:
         self.statements.append(statement)
+        await asyncio.sleep(0)
         return FakeExecuteResult(self.records)
 
     def add(self, record: object) -> None:
@@ -54,12 +58,15 @@ class FakeSession:
 
     async def flush(self) -> None:
         self.flush_calls += 1
+        await asyncio.sleep(0)
 
     async def commit(self) -> None:
         self.commit_calls += 1
+        await asyncio.sleep(0)
 
     async def refresh(self, record: object) -> None:
         self.refresh_calls += 1
+        await asyncio.sleep(0)
 
 
 def build_settings(**overrides: object) -> Settings:
@@ -111,7 +118,7 @@ def test_search_provenance_records_keyword_fallback_returns_warnings() -> None:
 
     rows, warnings = asyncio.run(
         search_provenance_records(
-            session=session,  # type: ignore[arg-type]
+            session=cast(AsyncSession, session),
             search=search,
             workspace_id='workspace-alpha',
             settings=settings,
@@ -161,7 +168,7 @@ def test_ingest_provenance_event_is_idempotent_for_duplicate_request_uuid(monkey
 
     outcome = asyncio.run(
         ingest_provenance_event(
-            session=session,  # type: ignore[arg-type]
+            session=cast(AsyncSession, session),
             payload=payload,
             auth=SimpleNamespace(workspace_id=workspace_id),  # type: ignore[arg-type]
             settings=build_settings(VECTOR_SEARCH_ENABLED=False, BACKEND_MODE='basic'),
