@@ -1,8 +1,11 @@
+from typing import cast
+
 import pytest
 from fastapi import HTTPException
 
 from app.core.config import Settings
 from app.core.security import (
+    AuthContext,
     AuthError,
     create_access_token,
     decode_token,
@@ -69,4 +72,4 @@ def test_ensure_workspace_scope_rejects_mismatch() -> None:
         workspace_id = "ws-a"
 
     with pytest.raises(HTTPException):
-        ensure_workspace_scope(DummyAuth(), "ws-b")  # type: ignore[arg-type]
+        ensure_workspace_scope(cast(AuthContext, DummyAuth()), "ws-b")

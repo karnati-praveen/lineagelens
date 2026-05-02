@@ -2,14 +2,15 @@ import csv
 import io
 from datetime import datetime
 from typing import Annotated
+from uuid import UUID as PyUUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import AuthContext, get_current_auth_context
-from app.db.models import ProvenanceRecord
+from app.db.models import ProvenanceRecord, UserAccount
 from app.db.session import get_db_session
 from app.services.provenance_service import build_workspace_record_filters, serialize_provenance_record
 from app.schemas.provenance import SearchRequest
@@ -53,16 +54,63 @@ def _parse_dt(value: str | None) -> datetime | None:
         return None
 
 
+def _filter_records_by_developer(records: list[dict], developer: str) -> list[dict]:
+    dev_lower = developer.lower()
+    filtered = []
+    for r in records:
+        snap = r.get("contextSnapshot") or {}
+        dev_fields = [str(snap.get("gitUser", "") or ""), str(snap.get("username", "") or "")]
+        if any(dev_lower in f.lower() for f in dev_fields):
+            filtered.append(r)
+    return filtered
+
+
+def _build_audit_csv_row(r: dict) -> list:
+    snap = r.get("contextSnapshot") or {}
+    event = r.get("normalizedEvent") or {}
+    source = event.get("source") or {}
+    diff_block = event.get("diff") or {}
+    model_block = event.get("model") or {}
+    capture_block = event.get("capture") or {}
+    model_val = _pick(r, "modelName") or _pick(model_block, "name") or ""
+    risk_block = r.get("riskAssessment") or {}
+    risk_level = str(risk_block.get("level", "")) if isinstance(risk_block, dict) else ""
+    return [
+        _pick(r, "uuid"),
+        _pick(r, "timestampIso"),
+        _pick(r, "filePath"),
+        model_val,
+        snap.get("gitUser") or snap.get("username") or "",
+        snap.get("gitBranch", ""),
+        _pick(source, "toolName"),
+        _pick(source, "adapterName"),
+        str(diff_block.get("netAddedLines") or r.get("netAddedLines") or ""),
+        _prompt_summary(r.get("promptMessages")),
+        str(r.get("insertedCode") or "")[:300],
+        risk_level,
+        _pick(capture_block, "promptStatus"),
+    ]
+
+
 @router.get("/export/audit")
 async def export_audit_report(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
-    date_from: str | None = Query(default=None, alias="dateFrom"),
-    date_to: str | None = Query(default=None, alias="dateTo"),
-    developer: str | None = Query(default=None),
-    file_path: str | None = Query(default=None, alias="filePath"),
+    date_from: Annotated[str | None, Query(alias="dateFrom")] = None,
+    date_to: Annotated[str | None, Query(alias="dateTo")] = None,
+    developer: Annotated[str | None, Query()] = None,
+    file_path: Annotated[str | None, Query(alias="filePath")] = None,
 ) -> StreamingResponse:
-    # Build a SearchRequest for workspace/date/file filters only (bypass limit validator)
+    role_result = await session.execute(
+        select(UserAccount.role).where(UserAccount.id == PyUUID(auth.subject))
+    )
+    current_role = role_result.scalar_one_or_none()
+    if current_role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Export requires admin role.",
+        )
+
     search = SearchRequest(
         workspace_id=auth.workspace_id,
         date_from=_parse_dt(date_from),
@@ -79,78 +127,20 @@ async def export_audit_report(
 
     result = await session.execute(stmt)
     rows = result.scalars().all()
-
     records = [serialize_provenance_record(row) for row in rows]
 
-    # Apply developer filter (post-query, stored in context_snapshot)
     if developer:
-        dev_lower = developer.lower()
-        filtered = []
-        for r in records:
-            snap = r.get("contextSnapshot") or {}
-            dev_fields = [
-                str(snap.get("gitUser", "") or ""),
-                str(snap.get("username", "") or ""),
-            ]
-            if any(dev_lower in f.lower() for f in dev_fields):
-                filtered.append(r)
-        records = filtered
+        records = _filter_records_by_developer(records, developer)
 
     output = io.StringIO()
     writer = csv.writer(output, quoting=csv.QUOTE_ALL)
     writer.writerow([
-        "uuid",
-        "timestamp",
-        "file_path",
-        "model",
-        "developer",
-        "git_branch",
-        "tool",
-        "adapter",
-        "net_added_lines",
-        "prompt_summary",
-        "inserted_code_preview",
-        "risk_level",
-        "prompt_capture_status",
+        "uuid", "timestamp", "file_path", "model", "developer", "git_branch",
+        "tool", "adapter", "net_added_lines", "prompt_summary",
+        "inserted_code_preview", "risk_level", "prompt_capture_status",
     ])
-
     for r in records:
-        snap = r.get("contextSnapshot") or {}
-        developer_val = snap.get("gitUser") or snap.get("username") or ""
-
-        event = r.get("normalizedEvent") or {}
-        source = event.get("source") or {}
-        diff_block = event.get("diff") or {}
-        model_block = event.get("model") or {}
-        session_block = event.get("session") or {}
-        capture_block = event.get("capture") or {}
-
-        model_val = (
-            _pick(r, "modelName")
-            or _pick(model_block, "name")
-            or ""
-        )
-
-        risk_level = ""
-        risk_block = r.get("riskAssessment") or {}
-        if isinstance(risk_block, dict):
-            risk_level = str(risk_block.get("level", ""))
-
-        writer.writerow([
-            _pick(r, "uuid"),
-            _pick(r, "timestampIso"),
-            _pick(r, "filePath"),
-            model_val,
-            developer_val,
-            snap.get("gitBranch", ""),
-            _pick(source, "toolName"),
-            _pick(source, "adapterName"),
-            str(diff_block.get("netAddedLines") or r.get("netAddedLines") or ""),
-            _prompt_summary(r.get("promptMessages")),
-            str(r.get("insertedCode") or "")[:300],
-            risk_level,
-            _pick(capture_block, "promptStatus"),
-        ])
+        writer.writerow(_build_audit_csv_row(r))
 
     content = output.getvalue()
     filename = f"lineagelens-audit-{auth.workspace_id[:8]}.csv"

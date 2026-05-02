@@ -1,689 +1,622 @@
-# LineageLens Max â€” Command Reference
+# LineageLens Max — Command Reference
 
 Run all commands from the **root folder** (where `quickstart.sh` lives).
 
 ---
 
-## Quick Variables
+## Quick URLs
 
-Copy these into your shell once to shorten every command below:
-
-```bash
-PROJECT=lineagelens-max
-FILE=deploy/docker-compose.max.yml
-ENV=deploy/.env
-API=http://localhost:8787
-PROXY=http://localhost:8788
-NEO4J=http://localhost:7474
-```
+| Service          | URL                               |
+|------------------|-----------------------------------|
+| **Dashboard**    | http://localhost:8787/dashboard   |
+| Backend API      | http://localhost:8787             |
+| API Docs         | http://localhost:8787/docs        |
+| Proxy            | http://localhost:8788             |
+| Neo4j Browser    | http://localhost:7474             |
+| Neo4j Bolt       | bolt://localhost:7687             |
 
 ---
 
-## First-Time Setup
+## Option A — CLI (Recommended)
+
+Install the `lineagelens` npm package once and manage everything with simple commands.
 
 ```bash
-# Full automated setup â€” runs everything in order
+# Install globally (requires Node.js 18+)
+npm install -g lineagelens
+
+# Start Max backend (Docker must be running — Neo4j takes ~60s on first boot)
+lineagelens start --mode max
+
+# Check status of all containers
+lineagelens status
+
+# Tail all logs
+lineagelens logs --mode max
+
+# Tail a specific service
+lineagelens logs --mode max --service backend
+lineagelens logs --mode max --service proxy
+lineagelens logs --mode max --service postgres
+lineagelens logs --mode max --service neo4j
+
+# Stop (data is preserved)
+lineagelens stop --mode max
+
+# Stop and delete all data including Neo4j graph (irreversible)
+lineagelens stop --mode max --volumes
+```
+
+After `lineagelens start`, open **http://localhost:8787/dashboard** in your browser.
+
+---
+
+## Option B — Docker Compose from Bundle
+
+Use if you prefer direct control or have customized the compose file.
+
+### First-Time Setup
+
+```bash
+# One command — generates secrets, starts all services, waits for Neo4j
 bash quickstart.sh
 ```
 
-This single command will:
-1. Check prerequisites (Docker, openssl, curl, python3)
-2. Stop any leftover containers from a previous run
-3. Generate random secrets and write `deploy/.env`
-4. Start PostgreSQL and Neo4j
-5. Wait for PostgreSQL to accept connections
-6. Wait for Neo4j to become healthy (first boot takes ~60s)
-7. Build the backend and proxy Docker images from source
-8. Run all Alembic database migrations
-9. Start the backend and proxy
-10. Verify the backend health endpoint
+> Neo4j takes 60–90 seconds on first boot. quickstart.sh waits automatically.
 
----
-
-## Step-by-Step Setup (manual)
-
-Use this if `quickstart.sh` failed partway through and you need to resume.
-
-### 1 â€” Start PostgreSQL and Neo4j
+### Convenience variables
 
 ```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  up -d postgres neo4j
+COMPOSE_FILE=deploy/docker-compose.max.yml
+ENV_FILE=deploy/.env
+PROJECT=lineagelens-max
 ```
 
-### 2 â€” Wait until PostgreSQL is ready
+### Start / Stop / Restart
 
 ```bash
+# Start all services
 docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  exec postgres pg_isready -U postgres -d provenance
-```
+  -f deploy/docker-compose.max.yml --env-file deploy/.env \
+  up --detach
 
-Re-run until you see: `provenance:5432 - accepting connections`
-
-### 3 â€” Wait until Neo4j is healthy (first boot ~60s)
-
-```bash
+# Stop (keeps containers and data)
 docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  ps neo4j
-```
+  -f deploy/docker-compose.max.yml --env-file deploy/.env \
+  stop
 
-Wait until the `Health` column shows `healthy`. Neo4j initialises its store on first boot â€” this can take 60â€“90 seconds on slow machines.
-
-### 4 â€” Build backend and proxy images
-
-```bash
+# Remove containers (volumes survive)
 docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  build backend proxy
-```
-
-This must run before migrations. Skipping it may cause alembic to use a stale cached image and leave the database empty.
-
-### 5 â€” Run database migrations
-
-```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  run --rm --no-deps backend alembic upgrade head
-```
-
-Expected output ends with lines like:
-```
-Running upgrade  -> 202501150001, Initial database schema
-Running upgrade 202501150001 -> 202501160001, Add role to user_accounts ...
-Running upgrade 202501160001 -> 202501170001, Backfill role ...
-...
-```
-
-### 6 â€” Start all services
-
-```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  up -d
-```
-
-### 7 â€” Confirm tables exist
-
-```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  exec postgres psql -U postgres -d provenance -c "\dt"
-```
-
-You should see `alembic_version`, `provenance_records`, and `user_accounts`. If you see "Did not find any relations", migrations did not run â€” go back to Step 4.
-
----
-
-## Start / Stop / Restart
-
-### Start everything
-```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  up -d
-```
-
-### Stop everything (data is kept)
-```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
+  -f deploy/docker-compose.max.yml --env-file deploy/.env \
   down
-```
 
-### Restart a single service
-```bash
-# Backend only
+# Restart one service
 docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
+  -f deploy/docker-compose.max.yml --env-file deploy/.env \
   restart backend
 
-# Proxy only
+# Restart Neo4j only
 docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  restart proxy
-
-# Neo4j only
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
+  -f deploy/docker-compose.max.yml --env-file deploy/.env \
   restart neo4j
+
+# Pull latest images and recreate
+docker compose --project-name lineagelens-max \
+  -f deploy/docker-compose.max.yml --env-file deploy/.env \
+  up --detach --pull always
 ```
 
-### Check what is running
+### Logs
+
 ```bash
+# All services
 docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  ps
+  -f deploy/docker-compose.max.yml --env-file deploy/.env \
+  logs --follow
+
+# Backend, last 100 lines
+docker compose --project-name lineagelens-max \
+  -f deploy/docker-compose.max.yml --env-file deploy/.env \
+  logs --follow --tail 100 backend
+
+# Neo4j startup logs (watch for "Started.")
+docker compose --project-name lineagelens-max \
+  -f deploy/docker-compose.max.yml --env-file deploy/.env \
+  logs --follow neo4j
+
+# Proxy
+docker compose --project-name lineagelens-max \
+  -f deploy/docker-compose.max.yml --env-file deploy/.env \
+  logs --follow proxy
+
+# PostgreSQL
+docker compose --project-name lineagelens-max \
+  -f deploy/docker-compose.max.yml --env-file deploy/.env \
+  logs --follow postgres
 ```
 
 ---
 
-## Logs
+## Dashboard
 
-### Stream all service logs
-```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  logs -f
+The web dashboard is the primary UI — no VS Code required.
+
+```
+http://localhost:8787/dashboard
 ```
 
-### Backend logs (last 50 lines)
-```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  logs --tail 50 backend
-```
+**First login:**
+1. Open http://localhost:8787/dashboard in your browser
+2. Click **Register** — enter workspace ID, username, password
+3. You become the admin of your workspace automatically
 
-### Proxy logs (last 50 lines)
-```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  logs --tail 50 proxy
-```
-
-### PostgreSQL logs (last 50 lines)
-```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  logs --tail 50 postgres
-```
-
-### Neo4j logs (last 50 lines)
-```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  logs --tail 50 neo4j
-```
+**What the dashboard includes (Max):**
+- Governance overview — records, risk score, compliance controls, agent sessions
+- Provenance search — keyword, model, date, file path with semantic similarity
+- Record viewer — full prompt, inserted code, context snapshot, AI explanation, evolution chain
+- Graph lineage — powered by Neo4j (query via Neo4j Browser at http://localhost:7474)
+- Audit export (admin) — CSV with date / developer / file filters, up to 10,000 rows
+- Team management (admin) — invite members, view per-user AI activity
 
 ---
 
-## Authentication
+## Find Your Credentials
 
-### Register your first user (becomes workspace admin)
+Forgot your username, workspace, password, or Neo4j password? Run these from inside the unzipped folder.
+
 ```bash
+# ── Workspace ID and Username ──────────────────────────────────────────
+# Shows all registered users, their workspace, and role
+docker exec lineagelens-max-postgres \
+  psql -U postgres -d provenance \
+  -c "SELECT username, workspace_id, role, created_at FROM users ORDER BY created_at;"
+
+# ── Postgres password (generated by quickstart.sh) ────────────────────
+cat deploy/.env | grep POSTGRES_PASSWORD
+
+# ── Neo4j password ────────────────────────────────────────────────────
+cat deploy/.env | grep NEO4J
+
+# ── JWT secrets ───────────────────────────────────────────────────────
+cat deploy/.env | grep JWT
+
+# ── All .env values at once ───────────────────────────────────────────
+cat deploy/.env
+
+# ── Full .env path ────────────────────────────────────────────────────
+echo "Config file: $(pwd)/deploy/.env"
+```
+
+> **Forgot your password?** Passwords are hashed — you cannot recover them.
+> Reset by running `bash reset.sh`, then re-register via the dashboard.
+
+---
+
+## Authentication (API / curl)
+
+```bash
+# Register first user (becomes workspace admin)
 curl -s -X POST http://localhost:8787/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"YourPassword123!","workspace_id":"my-workspace"}' \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"yourpassword","workspaceId":"your-workspace"}' \
   | python3 -m json.tool
-```
 
-The first user registered to a workspace automatically gets `role: "admin"`. Every user registered after that gets `role: "member"`.
-
-### Log in
-```bash
-curl -s -X POST http://localhost:8787/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"YourPassword123!"}' \
-  | python3 -m json.tool
-```
-
-### Save your access token to a shell variable
-```bash
+# Login and save token
+# Note: response key is accessToken (camelCase)
 TOKEN=$(curl -s -X POST http://localhost:8787/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"YourPassword123!"}' \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['accessToken'])")
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"yourpassword"}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('accessToken') or d.get('access_token','LOGIN_FAILED'))")
 
-echo "Token saved: ${TOKEN:0:40}..."
-```
+echo "Token: ${TOKEN:0:20}..."
 
-Use `$TOKEN` in all authenticated requests below.
-
-### View your profile
-```bash
-curl -s http://localhost:8787/auth/me \
-  -H "Authorization: Bearer $TOKEN" \
+# If TOKEN prints LOGIN_FAILED — check username/password above, then re-login
+# See the full login response to debug:
+curl -s -X POST http://localhost:8787/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"yourpassword"}' \
   | python3 -m json.tool
-```
 
-### Refresh an expired access token
-```bash
-# First save the refresh token from login
-REFRESH=$(curl -s -X POST http://localhost:8787/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"YourPassword123!"}' \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['refreshToken'])")
+echo "Token saved: ${TOKEN:0:20}..."
 
-curl -s -X POST http://localhost:8787/auth/refresh \
-  -H "Content-Type: application/json" \
-  -d "{\"refreshToken\":\"$REFRESH\"}" \
-  | python3 -m json.tool
-```
+# View profile
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8787/auth/me | python3 -m json.tool
 
-### Log out
-```bash
-curl -s -X POST http://localhost:8787/auth/logout \
-  -H "Authorization: Bearer $TOKEN" \
-  | python3 -m json.tool
+# Logout
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8787/auth/logout
 ```
 
 ---
 
-## Team Management
-
-### Invite a new member (admin only)
-```bash
-curl -s -X POST http://localhost:8787/team/invite \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"alice","password":"AlicePass123!","role":"member"}' \
-  | python3 -m json.tool
-```
-
-Valid roles: `"admin"` or `"member"` (default is `"member"`).
-
-### Invite an additional admin
-```bash
-curl -s -X POST http://localhost:8787/team/invite \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"bob","password":"BobPass123!","role":"admin"}' \
-  | python3 -m json.tool
-```
-
-### List all workspace members
-```bash
-curl -s http://localhost:8787/team/members \
-  -H "Authorization: Bearer $TOKEN" \
-  | python3 -m json.tool
-```
-
----
-
-## Proxy â€” Universal LLM Capture
-
-The proxy intercepts AI API traffic from any tool (Claude Code, Cursor, Copilot, Aider, etc.) and saves every code response to LineageLens automatically.
-
-### Check proxy health
-```bash
-curl -s http://localhost:8788/proxy-health | python3 -m json.tool
-```
-
-### One-time proxy setup (after first login)
-
-1. Log in and save your token (see Authentication above)
-2. Add the token to `deploy/.env`:
-   ```
-   PROXY_INGEST_TOKEN=<paste your accessToken here>
-   ```
-3. Restart the proxy so it picks up the token:
-   ```bash
-   docker compose --project-name lineagelens-max \
-     -f deploy/docker-compose.max.yml \
-     --env-file deploy/.env \
-     restart proxy
-   ```
-4. Confirm proxy is capturing:
-   ```bash
-   curl -s http://localhost:8788/proxy-health | python3 -m json.tool
-   ```
-   Look for `"ingest": "configured"` in the response.
-
-### Point your AI tools at the proxy
-
-Set these environment variables **before** starting your AI tool. They redirect all LLM API calls through LineageLens:
+## Proxy — Capture AI Traffic
 
 ```bash
-# For Claude Code or any Anthropic SDK tool
+# Proxy health
+curl -s http://localhost:8788/health
+
+# ── Claude Code (uses its own config — export does NOT work) ──────────
+claude config set apiBaseUrl http://localhost:8788
+# Verify:
+claude config get apiBaseUrl
+# Restore when done capturing:
+# claude config set apiBaseUrl https://api.anthropic.com
+
+# ── Other AI tools (Aider, Continue, Cursor, etc.) ───────────────────
+export OPENAI_BASE_URL=http://localhost:8788
 export ANTHROPIC_BASE_URL=http://localhost:8788
 
-# For Cursor, Copilot, Aider, or any OpenAI SDK tool
-export OPENAI_BASE_URL=http://localhost:8788
+# Set ingest token so the proxy can write to the backend
+# 1. Login and get JWT (see Authentication above)
+# 2. Edit deploy/.env:
+#      PROXY_INGEST_TOKEN=<your JWT>
+# 3. Restart proxy:
+docker compose --project-name lineagelens-max \
+  -f deploy/docker-compose.max.yml --env-file deploy/.env \
+  restart proxy
+
+# Verify proxy is forwarding
+docker logs lineagelens-max-proxy --tail 20
 ```
 
-To make permanent (bash):
+---
+
+## Neo4j — Graph Lineage
+
+Neo4j stores the full lineage graph: which code was inserted, evolved from what, in which session.
+
 ```bash
-echo 'export ANTHROPIC_BASE_URL=http://localhost:8788' >> ~/.bashrc
-echo 'export OPENAI_BASE_URL=http://localhost:8788' >> ~/.bashrc
-source ~/.bashrc
+# Open Neo4j Browser (visual graph explorer)
+open http://localhost:7474          # macOS
+xdg-open http://localhost:7474      # Linux
+start http://localhost:7474         # Windows
+# Login: username=neo4j, password=<NEO4J_PASSWORD from deploy/.env>
+
+# Neo4j health check
+curl -s http://localhost:7474
+
+# Cypher shell — run graph queries
+docker exec -it lineagelens-max-neo4j \
+  cypher-shell -a bolt://localhost:7687 -u neo4j \
+  -p "$(grep NEO4J_PASSWORD deploy/.env | cut -d= -f2)"
+
+# Count all lineage nodes
+docker exec lineagelens-max-neo4j \
+  cypher-shell -a bolt://localhost:7687 -u neo4j \
+  -p "$(grep NEO4J_PASSWORD deploy/.env | cut -d= -f2)" \
+  "MATCH (n) RETURN labels(n) AS type, count(n) AS total ORDER BY total DESC"
+
+# Find all insertions for a file
+docker exec lineagelens-max-neo4j \
+  cypher-shell -a bolt://localhost:7687 -u neo4j \
+  -p "$(grep NEO4J_PASSWORD deploy/.env | cut -d= -f2)" \
+  "MATCH (n {filePath:'src/auth.py'}) RETURN n LIMIT 25"
+
+# View evolution chain of a record
+docker exec lineagelens-max-neo4j \
+  cypher-shell -a bolt://localhost:7687 -u neo4j \
+  -p "$(grep NEO4J_PASSWORD deploy/.env | cut -d= -f2)" \
+  "MATCH path=(n {uuid:'<uuid>'})-[:EVOLVED_FROM*]->(root) RETURN path"
+
+# Neo4j memory usage
+docker exec lineagelens-max-neo4j \
+  cypher-shell -a bolt://localhost:7687 -u neo4j \
+  -p "$(grep NEO4J_PASSWORD deploy/.env | cut -d= -f2)" \
+  "CALL dbms.listConfig() YIELD name, value WHERE name CONTAINS 'memory' RETURN name, value"
 ```
 
-To make permanent (zsh):
+---
+
+## Team Management (API)
+
 ```bash
-echo 'export ANTHROPIC_BASE_URL=http://localhost:8788' >> ~/.zshrc
-echo 'export OPENAI_BASE_URL=http://localhost:8788' >> ~/.zshrc
-source ~/.zshrc
+# List all team members
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8787/team/members | python3 -m json.tool
+
+# Invite a developer (member role)
+curl -s -X POST http://localhost:8787/team/invite \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"username":"dev1","password":"pass1234","role":"member","workspaceId":"your-workspace"}' \
+  | python3 -m json.tool
+
+# Invite an admin
+curl -s -X POST http://localhost:8787/team/invite \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"username":"lead","password":"pass1234","role":"admin","workspaceId":"your-workspace"}' \
+  | python3 -m json.tool
 ```
 
 ---
 
 ## Provenance API
 
-### Submit a provenance record (ingest)
 ```bash
-curl -s -X POST http://localhost:8787/ingest \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workspaceId": "my-workspace",
-    "filePath": "src/main.py",
-    "insertedCode": "def hello():\n    return \"world\"",
-    "timestampIso": "2025-01-20T10:00:00Z",
-    "modelName": "claude-sonnet-4-6"
-  }' \
-  | python3 -m json.tool
-```
-
-### Search provenance records (semantic + keyword)
-```bash
+# Search records (semantic + keyword)
 curl -s -X POST http://localhost:8787/search \
+  -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"query":"authentication function","limit":10}' \
+  -d '{"workspace_id":"your-workspace","keywords":"authentication"}' \
+  | python3 -m json.tool
+
+# Search by model and date
+curl -s -X POST http://localhost:8787/search \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"workspace_id":"your-workspace","model":"gpt-4o","date_from":"2024-01-01T00:00:00Z"}' \
+  | python3 -m json.tool
+
+# Get record by UUID
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8787/provenance/<uuid> | python3 -m json.tool
+
+# Governance dashboard (full analytics)
+curl -s -X POST http://localhost:8787/insights/dashboard \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"workspace_id":"your-workspace"}' | python3 -m json.tool
+
+# Export audit CSV (admin, up to 10,000 rows)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8787/export/audit?dateFrom=2024-01-01T00:00:00Z" \
+  -o lineagelens-audit.csv && echo "Saved: lineagelens-audit.csv"
+
+# Export filtered by developer
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8787/export/audit?developer=alice" \
+  -o lineagelens-audit-alice.csv
+
+# AI explain a record
+curl -s -X POST http://localhost:8787/explain \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"uuid":"<uuid>","workspace_id":"your-workspace"}' \
   | python3 -m json.tool
 ```
-
-### View insights dashboard
-```bash
-curl -s http://localhost:8787/insights \
-  -H "Authorization: Bearer $TOKEN" \
-  | python3 -m json.tool
-```
-
----
-
-## Neo4j â€” Graph Lineage
-
-### Open the Neo4j browser UI
-
-Navigate to **http://localhost:7474** in your browser.
-
-- Username: `neo4j`
-- Password: value of `NEO4J_PASSWORD` from `deploy/.env`
-
-### Open a Cypher shell
-```bash
-# Read NEO4J_PASSWORD from your .env file
-NEO4J_PASSWORD=$(grep '^NEO4J_PASSWORD=' deploy/.env | cut -d= -f2-)
-
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  exec neo4j cypher-shell -u neo4j -p "$NEO4J_PASSWORD"
-```
-
-Useful Cypher queries inside the shell:
-```cypher
-// Count all nodes
-MATCH (n) RETURN count(n);
-
-// List all node labels in the graph
-CALL db.labels();
-
-// Show up to 25 lineage nodes
-MATCH (n) RETURN n LIMIT 25;
-
-// Show relationships
-MATCH (a)-[r]->(b) RETURN a, r, b LIMIT 25;
-
-// Exit
-:exit
-```
-
-### Check Neo4j health
-```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  ps neo4j
-```
-
-`Health` column must show `healthy` before the backend will connect to it.
 
 ---
 
 ## Health & Diagnostics
 
-### Backend health check
 ```bash
+# Backend health (no auth)
 curl -s http://localhost:8787/health | python3 -m json.tool
-```
+# Expect: "productMode": "max", "neo4j": true
 
-Expected response:
-```json
-{
-  "status": "ok",
-  "app": "LineageLens Max Backend",
-  "version": "0.1.0",
-  "productMode": "max",
-  "environment": "development",
-  "backendMode": "enterprise",
-  "features": {
-    "neo4j": true,
-    "vectorSearch": true,
-    "lineageStrictMode": false
-  }
-}
-```
+# Proxy health
+curl -s http://localhost:8788/health
 
-### Run the full debug checker
-```bash
+# Neo4j health
+curl -s http://localhost:7474
+
+# Run automated debug script
 bash debug.sh
-```
 
-This prints PASS/FAIL for: bundle files, env variables, compose config, database connectivity, Neo4j health, migration state, and backend health.
-
-On Windows PowerShell:
-```powershell
-.\debug.ps1
-```
-
-### Check which migration version is applied
-```bash
+# Container status
 docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  run --rm --no-deps backend alembic current
-```
+  -f deploy/docker-compose.max.yml --env-file deploy/.env ps
 
-Expected output ends with `(head)`. If not, run `alembic upgrade head`.
+# Resource usage (Neo4j is memory-heavy — needs 1-2 GB free)
+docker stats --no-stream
 
-### Show full migration history
-```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  run --rm --no-deps backend alembic history --verbose
-```
+# Database migration status
+docker exec lineagelens-max-backend \
+  sh -c 'cd /app && alembic current'
 
-### Open a PostgreSQL shell
-```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  exec postgres psql -U postgres -d provenance
-```
+# Run pending migrations
+docker exec lineagelens-max-backend \
+  sh -c 'cd /app && alembic upgrade head'
 
-Useful SQL once inside:
-```sql
--- List all tables
-\dt
+# PostgreSQL shell
+docker exec -it lineagelens-max-postgres \
+  psql -U postgres -d provenance
 
--- Check columns on user_accounts (confirm role column exists)
-\d user_accounts
+# Count captured records
+docker exec lineagelens-max-postgres \
+  psql -U postgres -d provenance \
+  -c "SELECT COUNT(*) FROM provenance_records;"
 
--- List all registered users
-SELECT id, username, workspace_id, role, is_active, created_at FROM user_accounts;
-
--- Count provenance records
-SELECT COUNT(*) FROM provenance_records;
-
--- Check applied migrations
-SELECT * FROM alembic_version;
-
--- Exit
-\q
+# Count Neo4j lineage nodes
+docker exec lineagelens-max-neo4j \
+  cypher-shell -a bolt://localhost:7687 -u neo4j \
+  -p "$(grep NEO4J_PASSWORD deploy/.env | cut -d= -f2)" \
+  "MATCH (n) RETURN count(n)"
 ```
 
 ---
 
-## Reset (Wipe Everything)
+## Update to Latest Version
 
 ```bash
-# Full reset â€” removes all containers, volumes, and data (including Neo4j graph)
-bash reset.sh
+# Pull latest images
+docker compose --project-name lineagelens-max \
+  -f deploy/docker-compose.max.yml --env-file deploy/.env pull
 
-# Then run a fresh setup
-bash quickstart.sh
+# Recreate containers (data and graph preserved)
+docker compose --project-name lineagelens-max \
+  -f deploy/docker-compose.max.yml --env-file deploy/.env \
+  up --detach --force-recreate
 ```
 
-Manual equivalent:
+Or with the CLI:
+
 ```bash
+lineagelens stop --mode max
+lineagelens start --mode max   # pulls latest by default
+```
+
+---
+
+## Reset (Wipe All Data)
+
+```bash
+# Automated reset (stops containers, removes volumes and .env)
+bash reset.sh
+
+# Manual reset
 docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  down -v --remove-orphans
-
-docker volume ls --filter name=lineagelens-max -q | xargs -r docker volume rm
-
-rm deploy/.env
+  -f deploy/docker-compose.max.yml --env-file deploy/.env \
+  down --volumes --remove-orphans
+rm -f deploy/.env
+echo "Done. Run: bash quickstart.sh"
 ```
 
 ---
 
 ## Troubleshooting
 
-### "Did not find any relations" â€” no tables in the database
+### Dashboard blank or "Failed to load"
 
-Migrations did not run or failed silently. Fix:
 ```bash
-# Force a fresh image build then re-run migrations
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  build backend
+# Check backend is up
+curl -s http://localhost:8787/health
 
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  run --rm --no-deps backend alembic upgrade head
+# Container overview
+docker ps | grep lineagelens-max
+
+# Backend crash logs
+docker logs lineagelens-max-backend --tail 50
 ```
 
-If alembic still shows no output or errors, check backend logs:
+### Neo4j takes too long to start / backend won't connect to Neo4j
+
 ```bash
+# Neo4j needs 60–90s on first boot. Watch logs:
+docker logs -f lineagelens-max-neo4j | grep -E "Started|ERROR|WARN"
+# Wait until you see "Remote interface available at http://localhost:7474/"
+
+# Check Neo4j health manually
+curl -s http://localhost:7474
+
+# If Neo4j fails to authenticate (password mismatch after a reset):
+# 1. Remove the Neo4j volume
 docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  logs --tail 30 backend
+  -f deploy/docker-compose.max.yml --env-file deploy/.env \
+  down --volumes
+# 2. Re-run quickstart to regenerate secrets and volumes
+bash quickstart.sh
 ```
 
-### Register returns 500 Internal Server Error
+### Backend can't connect to Neo4j ("Neo4j is unavailable")
 
-Usually caused by a stale Docker image (from a previous version) still cached on your machine.
-
-Fix:
 ```bash
+# Check NEO4J_URI and NEO4J_PASSWORD in .env
+grep NEO4J deploy/.env
+
+# Verify Neo4j bolt port is accepting connections
+docker exec lineagelens-max-neo4j \
+  cypher-shell -a bolt://localhost:7687 -u neo4j \
+  -p "$(grep NEO4J_PASSWORD deploy/.env | cut -d= -f2)" "RETURN 1"
+
+# View backend Neo4j connection logs
+docker logs lineagelens-max-backend 2>&1 | grep -i neo4j
+```
+
+### Login returns 401 / wrong credentials
+
+```bash
+docker exec lineagelens-max-postgres \
+  psql -U postgres -d provenance -c "SELECT username, role FROM users;"
+```
+
+### Port conflict (8787, 8788, 7474, 7687)
+
+```bash
+lsof -i :8787
+lsof -i :7474
+lsof -i :7687
+kill -9 <PID>
+```
+
+### Backend container keeps restarting
+
+```bash
+docker logs lineagelens-max-backend --tail 50
+
+# Fix missing JWT secrets
+openssl rand -hex 32   # JWT_SECRET_KEY
+openssl rand -hex 32   # JWT_REFRESH_SECRET_KEY
+# Add to deploy/.env, then:
 docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  build --no-cache backend
-
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  up -d
+  -f deploy/docker-compose.max.yml --env-file deploy/.env restart backend
 ```
 
-Then try registering again. If the second attempt returns "Username is already registered", the first attempt succeeded at DB level â€” just log in directly.
+### Migrations fail
 
-### Register returns 422 "body required"
-
-Make sure you are passing `-H "Content-Type: application/json"` and `-d '...'` in the curl command.
-
-### "Container name already in use"
-
-Stop leftover containers first:
 ```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  down --remove-orphans
+# Ensure postgres is healthy
+docker exec lineagelens-max-postgres pg_isready -U postgres -d provenance
+
+# Run migrations manually
+docker exec lineagelens-max-backend sh -c 'cd /app && alembic upgrade head'
 ```
 
-Then re-run `bash quickstart.sh`.
+### Proxy not capturing
 
-### Backend returns 401 "Missing bearer token"
-
-The `$TOKEN` variable is empty or expired. Re-login and save the token again:
 ```bash
-TOKEN=$(curl -s -X POST http://localhost:8787/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"YourPassword123!"}' \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['accessToken'])")
+curl -s http://localhost:8788/health
+grep PROXY_INGEST_TOKEN deploy/.env
+docker logs lineagelens-max-proxy --tail 30
 ```
 
-### Proxy not capturing â€” "ingest: unconfigured"
+### "This endpoint requires backend mode: enterprise"
 
-`PROXY_INGEST_TOKEN` is not set in `deploy/.env`. Add your access token and restart the proxy:
 ```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  restart proxy
+docker exec lineagelens-max-backend env | grep BACKEND_MODE
+# Should print: BACKEND_MODE=enterprise
 ```
 
-### Neo4j takes too long to start
+### Search returns no results
 
-Neo4j initialises its store on first boot and can take 60â€“90 seconds on low-core VMs. Check status:
 ```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  ps neo4j
+docker exec lineagelens-max-postgres \
+  psql -U postgres -d provenance -c "SELECT COUNT(*) FROM provenance_records;"
+# If 0: proxy isn't capturing yet — confirm PROXY_INGEST_TOKEN and AI tool URL
 ```
 
-Wait until `Health` shows `healthy`. If it never reaches healthy, check Neo4j logs:
+### Neo4j out of memory
+
+Neo4j requires at least 2 GB of free RAM. If the container keeps crashing:
+
 ```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  logs --tail 30 neo4j
+# Check memory config in compose file:
+# NEO4J_server_memory_heap_max__size: 1024M
+# Reduce to 512M if on a low-memory machine
+
+docker stats lineagelens-max-neo4j --no-stream
 ```
 
-### Backend cannot connect to Neo4j
+### Out of disk space
 
-The backend started before Neo4j was healthy. Restart the backend after Neo4j is healthy:
 ```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  restart backend
+docker system df
+docker image prune -f
+docker system prune -f
 ```
 
-### Role column missing â€” 500 on register or login
+---
 
-Run migrations:
+## Quick Diagnostics Checklist
+
 ```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  run --rm --no-deps backend alembic upgrade head
+echo "1. Containers running?"
+docker ps | grep lineagelens-max
+
+echo "2. Backend healthy?"
+curl -s http://localhost:8787/health | python3 -m json.tool
+
+echo "3. Neo4j reachable?"
+curl -s -o /dev/null -w "Neo4j HTTP: %{http_code}\n" http://localhost:7474
+
+echo "4. Dashboard reachable?"
+curl -s -o /dev/null -w "Dashboard: %{http_code}\n" http://localhost:8787/dashboard
+
+echo "5. Recent backend errors?"
+docker logs lineagelens-max-backend --tail 20
+
+echo "6. Run full automated debug"
+bash debug.sh
 ```
-
-Confirm the column exists:
-```bash
-docker compose --project-name lineagelens-max \
-  -f deploy/docker-compose.max.yml \
-  --env-file deploy/.env \
-  exec postgres psql -U postgres -d provenance \
-  -c "SELECT column_name FROM information_schema.columns WHERE table_name='user_accounts';"
-```
-
-`role` and `token_version` must both appear in the list.
-
-### Old data persists after `down -v`
-
-The volume was created under a different project name. Remove it manually:
-```bash
-docker volume ls | grep postgres
-docker volume ls | grep neo4j
-docker volume rm <volume-name-from-list>
-```
-
-Or run `bash reset.sh` which handles this automatically.

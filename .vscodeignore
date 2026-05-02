@@ -33,6 +33,7 @@ prafea
 skills-lock.json
 releases/**
 scripts/**
+cli/**
 docs/shipping-modes.md
 
 # Exclude all node_modules by default, then allow required runtime native modules.

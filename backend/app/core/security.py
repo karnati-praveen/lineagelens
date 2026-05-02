@@ -81,11 +81,13 @@ async def get_current_auth_context(
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.")
 
         result = await session.execute(
-            select(UserAccount.token_version).where(UserAccount.id == user_id)
+            select(UserAccount.token_version, UserAccount.is_active).where(UserAccount.id == user_id)
         )
-        db_token_version = result.scalar_one_or_none()
-        if db_token_version is None or db_token_version != token_version_claim:
+        row = result.one_or_none()
+        if row is None or row.token_version != token_version_claim:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked.")
+        if not row.is_active:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account is inactive.")
 
     return auth
 
@@ -279,22 +281,19 @@ def verify_password(password: str, stored_hash: str) -> bool:
 
 
 def extract_websocket_token(websocket: WebSocket) -> str | None:
-    for query_key in ("token", "access_token", "jwt"):
-        token = websocket.query_params.get(query_key)
-        if token and token.strip():
-            return token.strip()
-
-    protocol_token = extract_token_from_subprotocol_header(
-        websocket.headers.get("sec-websocket-protocol", "")
-    )
-    if protocol_token:
-        return protocol_token
-
     auth_header = websocket.headers.get("authorization", "")
     if auth_header.lower().startswith("bearer "):
         token = auth_header[7:].strip()
         if token:
             return token
+
+    settings = getattr(websocket.app.state, "settings", None)
+    if isinstance(settings, Settings) and settings.ws_allow_subprotocol_token:
+        protocol_token = extract_token_from_subprotocol_header(
+            websocket.headers.get("sec-websocket-protocol", "")
+        )
+        if protocol_token:
+            return protocol_token
 
     return None
 

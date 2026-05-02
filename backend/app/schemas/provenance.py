@@ -82,7 +82,7 @@ class SearchResultItem(BaseModel):
     snippet: str
     record: dict | None = None
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, by_alias=True)
 
 
 class SearchResponse(BaseModel):
@@ -103,7 +103,7 @@ class IngestResponse(BaseModel):
     lineage_node_id: str | None = Field(default=None, alias="lineageNodeId")
     warnings: list[str] = Field(default_factory=list)
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, by_alias=True)
 
 
 class ExplainRequest(BaseModel):

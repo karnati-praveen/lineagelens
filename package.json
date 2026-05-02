@@ -411,6 +411,7 @@
     "native:plus": "powershell -ExecutionPolicy Bypass -File ./scripts/run-backend-native.ps1 -Mode plus",
     "native:max": "powershell -ExecutionPolicy Bypass -File ./scripts/run-backend-native.ps1 -Mode max",
     "native:test": "powershell -ExecutionPolicy Bypass -File ./scripts/test-backend-native.ps1",
+    "release": "powershell -ExecutionPolicy Bypass -File ./scripts/release.ps1",
     "ship:base": "powershell -ExecutionPolicy Bypass -File ./scripts/package-base.ps1",
     "ship:plus": "powershell -ExecutionPolicy Bypass -File ./scripts/package-plus.ps1",
     "ship:max": "powershell -ExecutionPolicy Bypass -File ./scripts/package-max.ps1",

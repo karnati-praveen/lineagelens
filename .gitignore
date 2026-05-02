@@ -17,9 +17,19 @@ coverage.xml
 # VS Code local data
 .vscode/ai-provenance/
 
+# Local agent/tooling state
+.agents/
+.claude/
+skills-lock.json
+pratry.md
+pratry.sh
+
 # Logs / temp
 *.log
 .DS_Store
+
+# Nested package installs
+cli/node_modules/
 
 # Remotion video project
 lineagelens-ad/

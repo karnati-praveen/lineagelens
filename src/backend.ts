@@ -113,8 +113,8 @@ export class BackendIngestClient implements vscode.Disposable {
       try {
         const authorizationHeader = await this.authSession.getAuthorizationHeader(
           resource,
-          true,
-          attempt > 1
+          false,
+          false
         );
 
         if (!authorizationHeader) {
@@ -179,7 +179,7 @@ export class BackendIngestClient implements vscode.Disposable {
     for (let attempt = 1; attempt <= config.httpRetryAttempts; attempt += 1) {
       try {
         const authorizationHeader = await this.authSession.getAuthorizationHeader(
-          resource, true, attempt > 1
+          resource, false, false
         );
 
         if (!authorizationHeader) {
@@ -251,13 +251,10 @@ export class BackendIngestClient implements vscode.Disposable {
   ): Promise<WebSocket> {
     await this.closeWebSocket();
 
-    const endpoint = new URL(websocketUrl);
-    endpoint.searchParams.set('token', token);
-
     const socket = await new Promise<WebSocket>((resolve, reject) => {
       const instance = new WebSocket(
-        endpoint.toString(),
-        ['bearer.' + token],
+        websocketUrl,
+        [],
         {
           headers: {
             Authorization: authorizationHeader

@@ -14,14 +14,14 @@ class TeamMemberStats(BaseModel):
     net_added_lines: int = Field(default=0, alias="netAddedLines")
     joined_at_iso: str | None = Field(alias="joinedAtIso")
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, by_alias=True)
 
 
 class TeamMembersResponse(BaseModel):
     workspace_id: str = Field(alias="workspaceId")
     members: list[TeamMemberStats]
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, by_alias=True)
 
 
 class InviteMemberRequest(BaseModel):
@@ -38,4 +38,4 @@ class InviteMemberResponse(BaseModel):
     workspace_id: str = Field(alias="workspaceId")
     role: TeamRole
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, by_alias=True)

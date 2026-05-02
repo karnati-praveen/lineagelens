@@ -1,12 +1,15 @@
 from contextlib import asynccontextmanager
 import logging
+import os
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
+
+_STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 from app.api.routes.auth import router as auth_router
 from app.api.routes.export import router as export_router
@@ -107,13 +110,6 @@ class RequestGuardsMiddleware(BaseHTTPMiddleware):
                         content={"detail": "Invalid Content-Length header."},
                     )
 
-            body = await request.body()
-            if len(body) > max_bytes:
-                return JSONResponse(
-                    status_code=413,
-                    content={"detail": "Request body too large."},
-                )
-
         if not current_settings.rate_limit_enabled or request.url.path == "/health":
             return await call_next(request)
 
@@ -152,6 +148,77 @@ class RequestGuardsMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class StreamingBodyLimitMiddleware:
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        method = str(scope.get("method", "")).upper()
+        if method in {"GET", "HEAD", "OPTIONS"}:
+            await self.app(scope, receive, send)
+            return
+
+        app_state = scope.get("app").state if scope.get("app") is not None else None
+        current_settings = getattr(app_state, "settings", None)
+        max_bytes = (
+            current_settings.http_max_body_bytes
+            if isinstance(current_settings, Settings)
+            else get_settings().http_max_body_bytes
+        )
+        seen_bytes = 0
+        rejected = False
+        rejection_sent = False
+
+        async def send_rejection() -> None:
+            nonlocal rejection_sent
+            if rejection_sent:
+                return
+            rejection_sent = True
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 413,
+                    "headers": [(b"content-type", b"application/json")],
+                }
+            )
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": b'{"detail":"Request body too large."}',
+                    "more_body": False,
+                }
+            )
+
+        async def receive_with_limit():
+            nonlocal seen_bytes, rejected
+            if rejected:
+                return {"type": "http.disconnect"}
+
+            message = await receive()
+            if message["type"] != "http.request":
+                return message
+
+            body = message.get("body", b"")
+            seen_bytes += len(body)
+            if seen_bytes > max_bytes:
+                rejected = True
+                await send_rejection()
+                return {"type": "http.disconnect"}
+
+            return message
+
+        async def send_unless_rejected(message):
+            if rejected:
+                return
+            await send(message)
+
+        await self.app(scope, receive_with_limit, send_unless_rejected)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -188,6 +255,8 @@ _startup_settings = get_settings()
 _allowed_hosts = _startup_settings.trusted_hosts
 _cors_origins = _startup_settings.cors_origins
 
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(StreamingBodyLimitMiddleware)
 app.add_middleware(RequestGuardsMiddleware)
 if _allowed_hosts:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts)
@@ -195,12 +264,11 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_origin_regex=None,
-    allow_credentials=bool(_cors_origins),
+    allow_credentials=bool(_cors_origins) and "*" not in _cors_origins,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
     max_age=600,
 )
-app.add_middleware(SecurityHeadersMiddleware)
 
 app.include_router(auth_router)
 app.include_router(ingest_router)
@@ -211,6 +279,11 @@ app.include_router(insights_router)
 app.include_router(export_router)
 app.include_router(team_router)
 app.include_router(ws_capture_router)
+
+
+@app.get("/dashboard", include_in_schema=False)
+async def dashboard() -> FileResponse:
+    return FileResponse(os.path.join(_STATIC_DIR, "dashboard.html"), media_type="text/html")
 
 
 @app.get("/health")

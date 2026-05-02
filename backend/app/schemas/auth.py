@@ -29,13 +29,13 @@ class AuthUserResponse(BaseModel):
     workspace_id: str = Field(alias="workspaceId")
     role: str
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, by_alias=True)
 
 
 class LogoutResponse(BaseModel):
     logged_out: bool = Field(default=True, alias="loggedOut")
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, by_alias=True)
 
 
 class AuthTokenResponse(BaseModel):
@@ -47,4 +47,4 @@ class AuthTokenResponse(BaseModel):
     workspace_id: str = Field(alias="workspaceId")
     user: AuthUserResponse
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, by_alias=True)

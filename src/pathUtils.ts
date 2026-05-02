@@ -41,7 +41,7 @@ export function pathsReferToSameFile(leftPath: string, rightPath: string): boole
 }
 
 function toPortablePath(value: string): string {
-  return value.replace(/\\/g, '/');
+  return value.replaceAll('\\', '/');
 }
 
 function normalizeComparablePath(value: string): string {
@@ -50,5 +50,5 @@ function normalizeComparablePath(value: string): string {
     return '';
   }
 
-  return path.normalize(trimmed.replace(/\//g, path.sep)).toLowerCase();
+  return path.normalize(trimmed.replaceAll('/', path.sep)).toLowerCase();
 }

@@ -43,6 +43,11 @@ def test_settings_deduplicates_cors_origins() -> None:
     assert settings.cors_origins == ["http://localhost:3000"]
 
 
+def test_settings_rejects_wildcard_mixed_with_explicit_cors_origins() -> None:
+    with pytest.raises(ValueError, match="wildcard"):
+        build_settings(BACKEND_CORS_ORIGINS="*,http://localhost:3000")
+
+
 def test_settings_rejects_vector_dimension_mismatch() -> None:
     with pytest.raises(ValueError, match="PGVECTOR_DIMENSION must be 256"):
         build_settings(PGVECTOR_DIMENSION=384)

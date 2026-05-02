@@ -1,369 +1,309 @@
-# LineageLens Plus â€” Command Reference
+# LineageLens Plus — Command Reference
 
 Run all commands from the **root folder** (where `quickstart.sh` lives).
 
 ---
 
-## Quick Variables
+## Quick URLs
 
-Copy these into your shell once to shorten every command below:
-
-```bash
-PROJECT=lineagelens-plus
-FILE=deploy/docker-compose.plus.yml
-ENV=deploy/.env
-API=http://localhost:8787
-PROXY=http://localhost:8788
-```
+| Service       | URL                               |
+|---------------|-----------------------------------|
+| **Dashboard** | http://localhost:8787/dashboard   |
+| Backend API   | http://localhost:8787             |
+| API Docs      | http://localhost:8787/docs        |
+| Proxy         | http://localhost:8788             |
 
 ---
 
-## First-Time Setup
+## Option A — CLI (Recommended)
+
+Install the `lineagelens` npm package once and manage everything with simple commands.
 
 ```bash
-# Full automated setup â€” runs everything in order
+# Install globally (requires Node.js 18+)
+npm install -g lineagelens
+
+# Start Plus backend (Docker must be running)
+lineagelens start --mode plus
+
+# Check status of all containers
+lineagelens status
+
+# Tail all logs
+lineagelens logs --mode plus
+
+# Tail a specific service
+lineagelens logs --mode plus --service backend
+lineagelens logs --mode plus --service proxy
+lineagelens logs --mode plus --service postgres
+
+# Stop (data is preserved)
+lineagelens stop --mode plus
+
+# Stop and delete all data (irreversible)
+lineagelens stop --mode plus --volumes
+```
+
+After `lineagelens start`, open **http://localhost:8787/dashboard** in your browser.
+
+---
+
+## Option B — Docker Compose from Bundle
+
+Use if you prefer direct control or have customized the compose file.
+
+### First-Time Setup
+
+```bash
+# One command — generates secrets, starts all services, verifies health
 bash quickstart.sh
 ```
 
-This single command will:
-1. Check prerequisites (Docker, openssl, curl, python3)
-2. Stop any leftover containers from a previous run
-3. Generate random secrets and write `deploy/.env`
-4. Start PostgreSQL and wait until it accepts connections
-5. Build the backend and proxy Docker images from source
-6. Run all Alembic database migrations
-7. Start the backend and proxy
-8. Verify the backend health endpoint
-
----
-
-## Step-by-Step Setup (manual)
-
-Use this if `quickstart.sh` failed partway through and you need to resume.
-
-### 1 â€” Start PostgreSQL
+### Convenience variables
 
 ```bash
-docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  up -d postgres
+COMPOSE_FILE=deploy/docker-compose.plus.yml
+ENV_FILE=deploy/.env
+PROJECT=lineagelens-plus
 ```
 
-### 2 â€” Wait until PostgreSQL is ready
+### Start / Stop / Restart
 
 ```bash
+# Start all services
 docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  exec postgres pg_isready -U postgres -d provenance
-```
+  -f deploy/docker-compose.plus.yml --env-file deploy/.env \
+  up --detach
 
-Re-run until you see: `provenance:5432 - accepting connections`
-
-### 3 â€” Build backend and proxy images
-
-```bash
+# Stop (keeps containers and data)
 docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  build backend proxy
-```
+  -f deploy/docker-compose.plus.yml --env-file deploy/.env \
+  stop
 
-This must run before migrations. Skipping it may cause alembic to use a stale cached image and leave the database empty.
-
-### 4 â€” Run database migrations
-
-```bash
+# Remove containers (volumes survive)
 docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  run --rm --no-deps backend alembic upgrade head
-```
-
-Expected output ends with lines like:
-```
-Running upgrade  -> 202501150001, Initial database schema
-Running upgrade 202501150001 -> 202501160001, Add role to user_accounts ...
-Running upgrade 202501160001 -> 202501170001, Backfill role ...
-...
-```
-
-### 5 â€” Start all services
-
-```bash
-docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  up -d
-```
-
-### 6 â€” Confirm tables exist
-
-```bash
-docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  exec postgres psql -U postgres -d provenance -c "\dt"
-```
-
-You should see `alembic_version`, `provenance_records`, and `user_accounts` listed. If you see "Did not find any relations", migrations did not run â€” go back to Step 3.
-
----
-
-## Start / Stop / Restart
-
-### Start everything
-```bash
-docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  up -d
-```
-
-### Stop everything (data is kept)
-```bash
-docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
+  -f deploy/docker-compose.plus.yml --env-file deploy/.env \
   down
-```
 
-### Restart a single service
-```bash
-# Backend only
+# Restart one service
 docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
+  -f deploy/docker-compose.plus.yml --env-file deploy/.env \
   restart backend
 
-# Proxy only
+# Pull latest images and recreate
 docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  restart proxy
+  -f deploy/docker-compose.plus.yml --env-file deploy/.env \
+  up --detach --pull always
 ```
 
-### Check what is running
+### Logs
+
 ```bash
+# All services
 docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  ps
-```
+  -f deploy/docker-compose.plus.yml --env-file deploy/.env \
+  logs --follow
 
----
-
-## Logs
-
-### Stream all service logs
-```bash
+# Backend only, last 100 lines
 docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  logs -f
-```
+  -f deploy/docker-compose.plus.yml --env-file deploy/.env \
+  logs --follow --tail 100 backend
 
-### Backend logs (last 50 lines)
-```bash
+# Proxy
 docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  logs --tail 50 backend
-```
+  -f deploy/docker-compose.plus.yml --env-file deploy/.env \
+  logs --follow proxy
 
-### Proxy logs (last 50 lines)
-```bash
+# PostgreSQL
 docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  logs --tail 50 proxy
-```
-
-### PostgreSQL logs (last 50 lines)
-```bash
-docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  logs --tail 50 postgres
+  -f deploy/docker-compose.plus.yml --env-file deploy/.env \
+  logs --follow postgres
 ```
 
 ---
 
-## Authentication
+## Dashboard
 
-### Register your first user (becomes workspace admin)
+The web dashboard is the primary UI — no VS Code required.
+
+```
+http://localhost:8787/dashboard
+```
+
+**First login:**
+1. Open http://localhost:8787/dashboard in your browser
+2. Click **Register** — enter workspace ID, username, password
+3. You become the admin of your workspace automatically
+
+**What the dashboard includes:**
+- Governance overview — total records, risk score, prompt capture rate, compliance controls
+- Provenance search — filter by keyword, model, date range, file path
+- Record viewer — full prompt, inserted code, context snapshot, AI explanation
+- Audit export (admin) — download CSV with date / developer / file filters
+- Team management (admin) — invite members, view per-user activity
+
+---
+
+## Find Your Credentials
+
+Forgot your username, workspace, or password? Run these from inside the unzipped folder.
+
 ```bash
+# ── Workspace ID and Username ──────────────────────────────────────────
+# Shows all registered users, their workspace, and role
+docker exec lineagelens-plus-postgres \
+  psql -U postgres -d provenance \
+  -c "SELECT username, workspace_id, role, created_at FROM users ORDER BY created_at;"
+
+# ── Postgres password (generated by quickstart.sh) ────────────────────
+cat deploy/.env | grep POSTGRES_PASSWORD
+
+# ── JWT secrets ───────────────────────────────────────────────────────
+cat deploy/.env | grep JWT
+
+# ── All .env values at once ───────────────────────────────────────────
+cat deploy/.env
+
+# ── Full .env path ────────────────────────────────────────────────────
+echo "Config file: $(pwd)/deploy/.env"
+```
+
+> **Forgot your password?** Passwords are hashed — you cannot recover them.
+> Reset by running `bash reset.sh`, then re-register via the dashboard.
+
+---
+
+## Authentication (API / curl)
+
+```bash
+# Register first user (becomes workspace admin)
 curl -s -X POST http://localhost:8787/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"YourPassword123!","workspace_id":"my-workspace"}' \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"yourpassword","workspaceId":"your-workspace"}' \
   | python3 -m json.tool
-```
 
-The first user registered to a workspace automatically gets `role: "admin"`. Every user registered after that gets `role: "member"`.
-
-### Log in
-```bash
-curl -s -X POST http://localhost:8787/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"YourPassword123!"}' \
-  | python3 -m json.tool
-```
-
-### Save your access token to a shell variable
-```bash
+# Login and save token
+# Note: response key is accessToken (camelCase)
 TOKEN=$(curl -s -X POST http://localhost:8787/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"YourPassword123!"}' \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['accessToken'])")
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"yourpassword"}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('accessToken') or d.get('access_token','LOGIN_FAILED'))")
 
-echo "Token saved: ${TOKEN:0:40}..."
-```
+echo "Token: ${TOKEN:0:20}..."
 
-Use `$TOKEN` in all authenticated requests below.
-
-### View your profile
-```bash
-curl -s http://localhost:8787/auth/me \
-  -H "Authorization: Bearer $TOKEN" \
+# If TOKEN prints LOGIN_FAILED — check username/password above, then re-login
+# See the full login response to debug:
+curl -s -X POST http://localhost:8787/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"yourpassword"}' \
   | python3 -m json.tool
-```
 
-### Refresh an expired access token
-```bash
-# First save the refresh token from login
-REFRESH=$(curl -s -X POST http://localhost:8787/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"YourPassword123!"}' \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['refreshToken'])")
+# View your profile (confirms token works)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8787/auth/me | python3 -m json.tool
 
-curl -s -X POST http://localhost:8787/auth/refresh \
-  -H "Content-Type: application/json" \
-  -d "{\"refreshToken\":\"$REFRESH\"}" \
-  | python3 -m json.tool
-```
-
-### Log out
-```bash
-curl -s -X POST http://localhost:8787/auth/logout \
-  -H "Authorization: Bearer $TOKEN" \
-  | python3 -m json.tool
+# Logout
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8787/auth/logout
 ```
 
 ---
 
-## Team Management
+## Proxy — Capture AI Traffic
 
-### Invite a new member (admin only)
-```bash
-curl -s -X POST http://localhost:8787/team/invite \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"alice","password":"AlicePass123!","role":"member"}' \
-  | python3 -m json.tool
-```
-
-Valid roles: `"admin"` or `"member"` (default is `"member"`).
-
-### Invite an additional admin
-```bash
-curl -s -X POST http://localhost:8787/team/invite \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"bob","password":"BobPass123!","role":"admin"}' \
-  | python3 -m json.tool
-```
-
-### List all workspace members
-```bash
-curl -s http://localhost:8787/team/members \
-  -H "Authorization: Bearer $TOKEN" \
-  | python3 -m json.tool
-```
-
----
-
-## Proxy â€” Universal LLM Capture
-
-The proxy intercepts AI API traffic from any tool (Claude Code, Cursor, Copilot, Aider, etc.) and saves every code response to LineageLens automatically.
-
-### Check proxy health
-```bash
-curl -s http://localhost:8788/proxy-health | python3 -m json.tool
-```
-
-### One-time proxy setup (after first login)
-
-1. Log in and save your token (see Authentication above)
-2. Add the token to `deploy/.env`:
-   ```
-   PROXY_INGEST_TOKEN=<paste your accessToken here>
-   ```
-3. Restart the proxy so it picks up the token:
-   ```bash
-   docker compose --project-name lineagelens-plus \
-     -f deploy/docker-compose.plus.yml \
-     --env-file deploy/.env \
-     restart proxy
-   ```
-4. Confirm proxy is capturing:
-   ```bash
-   curl -s http://localhost:8788/proxy-health | python3 -m json.tool
-   ```
-   Look for `"ingest": "configured"` in the response.
-
-### Point your AI tools at the proxy
-
-Set these environment variables **before** starting your AI tool. They redirect all LLM API calls through LineageLens:
+The proxy intercepts traffic between your AI tools and the API provider.
 
 ```bash
-# For Claude Code or any Anthropic SDK tool
+# Proxy health
+curl -s http://localhost:8788/health
+
+# ── Claude Code (uses its own config — export does NOT work) ──────────
+claude config set apiBaseUrl http://localhost:8788
+# Verify:
+claude config get apiBaseUrl
+# Restore when done capturing:
+# claude config set apiBaseUrl https://api.anthropic.com
+
+# ── Other AI tools (Aider, Continue, Cursor, etc.) ───────────────────
+export OPENAI_BASE_URL=http://localhost:8788
 export ANTHROPIC_BASE_URL=http://localhost:8788
 
-# For Cursor, Copilot, Aider, or any OpenAI SDK tool
-export OPENAI_BASE_URL=http://localhost:8788
+# Set ingest token so the proxy can write to the backend
+# 1. Login and get your JWT (see Authentication above)
+# 2. Edit deploy/.env:
+#      PROXY_INGEST_TOKEN=<your JWT>
+# 3. Restart proxy:
+docker compose --project-name lineagelens-plus \
+  -f deploy/docker-compose.plus.yml --env-file deploy/.env \
+  restart proxy
+
+# Verify proxy is forwarding and capturing
+docker logs lineagelens-plus-proxy --tail 20
 ```
 
-To make permanent (bash):
-```bash
-echo 'export ANTHROPIC_BASE_URL=http://localhost:8788' >> ~/.bashrc
-echo 'export OPENAI_BASE_URL=http://localhost:8788' >> ~/.bashrc
-source ~/.bashrc
-```
+---
 
-To make permanent (zsh):
+## Team Management (API)
+
 ```bash
-echo 'export ANTHROPIC_BASE_URL=http://localhost:8788' >> ~/.zshrc
-echo 'export OPENAI_BASE_URL=http://localhost:8788' >> ~/.zshrc
-source ~/.zshrc
+# List all team members
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8787/team/members | python3 -m json.tool
+
+# Invite a developer (member role)
+curl -s -X POST http://localhost:8787/team/invite \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"username":"dev1","password":"pass1234","role":"member","workspaceId":"your-workspace"}' \
+  | python3 -m json.tool
+
+# Invite an admin
+curl -s -X POST http://localhost:8787/team/invite \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"username":"lead","password":"pass1234","role":"admin","workspaceId":"your-workspace"}' \
+  | python3 -m json.tool
 ```
 
 ---
 
 ## Provenance API
 
-### Submit a provenance record (ingest)
 ```bash
-curl -s -X POST http://localhost:8787/ingest \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workspaceId": "my-workspace",
-    "filePath": "src/main.py",
-    "insertedCode": "def hello():\n    return \"world\"",
-    "timestampIso": "2025-01-20T10:00:00Z",
-    "modelName": "claude-sonnet-4-6"
-  }' \
-  | python3 -m json.tool
-```
-
-### Search provenance records
-```bash
+# Search records
 curl -s -X POST http://localhost:8787/search \
+  -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"query":"authentication function","limit":10}' \
+  -d '{"workspace_id":"your-workspace","keywords":"authentication"}' \
   | python3 -m json.tool
-```
 
-### View insights dashboard
-```bash
-curl -s http://localhost:8787/insights \
+# Search by model and date range
+curl -s -X POST http://localhost:8787/search \
+  -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $TOKEN" \
+  -d '{"workspace_id":"your-workspace","model":"gpt-4o","date_from":"2024-01-01T00:00:00Z"}' \
+  | python3 -m json.tool
+
+# Get a record by UUID
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8787/provenance/<uuid> | python3 -m json.tool
+
+# Governance dashboard data
+curl -s -X POST http://localhost:8787/insights/dashboard \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"workspace_id":"your-workspace"}' | python3 -m json.tool
+
+# Export audit CSV (admin only)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8787/export/audit?dateFrom=2024-01-01T00:00:00Z" \
+  -o lineagelens-audit.csv && echo "Saved: lineagelens-audit.csv"
+
+# AI explain a record
+curl -s -X POST http://localhost:8787/explain \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"uuid":"<uuid>","workspace_id":"your-workspace"}' \
   | python3 -m json.tool
 ```
 
@@ -371,234 +311,216 @@ curl -s http://localhost:8787/insights \
 
 ## Health & Diagnostics
 
-### Backend health check
 ```bash
+# Backend health (no auth required)
 curl -s http://localhost:8787/health | python3 -m json.tool
-```
+# Expect: "productMode": "plus"
 
-Expected response:
-```json
-{
-  "status": "ok",
-  "app": "LineageLens Plus Backend",
-  "version": "0.1.0",
-  "productMode": "plus",
-  "environment": "development",
-  "backendMode": "team",
-  "features": {
-    "neo4j": false,
-    "vectorSearch": false,
-    "lineageStrictMode": false
-  }
-}
-```
+# Proxy health
+curl -s http://localhost:8788/health
 
-### Run the full debug checker
-```bash
+# Run automated debug script
 bash debug.sh
-```
 
-This prints PASS/FAIL for: bundle files, env variables, compose config, database connectivity, migration state, and backend health.
-
-On Windows PowerShell:
-```powershell
-.\debug.ps1
-```
-
-### Check which migration version is applied
-```bash
+# Container status
 docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  run --rm --no-deps backend alembic current
-```
+  -f deploy/docker-compose.plus.yml --env-file deploy/.env ps
 
-Expected output ends with `(head)`. If not, run `alembic upgrade head`.
+# Resource usage
+docker stats --no-stream
 
-### Show full migration history
-```bash
-docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  run --rm --no-deps backend alembic history --verbose
-```
+# Database migration status
+docker exec lineagelens-plus-backend \
+  sh -c 'cd /app && alembic current'
 
-### Open a PostgreSQL shell
-```bash
-docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  exec postgres psql -U postgres -d provenance
-```
+# Run pending migrations
+docker exec lineagelens-plus-backend \
+  sh -c 'cd /app && alembic upgrade head'
 
-Useful SQL once inside:
-```sql
--- List all tables
-\dt
+# PostgreSQL interactive shell
+docker exec -it lineagelens-plus-postgres \
+  psql -U postgres -d provenance
 
--- Check columns on user_accounts (confirm role column exists)
-\d user_accounts
+# Count captured records
+docker exec lineagelens-plus-postgres \
+  psql -U postgres -d provenance \
+  -c "SELECT COUNT(*) FROM provenance_records;"
 
--- List all registered users
-SELECT id, username, workspace_id, role, is_active, created_at FROM user_accounts;
-
--- Count provenance records
-SELECT COUNT(*) FROM provenance_records;
-
--- Check applied migrations
-SELECT * FROM alembic_version;
-
--- Exit
-\q
+# Check env vars (secrets redacted)
+docker exec lineagelens-plus-backend env \
+  | grep -v PASSWORD | grep -v SECRET | sort
 ```
 
 ---
 
-## Reset (Wipe Everything)
+## Update to Latest Version
 
 ```bash
-# Full reset â€” removes all containers, volumes, and data
-bash reset.sh
+# Pull latest images
+docker compose --project-name lineagelens-plus \
+  -f deploy/docker-compose.plus.yml --env-file deploy/.env pull
 
-# Then run a fresh setup
-bash quickstart.sh
+# Recreate containers with new images (data preserved)
+docker compose --project-name lineagelens-plus \
+  -f deploy/docker-compose.plus.yml --env-file deploy/.env \
+  up --detach --force-recreate
 ```
 
-Manual equivalent:
+Or with the CLI:
+
 ```bash
+lineagelens stop --mode plus
+lineagelens start --mode plus   # --pull always is the default
+```
+
+---
+
+## Reset (Wipe All Data)
+
+```bash
+# Automated reset
+bash reset.sh
+
+# Manual reset
 docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  down -v --remove-orphans
-
-docker volume ls --filter name=lineagelens-plus -q | xargs -r docker volume rm
-
-rm deploy/.env
+  -f deploy/docker-compose.plus.yml --env-file deploy/.env \
+  down --volumes --remove-orphans
+rm -f deploy/.env
+echo "Done. Run: bash quickstart.sh"
 ```
 
 ---
 
 ## Troubleshooting
 
-### "Did not find any relations" â€” no tables in the database
+### Dashboard blank or "Failed to load"
 
-Migrations did not run or failed silently. Fix:
 ```bash
-# Force a fresh image build then re-run migrations
+# 1. Is the backend running?
+curl -s http://localhost:8787/health
+
+# 2. Container status
+docker ps | grep lineagelens-plus
+
+# 3. Backend error logs
+docker logs lineagelens-plus-backend --tail 50
+```
+
+### Login returns 401 / wrong credentials
+
+```bash
+# Check workspace ID matches what you registered with
+# Check registered users in the database
+docker exec lineagelens-plus-postgres \
+  psql -U postgres -d provenance -c "SELECT username, role FROM users;"
+```
+
+### Port 8787 or 8788 already in use
+
+```bash
+# Find what's using the port
+lsof -i :8787   # macOS/Linux
+netstat -ano | findstr :8787   # Windows
+
+# Kill conflicting process (replace PID)
+kill -9 <PID>
+```
+
+### Backend container keeps restarting
+
+```bash
+# View crash reason
+docker logs lineagelens-plus-backend --tail 50
+
+# Most common cause: JWT_SECRET_KEY missing or too short
+cat deploy/.env | grep JWT
+
+# Fix: regenerate a valid secret (must be 32+ chars)
+openssl rand -hex 32
+# Paste the output into deploy/.env as JWT_SECRET_KEY and JWT_REFRESH_SECRET_KEY
 docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  build backend
-
-docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  run --rm --no-deps backend alembic upgrade head
+  -f deploy/docker-compose.plus.yml --env-file deploy/.env restart backend
 ```
 
-If alembic still shows no output or errors, check backend logs:
+### Migrations fail on startup
+
 ```bash
-docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  logs --tail 30 backend
+# Check postgres is healthy first
+docker exec lineagelens-plus-postgres pg_isready -U postgres -d provenance
+
+# Run migrations manually
+docker exec lineagelens-plus-backend sh -c 'cd /app && alembic upgrade head'
+
+# View migration errors
+docker logs lineagelens-plus-backend 2>&1 | grep -i alembic
 ```
 
-### Register returns 500 Internal Server Error
+### Proxy not capturing AI traffic
 
-Usually caused by a stale Docker image (from a previous version) still cached on your machine.
-
-Fix:
 ```bash
-# Force rebuild
-docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  build --no-cache backend
+# 1. Is proxy running?
+curl -s http://localhost:8788/health
 
-# Restart
-docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  up -d
+# 2. Is PROXY_INGEST_TOKEN set?
+grep PROXY_INGEST_TOKEN deploy/.env
+
+# 3. Is your AI tool using the proxy?
+#    Claude Code: claude config get apiBaseUrl
+#    Should be: http://localhost:8788
+
+# 4. Proxy error logs
+docker logs lineagelens-plus-proxy --tail 30
 ```
 
-Then try registering again. The second attempt returning "Username is already registered" means the first attempt actually succeeded at the DB level â€” just log in directly.
+### "This endpoint requires backend mode"
 
-### Register returns 422 "body required"
-
-The backend received an empty body. Make sure you are passing `-H "Content-Type: application/json"` and `-d '...'` in the curl command.
-
-### "Container name already in use"
-
-Stop leftover containers first:
 ```bash
-docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  down --remove-orphans
+# Verify BACKEND_MODE is "team" not "local"
+docker exec lineagelens-plus-backend env | grep BACKEND_MODE
+
+# Should print: BACKEND_MODE=team
+# If not, you may be running the wrong compose file
 ```
 
-Then re-run `bash quickstart.sh`.
+### Search returns no results
 
-### Backend returns 401 "Missing bearer token"
-
-The `$TOKEN` variable is empty or expired. Re-login and save the token again:
 ```bash
-TOKEN=$(curl -s -X POST http://localhost:8787/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"YourPassword123!"}' \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['accessToken'])")
+# Check record count
+docker exec lineagelens-plus-postgres \
+  psql -U postgres -d provenance -c "SELECT COUNT(*) FROM provenance_records;"
+
+# If 0 — the proxy hasn't captured anything yet
+# Confirm proxy is running, PROXY_INGEST_TOKEN is set,
+# and your AI tool is routed through http://localhost:8788
 ```
 
-### Proxy not capturing â€” "ingest: unconfigured"
+### Out of disk space
 
-`PROXY_INGEST_TOKEN` is not set in `deploy/.env`. Add your access token there and restart the proxy:
 ```bash
-docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  restart proxy
+docker system df
+docker image prune -f      # remove unused images
+docker system prune -f     # remove stopped containers + dangling images
 ```
 
-### PostgreSQL took too long to start
+---
 
-On slow VMs, postgres needs more time. Run this manually to wait longer:
+## Quick Diagnostics Checklist
+
 ```bash
-for i in $(seq 1 30); do
-  docker compose --project-name lineagelens-plus \
-    -f deploy/docker-compose.plus.yml \
-    --env-file deploy/.env \
-    exec -T postgres pg_isready -U postgres -d provenance && break
-  echo "Waiting... ($i)"
-  sleep 5
-done
+# Run this sequence to locate any issue fast
+
+echo "1. Containers running?"
+docker ps | grep lineagelens
+
+echo "2. Backend healthy?"
+curl -s http://localhost:8787/health | python3 -m json.tool
+
+echo "3. Dashboard reachable?"
+curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost:8787/dashboard
+
+echo "4. Recent backend errors?"
+docker logs lineagelens-plus-backend --tail 20
+
+echo "5. Run full automated debug"
+bash debug.sh
 ```
-
-### Role column missing â€” 500 on register or login
-
-Run migrations:
-```bash
-docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  run --rm --no-deps backend alembic upgrade head
-```
-
-Confirm the column exists:
-```bash
-docker compose --project-name lineagelens-plus \
-  -f deploy/docker-compose.plus.yml \
-  --env-file deploy/.env \
-  exec postgres psql -U postgres -d provenance \
-  -c "SELECT column_name FROM information_schema.columns WHERE table_name='user_accounts';"
-```
-
-`role` and `token_version` must both appear in the list.
-
-### Old data persists after `down -v`
-
-The volume was created under a different project name. Remove it manually:
-```bash
-docker volume ls | grep postgres
-docker volume rm <volume-name-from-list>
-```
-
-Or run `bash reset.sh` which handles this automatically.

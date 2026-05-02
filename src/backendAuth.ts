@@ -513,7 +513,7 @@ function isTokenExpiringSoon(token: string, skewSeconds: number): boolean {
       ? expValue
       : typeof expValue === 'string'
         ? Number(expValue)
-        : NaN;
+        : Number.NaN;
 
   if (!Number.isFinite(expEpochSeconds)) {
     return true;
@@ -539,7 +539,7 @@ function decodeJwtPayload(token: string): Record<string, unknown> | undefined {
 }
 
 function base64UrlToBase64(value: string): string {
-  let base64 = value.replace(/-/g, '+').replace(/_/g, '/');
+  let base64 = value.replaceAll('-', '+').replaceAll('_', '/');
   const paddingNeeded = base64.length % 4;
   if (paddingNeeded > 0) {
     base64 += '='.repeat(4 - paddingNeeded);

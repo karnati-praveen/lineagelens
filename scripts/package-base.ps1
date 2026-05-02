@@ -29,6 +29,11 @@ try {
     Get-ChildItem (Join-Path $bundleRoot "backend") -Directory -Recurse -Force |
         Where-Object { $_.Name -in @('.pytest_cache', '__pycache__') } |
         Remove-Item -Recurse -Force
+    # Never ship secret-bearing files
+    Get-ChildItem (Join-Path $bundleRoot "backend") -Filter ".env" -Recurse -Force |
+        Remove-Item -Force
+    Get-ChildItem (Join-Path $bundleRoot "backend") -Filter "*.env" -Recurse -Force |
+        Remove-Item -Force
 
     # Deploy
     New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "deploy") | Out-Null

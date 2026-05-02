@@ -58,17 +58,45 @@ cmd $COMPOSE version
 
 ok "All prerequisites met."
 
-# ── 2. Clean up any leftover containers ───────────────────────────────────────
-step "2/8" "Cleaning up any existing containers"
+# ── 2. Remove any conflicting containers and stale volumes ────────────────────
+step "2/8" "Removing conflicting Postgres / Neo4j containers and stale volumes"
 
+# a) Stop this project's own containers (clean slate)
 if $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" ps -q 2>/dev/null | grep -q .; then
-    info "Found existing containers. Stopping them first..."
-    echo -e "  ${YELLOW}\$${RESET}  $COMPOSE --project-name $PROJECT_NAME -f $COMPOSE_FILE down --remove-orphans"
+    info "Stopping existing $PROJECT_NAME containers..."
     $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" down --remove-orphans
-    ok "Existing containers stopped."
-else
-    ok "No existing containers found."
+    ok "Project containers stopped."
 fi
+
+# b) Kill ANY other container using our ports so they don't block startup
+#    Includes Neo4j ports 7474 (HTTP) and 7687 (Bolt)
+for PORT in 5432 8787 8788 7474 7687; do
+    CIDS=$(docker ps -q --filter "publish=$PORT" 2>/dev/null || true)
+    if [[ -n "$CIDS" ]]; then
+        info "Port $PORT in use by container(s) [$CIDS] — stopping them..."
+        docker stop $CIDS >/dev/null 2>&1 || true
+        ok "Port $PORT freed."
+    fi
+done
+
+# c) Remove this project's Postgres AND Neo4j volumes so both DBs init cleanly.
+#    Neo4j bakes credentials into the volume on first boot and ignores NEO4J_AUTH
+#    on subsequent starts — stale volumes cause auth failures with a new password.
+for VOL in \
+    "${PROJECT_NAME}_postgres_enterprise_data" \
+    "${PROJECT_NAME}_neo4j_enterprise_data" \
+    "${PROJECT_NAME}_neo4j_enterprise_logs" \
+    "lineagelens-max_postgres_enterprise_data" \
+    "lineagelens-max_neo4j_enterprise_data" \
+    "lineagelens-max_neo4j_enterprise_logs"; do
+    if docker volume ls -q 2>/dev/null | grep -qx "$VOL"; then
+        info "Removing stale volume: $VOL"
+        docker volume rm "$VOL" >/dev/null 2>&1 || true
+        ok "Removed: $VOL"
+    fi
+done
+
+ok "Port and volume conflicts resolved."
 
 # ── 3. Generate secrets & write .env ─────────────────────────────────────────
 step "3/8" "Generating secrets"
@@ -228,12 +256,15 @@ echo -e "${BOLD}${GREEN}╔═════════════════�
 echo -e "${BOLD}${GREEN}║   LineageLens Max is ready!       ║${RESET}"
 echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════╝${RESET}"
 echo ""
+echo -e "  ${BOLD}Dashboard:${RESET}     ${CYAN}$BACKEND_URL/dashboard${RESET}  ← open this in your browser"
 echo -e "  API:           ${CYAN}$BACKEND_URL${RESET}"
-echo -e "  Health:        ${CYAN}$BACKEND_URL/health${RESET}"
+echo -e "  Proxy:         ${CYAN}http://localhost:8788${RESET}"
 echo -e "  Neo4j Browser: ${CYAN}http://localhost:7474${RESET}  (user: neo4j)"
-echo -e "  Proxy:         ${CYAN}http://localhost:8788${RESET}  (universal LLM capture)"
 echo ""
-echo -e "  ${BOLD}Register your first admin user:${RESET}"
+echo -e "  ${BOLD}Open the dashboard to register and manage your workspace:${RESET}"
+echo -e "  ${CYAN}$BACKEND_URL/dashboard${RESET}"
+echo ""
+echo -e "  ${BOLD}Or register via API:${RESET}"
 echo ""
 echo -e "  ${YELLOW}\$${RESET}  curl -s -X POST $BACKEND_URL/auth/register \\"
 echo       "       -H 'Content-Type: application/json' \\"

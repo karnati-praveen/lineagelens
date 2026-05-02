@@ -75,7 +75,7 @@ async def register_user(
             detail="Username is already registered.",
         )
 
-    return issue_token_response(user, settings)
+    return await issue_token_response(session, user, settings)
 
 
 @router.post("/login")
@@ -106,7 +106,7 @@ async def login_user(
             detail="Workspace scope mismatch.",
         )
 
-    return issue_token_response(user, settings)
+    return await issue_token_response(session, user, settings)
 
 
 @router.post("/refresh")
@@ -169,7 +169,14 @@ async def refresh_access_token(
             detail="Refresh token has been revoked.",
         )
 
-    return issue_token_response(user, settings)
+    token_jti = str(refresh_auth.token_payload.get("jti", "")).strip()
+    if not token_jti or token_jti != user.refresh_token_jti:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has been rotated.",
+        )
+
+    return await issue_token_response(session, user, settings)
 
 
 @router.post("/logout")
@@ -180,6 +187,7 @@ async def logout_user(
     user = await get_user_by_id(session, auth.subject)
     if user is not None:
         user.token_version = (user.token_version or 0) + 1
+        user.refresh_token_jti = None
         await session.commit()
     return LogoutResponse(loggedOut=True)
 
@@ -206,10 +214,15 @@ async def get_authenticated_user(
     }
 
 
-def issue_token_response(user: UserAccount, settings: Settings) -> AuthTokenResponse:
+async def issue_token_response(
+    session: AsyncSession,
+    user: UserAccount,
+    settings: Settings,
+) -> AuthTokenResponse:
     scopes = sorted(settings.required_scopes_set)
     role = user.role or "member"
     token_version = user.token_version or 0
+    refresh_token_jti = uuid.uuid4().hex
 
     access_token, access_expires_at = create_access_token(
         subject=str(user.id),
@@ -223,8 +236,16 @@ def issue_token_response(user: UserAccount, settings: Settings) -> AuthTokenResp
         subject=str(user.id),
         workspace_id=user.workspace_id,
         settings=settings,
-        extra_claims={"username": user.username, "role": role, "token_version": token_version},
+        extra_claims={
+            "username": user.username,
+            "role": role,
+            "token_version": token_version,
+            "jti": refresh_token_jti,
+        },
     )
+
+    user.refresh_token_jti = refresh_token_jti
+    await session.commit()
 
     now_utc = datetime.now(tz=UTC)
     expires_in_seconds = max(1, int((access_expires_at - now_utc).total_seconds()))
