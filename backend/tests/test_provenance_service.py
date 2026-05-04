@@ -116,7 +116,7 @@ def test_search_provenance_records_keyword_fallback_returns_warnings() -> None:
     )
     search = SearchRequest(query='API key', limit=10)
 
-    rows, warnings = asyncio.run(
+    rows, warnings, total = asyncio.run(
         search_provenance_records(
             session=cast(AsyncSession, session),
             search=search,
@@ -126,6 +126,7 @@ def test_search_provenance_records_keyword_fallback_returns_warnings() -> None:
     )
 
     assert warnings == ['Vector search is disabled; using keyword fallback search.']
+    assert total == 1
     assert len(rows) == 1
     assert rows[0][0].uuid == '11111111-1111-4111-8111-111111111111'
     assert rows[0][1] is not None

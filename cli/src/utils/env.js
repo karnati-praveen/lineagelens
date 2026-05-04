@@ -1,10 +1,10 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const crypto = require('crypto');
-const readline = require('readline');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const crypto = require('node:crypto');
+const readline = require('node:readline');
 
 function dataDir(mode) {
   const dir = path.join(os.homedir(), '.lineagelens', mode);

@@ -20,7 +20,11 @@ BACKEND_URL="http://localhost:8787"
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-step() { echo -e "\n${BOLD}${CYAN}[$1]${RESET} ${BOLD}$2${RESET}"; }
+step() {
+    local num="$1"
+    local title="$2"
+    echo -e "\n${BOLD}${CYAN}[$num]${RESET} ${BOLD}$title${RESET}"
+}
 ok()   { echo -e "  ${GREEN}✓${RESET}  $*"; }
 info() { echo -e "  ${YELLOW}→${RESET}  $*"; }
 die()  { echo -e "\n  ${RED}✗  ERROR:${RESET} $*\n" >&2; exit 1; }

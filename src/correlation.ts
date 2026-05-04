@@ -1,4 +1,4 @@
-import * as path from 'path';
+import * as path from 'node:path';
 import type { CaptureStatus, LocalLlmProxyRuntime, RequestResponsePair } from './proxy';
 import type { StoredHookEvent } from './hookListener';
 import { extractHookEventContent, extractHookEventFilePath } from './hookListener';

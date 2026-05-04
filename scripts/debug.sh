@@ -42,20 +42,27 @@ fi
 
 compose() {
     "${COMPOSE_CMD[@]}" --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
+    return
 }
 
 pass() {
-    echo -e "  ${GREEN}PASS${RESET} $1"
+    local msg="$1"
+    echo -e "  ${GREEN}PASS${RESET} $msg"
+    return
 }
 
 fail() {
-    echo -e "  ${RED}FAIL${RESET} $1"
-    FAILED_STEPS+=("$1")
+    local msg="$1"
+    echo -e "  ${RED}FAIL${RESET} $msg"
+    FAILED_STEPS+=("$msg")
+    return
 }
 
 section() {
+    local title="$1"
     echo
-    echo -e "${CYAN}==> $1${RESET}"
+    echo -e "${CYAN}==> $title${RESET}"
+    return
 }
 
 run_check() {
@@ -67,6 +74,7 @@ run_check() {
     else
         fail "$label"
     fi
+    return
 }
 
 wait_for_health() {
@@ -100,6 +108,7 @@ print_logs() {
     echo ""
     echo "  recent logs for $service_name:"
     compose logs --tail 20 "$service_name" || true
+    return
 }
 
 section "Bundle"

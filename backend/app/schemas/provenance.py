@@ -55,6 +55,7 @@ class SearchRequest(BaseModel):
     workspace_id: str | None = Field(default=None, alias="workspaceId")
     limit: int | None = None
     top_k: int | None = Field(default=None, alias="topK")
+    offset: int = Field(default=0, ge=0)
 
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
@@ -88,6 +89,8 @@ class SearchResultItem(BaseModel):
 class SearchResponse(BaseModel):
     results: list[SearchResultItem]
     count: int
+    total: int | None = None
+    offset: int = 0
     warnings: list[str] = Field(default_factory=list)
 
 

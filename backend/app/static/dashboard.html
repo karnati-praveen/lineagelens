@@ -90,10 +90,10 @@ tr:hover td{background:rgba(255,255,255,.02)}
 
 /* ── Risk ── */
 .rsk{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
-.rsk.critical{background:rgba(239,68,68,.3);color:#fca5a5}
-.rsk.high{background:rgba(239,68,68,.2);color:var(--danger)}
-.rsk.medium{background:rgba(245,158,11,.2);color:var(--warn)}
-.rsk.low{background:rgba(34,197,94,.2);color:var(--ok)}
+.rsk.critical{background:rgba(239,68,68,.25);color:#fca5a5}
+.rsk.high{background:rgba(239,68,68,.18);color:#fca5a5}
+.rsk.medium{background:rgba(245,158,11,.18);color:#fcd34d}
+.rsk.low{background:rgba(34,197,94,.18);color:#86efac}
 
 /* ── Filters ── */
 .filters{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;margin-bottom:18px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
@@ -124,9 +124,9 @@ pre{background:var(--bg3);border:1px solid var(--border);border-radius:6px;paddi
 
 /* ── Alerts ── */
 .al{padding:11px 14px;border-radius:var(--r);margin-bottom:14px;font-size:13px}
-.al.err{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:#fca5a5}
-.al.ok{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);color:#86efac}
-.al.info{background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);color:#93c5fd}
+.al.err{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.35);color:#fca5a5}
+.al.ok{background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.35);color:#86efac}
+.al.info{background:rgba(59,130,246,.15);border:1px solid rgba(59,130,246,.35);color:#93c5fd}
 
 /* ── Loading / empty ── */
 .spin{display:inline-block;width:15px;height:15px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite}
@@ -142,8 +142,54 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-track{background:var(--bg)}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.link-btn{background:none;border:none;padding:0;cursor:pointer;color:var(--accent2);font-size:12px;font-family:inherit}
+
+/* ── Theme toggle ── */
+.theme-btn{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:4px 9px;font-size:14px;cursor:pointer;line-height:1}
+
+/* ── MCP status dot ── */
+.mcp-wrap{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2)}
+.mcp-dot{width:8px;height:8px;border-radius:50%;background:var(--border);flex-shrink:0;transition:background .4s}
+
+/* ── Alert badge on tab ── */
+.tab-badge{display:none;background:var(--danger);color:#fff;border-radius:10px;padding:1px 5px;font-size:10px;font-weight:700;margin-left:4px;vertical-align:middle}
+
+/* ── Modal overlay ── */
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:200;align-items:flex-start;justify-content:center;padding:32px 16px;overflow-y:auto}
+.modal-bg.open{display:flex}
+.modal{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);width:100%;max-width:860px;position:relative}
+.modal-hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border)}
+.modal-hdr h3{font-size:14px;font-weight:600}
+.modal-close{background:none;border:none;font-size:20px;cursor:pointer;color:var(--text2);line-height:1;padding:0}
+.modal-body{padding:18px;max-height:78vh;overflow-y:auto}
+
+/* ── Timeline chart ── */
+.tl-chart-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:20px;margin-bottom:20px}
+.tl-chart-wrap canvas{max-height:300px}
+
+/* ── Heatmap ── */
+.hm-cell{display:flex;align-items:center;justify-content:space-between;padding:5px 10px;border-radius:4px;cursor:pointer;font-size:12px;transition:opacity .15s;min-width:60px}
+.hm-cell:hover{opacity:.8}
+.hm-name{color:#fff;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hm-cnt{color:rgba(255,255,255,.8);font-size:11px;margin-left:8px;white-space:nowrap}
+
+/* ── Graph canvas ── */
+.graph-info{font-size:12px;color:var(--text2);margin-bottom:10px}
+#graph-canvas{width:100%;height:500px;border-radius:var(--r);border:1px solid var(--border);background:var(--bg2);cursor:default;display:block}
+
+/* ── Alert feed ── */
+.feed-item{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:11px 14px;margin-bottom:8px;display:grid;grid-template-columns:auto 1fr auto;grid-template-rows:auto auto;gap:4px 12px;align-items:start}
+.feed-item.feed-new{border-color:var(--accent);animation:pulse-in .5s ease}
+@keyframes pulse-in{from{box-shadow:0 0 0 3px rgba(59,130,246,.4)}to{box-shadow:none}}
+.feed-time{font-size:11px;color:var(--text2);white-space:nowrap;grid-row:1}
+.feed-main{display:flex;flex-wrap:wrap;gap:6px;align-items:center;grid-column:2;grid-row:1}
+.feed-model{font-size:11px;color:var(--text2)}
+.feed-snip{font-family:'Courier New',monospace;font-size:11px;color:var(--text2);grid-column:2;grid-row:2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.feed-view{padding:3px 10px;font-size:11px;grid-column:3;grid-row:1}
+.feed-controls{display:flex;gap:8px;align-items:center;margin-bottom:14px}
 </style>
 </head>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <body>
 
 <!-- LOGIN -->
@@ -151,11 +197,11 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
   <div class="login-card">
     <div class="login-logo"><h1>Lineage<span>Lens</span></h1><p>AI Code Provenance Dashboard</p></div>
     <div id="al-login"></div>
-    <div class="field"><label>Workspace ID</label><input id="l-ws" type="text" placeholder="your-workspace" autocomplete="off"></div>
-    <div class="field"><label>Username</label><input id="l-user" type="text" placeholder="username" autocomplete="username"></div>
-    <div class="field"><label>Password</label><input id="l-pass" type="password" placeholder="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
+    <div class="field"><label for="l-ws">Workspace ID</label><input id="l-ws" type="text" placeholder="your-workspace" autocomplete="off"></div>
+    <div class="field"><label for="l-user">Username</label><input id="l-user" type="text" placeholder="username" autocomplete="username"></div>
+    <div class="field"><label for="l-pass">Password</label><input id="l-pass" type="password" placeholder="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
     <button class="p full" onclick="doLogin()">Sign In</button>
-    <div style="margin-top:12px;text-align:center;font-size:12px;color:var(--text2)">No account? <a href="#" onclick="showReg(event)" style="color:var(--accent2)">Register</a></div>
+    <div style="margin-top:12px;text-align:center;font-size:12px;color:var(--text2)">No account? <button class="link-btn" onclick="showReg(event)">Register</button></div>
   </div>
 </div>
 
@@ -164,11 +210,11 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
   <div class="login-card">
     <div class="login-logo"><h1>Lineage<span>Lens</span></h1><p>Create Account</p></div>
     <div id="al-reg"></div>
-    <div class="field"><label>Workspace ID</label><input id="r-ws" type="text" placeholder="your-workspace"></div>
-    <div class="field"><label>Username</label><input id="r-user" type="text" placeholder="username"></div>
-    <div class="field"><label>Password</label><input id="r-pass" type="password" placeholder="min 8 characters" onkeydown="if(event.key==='Enter')doRegister()"></div>
+    <div class="field"><label for="r-ws">Workspace ID</label><input id="r-ws" type="text" placeholder="your-workspace"></div>
+    <div class="field"><label for="r-user">Username</label><input id="r-user" type="text" placeholder="username"></div>
+    <div class="field"><label for="r-pass">Password</label><input id="r-pass" type="password" placeholder="min 8 characters" onkeydown="if(event.key==='Enter')doRegister()"></div>
     <button class="p full" onclick="doRegister()">Create Account</button>
-    <div style="margin-top:12px;text-align:center;font-size:12px;color:var(--text2)"><a href="#" onclick="showLogin(event)" style="color:var(--accent2)">← Back to Sign In</a></div>
+    <div style="margin-top:12px;text-align:center;font-size:12px;color:var(--text2)"><button class="link-btn" onclick="showLogin(event)">← Back to Sign In</button></div>
   </div>
 </div>
 
@@ -178,15 +224,20 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
     <div class="brand">Lineage<span>Lens</span></div>
     <nav class="topbar-nav">
       <button class="tab on" data-t="dashboard" onclick="go('dashboard')">Dashboard</button>
+      <button class="tab" data-t="timeline" onclick="go('timeline')">Timeline</button>
+      <button class="tab" data-t="graph" onclick="go('graph')">Graph</button>
+      <button class="tab" data-t="alerts" onclick="go('alerts')">Live Feed<span id="alert-badge" class="tab-badge"></span></button>
       <button class="tab" data-t="search" onclick="go('search')">Search</button>
       <button class="tab" data-t="record" onclick="go('record')">Record Viewer</button>
       <button class="tab adm-tab" data-t="export" onclick="go('export')" style="display:none">Export</button>
       <button class="tab adm-tab" data-t="team" onclick="go('team')" style="display:none">Team</button>
     </nav>
     <div class="topbar-right">
+      <div class="mcp-wrap" title="Backend connection status"><div id="mcp-dot" class="mcp-dot"></div><span>MCP</span></div>
       <span id="mode-bdg" class="bdg plus">plus</span>
       <span id="role-bdg" class="bdg"></span>
       <span id="uname" style="color:var(--text)"></span>
+      <button id="theme-btn" class="theme-btn" onclick="toggleTheme()" title="Toggle light/dark">☀️</button>
       <button class="s" style="padding:5px 12px;font-size:12px" onclick="doLogout()">Sign Out</button>
     </div>
   </div>
@@ -210,11 +261,11 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
     <div id="t-search" class="view">
       <div class="stitle">Provenance Search</div>
       <div class="filters">
-        <div class="ff"><label>Keywords</label><input id="s-kw" type="text" placeholder="function name, snippet…" onkeydown="if(event.key==='Enter')doSearch()"></div>
-        <div class="ff"><label>Model</label><input id="s-model" type="text" placeholder="gpt-4o, claude…"></div>
-        <div class="ff"><label>File path</label><input id="s-file" type="text" placeholder="src/auth.py"></div>
-        <div class="ff"><label>Date from</label><input id="s-from" type="date"></div>
-        <div class="ff"><label>Date to</label><input id="s-to" type="date"></div>
+        <div class="ff"><label for="s-kw">Keywords</label><input id="s-kw" type="text" placeholder="function name, snippet…" onkeydown="if(event.key==='Enter')doSearch()"></div>
+        <div class="ff"><label for="s-model">Model</label><input id="s-model" type="text" placeholder="gpt-4o, claude…"></div>
+        <div class="ff"><label for="s-file">File path</label><input id="s-file" type="text" placeholder="src/auth.py"></div>
+        <div class="ff"><label for="s-from">Date from</label><input id="s-from" type="date"></div>
+        <div class="ff"><label for="s-to">Date to</label><input id="s-to" type="date"></div>
         <button class="p" onclick="doSearch()">Search</button>
       </div>
       <div id="search-body"></div>
@@ -230,14 +281,44 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
       <div id="rec-body"></div>
     </div>
 
+    <!-- TIMELINE -->
+    <div id="t-timeline" class="view">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+        <div class="stitle">Timeline &amp; Risk Heatmap</div>
+        <button class="s" style="padding:6px 14px;font-size:12px" onclick="loadTimeline()">Refresh</button>
+      </div>
+      <div id="tl-body"><div class="loading"><div class="spin"></div> Loading…</div></div>
+    </div>
+
+    <!-- GRAPH -->
+    <div id="t-graph" class="view">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div class="stitle">File Lineage Graph <span class="sub">node size = insertions · color = risk · click to search</span></div>
+        <button class="s" style="padding:6px 14px;font-size:12px" onclick="loadGraph()">Refresh</button>
+      </div>
+      <div id="graph-body"><div class="loading"><div class="spin"></div> Building graph…</div></div>
+    </div>
+
+    <!-- ALERTS / LIVE FEED -->
+    <div id="t-alerts" class="view">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div class="stitle">Live Capture Feed</div>
+        <div class="feed-controls">
+          <span id="feed-status" style="font-size:12px;color:var(--text2)">Polling every 30s</span>
+          <button class="s" style="padding:6px 14px;font-size:12px" onclick="pollAlerts()">Refresh Now</button>
+        </div>
+      </div>
+      <div id="alert-feed"><div class="loading"><div class="spin"></div> Loading…</div></div>
+    </div>
+
     <!-- EXPORT -->
     <div id="t-export" class="view">
       <div class="stitle">Audit Export <span class="sub">Admin only · up to 10,000 rows</span></div>
       <div class="filters">
-        <div class="ff"><label>Date from</label><input id="e-from" type="date"></div>
-        <div class="ff"><label>Date to</label><input id="e-to" type="date"></div>
-        <div class="ff"><label>Developer</label><input id="e-dev" type="text" placeholder="git username"></div>
-        <div class="ff"><label>File path</label><input id="e-file" type="text" placeholder="src/auth.py"></div>
+        <div class="ff"><label for="e-from">Date from</label><input id="e-from" type="date"></div>
+        <div class="ff"><label for="e-to">Date to</label><input id="e-to" type="date"></div>
+        <div class="ff"><label for="e-dev">Developer</label><input id="e-dev" type="text" placeholder="git username"></div>
+        <div class="ff"><label for="e-file">File path</label><input id="e-file" type="text" placeholder="src/auth.py"></div>
         <button class="p" onclick="doExport()">Download CSV</button>
       </div>
       <div id="al-export"></div>
@@ -250,15 +331,26 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
         <h3>Invite Member</h3>
         <div id="al-invite"></div>
         <div class="form-row">
-          <div class="field"><label>Username</label><input id="inv-u" type="text" placeholder="username"></div>
-          <div class="field"><label>Password</label><input id="inv-p" type="password" placeholder="min 8 chars"></div>
-          <div class="field"><label>Role</label><select id="inv-r"><option value="member">Member</option><option value="admin">Admin</option></select></div>
+          <div class="field"><label for="inv-u">Username</label><input id="inv-u" type="text" placeholder="username"></div>
+          <div class="field"><label for="inv-p">Password</label><input id="inv-p" type="password" placeholder="min 8 chars"></div>
+          <div class="field"><label for="inv-r">Role</label><select id="inv-r"><option value="member">Member</option><option value="admin">Admin</option></select></div>
         </div>
         <div style="margin-top:12px"><button class="p" onclick="doInvite()">Invite</button></div>
       </div>
       <div id="team-body"><div class="loading"><div class="spin"></div> Loading…</div></div>
     </div>
 
+  </div>
+</div>
+
+<!-- RECORD DETAIL MODAL -->
+<div id="rec-modal" class="modal-bg" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h3>Provenance Record</h3>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
   </div>
 </div>
 
@@ -369,6 +461,9 @@ async function initApp() {
   }
   showApp();
   go('dashboard');
+  checkMcp();
+  setInterval(checkMcp, 60000);
+  startAlertPoll();
 }
 
 // ── TABS ─────────────────────────────────────────────────────────────────────
@@ -376,6 +471,9 @@ function go(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.t===name));
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id===`t-${name}`));
   if (name==='dashboard') loadDash();
+  if (name==='timeline') loadTimeline();
+  if (name==='graph') loadGraph();
+  if (name==='alerts') { clearAlertBadge(); loadAlerts(); }
   if (name==='team') loadTeam();
   if (name==='search') document.getElementById('s-kw').focus();
 }
@@ -398,9 +496,18 @@ async function loadDash() {
 
 function buildDash(d) {
   const gs = d.governanceSummary || {};
-  const pct = v => v==null ? '—' : (typeof v==='number'&&v<=1 ? (v*100).toFixed(1) : Number(v).toFixed(1))+'%';
+  const pct = v => {
+    if (v == null) return '—';
+    const n = typeof v === 'number' && v <= 1 ? v * 100 : Number(v);
+    return n.toFixed(1) + '%';
+  };
   const num = v => v==null ? '—' : Number(v).toLocaleString();
-  const rCls = v => { const n=parseFloat(v); if(n>=.7)return 'danger'; if(n>=.4)return 'warn'; return 'ok'; };
+  const rCls = v => {
+    const n = Number.parseFloat(v);
+    if (n >= .7) { return 'danger'; }
+    if (n >= .4) { return 'warn'; }
+    return 'ok';
+  };
 
   let h = `<div class="mgrid">
     ${mc('Total Records', num(gs.totalRecords), 'accent')}
@@ -417,7 +524,9 @@ function buildDash(d) {
 
   if (d.complianceControls?.length) {
     h += '<div class="cgrid">' + d.complianceControls.map(c => {
-      const dc = c.status==='pass'?'ok':c.status==='warn'?'warn':'fail';
+      let dc = 'fail';
+      if (c.status === 'pass') { dc = 'ok'; }
+      else if (c.status === 'warn') { dc = 'warn'; }
       return `<div class="ccard"><div class="cname"><span class="dot ${dc}"></span>${esc(c.name)}</div>
         <div class="cval">${esc(String(c.metric??''))}</div>
         <div class="csub">${esc(c.summary||'')}</div></div>`;
@@ -507,7 +616,29 @@ async function doSearch() {
 
 // ── RECORD ────────────────────────────────────────────────────────────────────
 function openRec(uuid) {
+  openModal(uuid);
+}
+
+function openModal(uuid) {
+  const mb = document.getElementById('modal-body');
+  mb.innerHTML = '<div class="loading"><div class="spin"></div> Loading…</div>';
+  document.getElementById('rec-modal').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  req('GET', `/provenance/${encodeURIComponent(uuid)}`)
+    .then(r => { mb.innerHTML = buildRec(r); })
+    .catch(e => { mb.innerHTML = `<div class="al err">${esc(e.message)}</div>`; });
+}
+
+function closeModal() {
+  document.getElementById('rec-modal').classList.remove('open');
+  document.body.style.overflow = '';
+  document.getElementById('exp-result').innerHTML = '';
+  document.getElementById('exp-status').textContent = '';
+}
+
+function openRecTab(uuid) {
   document.getElementById('rec-uuid').value = uuid;
+  closeModal();
   go('record');
   loadRec();
 }
@@ -554,8 +685,9 @@ function buildRec(r) {
 
   if (Object.keys(snap).length) h += rs('Context Snapshot', `<pre>${esc(JSON.stringify(snap,null,2))}</pre>`);
 
-  h += `<div style="margin-top:14px;display:flex;gap:10px;align-items:center">
-    <button class="s" onclick="doExplain('${esc(r.uuid||'')}')">✨ Explain with AI</button>
+  h += `<div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <button class="p" onclick="doExplain('${esc(r.uuid||'')}')">✨ Explain with AI</button>
+    <button class="s" onclick="openRecTab('${esc(r.uuid||'')}')">Open in Record Viewer</button>
     <span id="exp-status" style="font-size:12px;color:var(--text2)"></span>
   </div><div id="exp-result" style="margin-top:12px"></div>`;
   return h;
@@ -601,7 +733,7 @@ async function doExport() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href=url; a.download=`lineagelens-audit-${new Date().toISOString().slice(0,10)}.csv`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
     setAl('al-export',`Downloaded ${count} records.`,'ok');
   } catch(e) { setAl('al-export', e.message); }
@@ -642,8 +774,316 @@ async function doInvite() {
 function g(id) { return document.getElementById(id)?.value||''; }
 function show(id) { document.getElementById(id).style.display='flex'; }
 function hide(id) { document.getElementById(id).style.display='none'; }
-function esc(s) { return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function fd(iso) { if(!iso)return '—'; try{return new Date(iso).toLocaleString(undefined,{dateStyle:'short',timeStyle:'short'});}catch{return iso;} }
+function esc(s) { return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;'); }
+function fd(iso) { if (!iso) { return '—'; } try{return new Date(iso).toLocaleString(undefined,{dateStyle:'short',timeStyle:'short'});}catch{return iso;} }
+
+// ── THEME ─────────────────────────────────────────────────────────────────────
+let _dark = true;
+function toggleTheme() {
+  _dark = !_dark;
+  const r = document.documentElement;
+  if (_dark) {
+    r.style.setProperty('--bg','#0f1923'); r.style.setProperty('--bg2','#162232');
+    r.style.setProperty('--bg3','#1e3048'); r.style.setProperty('--text','#e2e8f0');
+    r.style.setProperty('--text2','#94a3b8'); r.style.setProperty('--border','#2d4a6a');
+    document.getElementById('theme-btn').textContent = '☀️';
+  } else {
+    r.style.setProperty('--bg','#f0f4f8'); r.style.setProperty('--bg2','#ffffff');
+    r.style.setProperty('--bg3','#e8edf3'); r.style.setProperty('--text','#1a202c');
+    r.style.setProperty('--text2','#4a5568'); r.style.setProperty('--border','#cbd5e0');
+    document.getElementById('theme-btn').textContent = '🌙';
+  }
+  if (_tlChart) { _tlChart.destroy(); _tlChart = null; buildTimeline(_lastDashData || {}); }
+}
+
+// ── MCP / BACKEND STATUS ──────────────────────────────────────────────────────
+async function checkMcp() {
+  const dot = document.getElementById('mcp-dot');
+  if (!dot) return;
+  try {
+    const d = await fetch('/health').then(r => r.json());
+    dot.style.background = 'var(--ok)';
+    dot.title = `Backend OK · v${d.version || '?'} · ${d.productMode || ''} mode`;
+  } catch {
+    dot.style.background = 'var(--danger)';
+    dot.title = 'Backend unreachable';
+  }
+}
+
+// ── TIMELINE ─────────────────────────────────────────────────────────────────
+let _tlChart = null;
+let _lastDashData = null;
+
+async function loadTimeline() {
+  const el = document.getElementById('tl-body');
+  el.innerHTML = '<div class="loading"><div class="spin"></div> Loading…</div>';
+  try {
+    const body = {};
+    const df = g('d-from'), dt = g('d-to');
+    if (df) body.date_from = new Date(df).toISOString();
+    if (dt) body.date_to = new Date(dt + 'T23:59:59').toISOString();
+    const d = await req('POST', '/insights/dashboard', body);
+    _lastDashData = d;
+    el.innerHTML = '';
+    buildTimeline(d);
+  } catch(e) {
+    el.innerHTML = `<div class="al err">${esc(e.message)}</div>`;
+  }
+}
+
+function buildTimeline(d) {
+  const el = document.getElementById('tl-body');
+  if (!el) return;
+  const trends = d.riskTrends || [];
+  const hotspots = d.fileHotspots || [];
+
+  el.innerHTML = `<div class="tl-chart-wrap"><canvas id="tl-chart"></canvas></div>`;
+  if (hotspots.length) el.innerHTML += buildRiskHeatmap(hotspots);
+
+  if (!trends.length) {
+    document.getElementById('tl-chart').parentElement.innerHTML =
+      '<div class="empty">No trend data yet — capture more AI insertions and refresh.</div>';
+    return;
+  }
+
+  const labels = trends.map(t => t.bucketLabel || '');
+  const records = trends.map(t => t.recordCount || 0);
+  const highRisk = trends.map(t => t.highRiskCount || 0);
+  const avgRisk = trends.map(t => {
+    const v = t.avgRisk;
+    if (v == null) return null;
+    return (typeof v === 'number' && v <= 1 ? v * 100 : Number(v));
+  });
+
+  const textColor = _dark ? '#94a3b8' : '#4a5568';
+  const gridColor = _dark ? '#2d4a6a' : '#cbd5e0';
+  const ctx = document.getElementById('tl-chart').getContext('2d');
+  if (_tlChart) { _tlChart.destroy(); }
+  _tlChart = new Chart(ctx, {
+    data: {
+      labels,
+      datasets: [
+        { type: 'bar', label: 'AI Insertions', data: records, backgroundColor: 'rgba(59,130,246,.5)', borderColor: '#3b82f6', borderWidth: 1, yAxisID: 'y' },
+        { type: 'bar', label: 'High Risk', data: highRisk, backgroundColor: 'rgba(239,68,68,.45)', borderColor: '#ef4444', borderWidth: 1, yAxisID: 'y' },
+        { type: 'line', label: 'Avg Risk %', data: avgRisk, borderColor: '#f59e0b', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, tension: 0.3, yAxisID: 'y2' },
+      ],
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { labels: { color: textColor, font: { size: 12 } } } },
+      scales: {
+        x: { ticks: { color: textColor }, grid: { color: gridColor } },
+        y: { beginAtZero: true, ticks: { color: textColor }, grid: { color: gridColor }, title: { display: true, text: 'Insertions', color: textColor } },
+        y2: { beginAtZero: true, max: 100, position: 'right', grid: { display: false }, ticks: { color: '#f59e0b', callback: v => v + '%' }, title: { display: true, text: 'Avg Risk %', color: '#f59e0b' } },
+      },
+    },
+  });
+}
+
+function buildRiskHeatmap(hotspots) {
+  const max = Math.max(...hotspots.map(f => f.recordCount || 0), 1);
+  const rows = hotspots.slice(0, 20).map(f => {
+    const w = Math.max(8, Math.round(f.recordCount / max * 100));
+    const risk = f.avgRisk || 0;
+    const rn = typeof risk === 'number' && risk <= 1 ? risk : risk / 100;
+    const hue = Math.round((1 - Math.min(rn, 1)) * 120);
+    const alpha = 0.3 + rn * 0.5;
+    const name = (f.fileName || '').split('/').pop() || f.fileName || '?';
+    return `<div class="hm-cell" style="width:${w}%;background:hsla(${hue},70%,50%,${alpha})"
+      title="${esc(f.fileName || '')} · ${f.recordCount} insertions · avg risk ${(rn*100).toFixed(1)}%"
+      onclick="filterByFile('${esc(f.fileName||'')}')">
+      <span class="hm-name">${esc(name)}</span><span class="hm-cnt">${f.recordCount}</span>
+    </div>`;
+  }).join('');
+  return `<div class="twrap"><div class="thead-row"><span class="ttitle">File Risk Heatmap</span>
+    <span style="font-size:11px;color:var(--text2)">bar width = relative insertions · color = risk (red→green)</span></div>
+    <div style="padding:16px;display:flex;flex-direction:column;gap:5px">${rows}</div></div>`;
+}
+
+function filterByFile(fp) {
+  document.getElementById('s-file').value = fp;
+  go('search'); doSearch();
+}
+
+// ── GRAPH ─────────────────────────────────────────────────────────────────────
+async function loadGraph() {
+  const el = document.getElementById('graph-body');
+  el.innerHTML = '<div class="loading"><div class="spin"></div> Building graph…</div>';
+  try {
+    const d = await req('POST', '/search', { limit: 100 });
+    const results = d.results || [];
+    if (!results.length) { el.innerHTML = '<div class="empty">No records yet to graph.</div>'; return; }
+    const gd = buildGraphData(results);
+    el.innerHTML = `<div class="graph-info">${gd.nodes.length} files · ${gd.links.length} model-shared connections · click a node to search that file</div>
+      <canvas id="graph-canvas"></canvas>`;
+    drawGraph(gd);
+  } catch(e) { el.innerHTML = `<div class="al err">${esc(e.message)}</div>`; }
+}
+
+function buildGraphData(records) {
+  const fileMap = {};
+  const modelFiles = {};
+  records.forEach(r => {
+    const fp = r.filePath || 'unknown';
+    const lvl = ((r.record || {}).riskAssessment || {}).level || '';
+    const riskVal = lvl === 'critical' ? 0.95 : lvl === 'high' ? 0.7 : lvl === 'medium' ? 0.45 : 0.15;
+    if (!fileMap[fp]) { fileMap[fp] = { id: fp, count: 0, risk: 0, model: r.model || '' }; }
+    fileMap[fp].count++;
+    fileMap[fp].risk = Math.max(fileMap[fp].risk, riskVal);
+    const mdl = r.model || 'unknown';
+    if (!modelFiles[mdl]) { modelFiles[mdl] = new Set(); }
+    modelFiles[mdl].add(fp);
+  });
+  const linkSet = new Set();
+  const links = [];
+  Object.values(modelFiles).forEach(files => {
+    const arr = [...files];
+    for (let i = 0; i < arr.length; i++) {
+      for (let j = i + 1; j < arr.length; j++) {
+        const key = arr[i] < arr[j] ? arr[i] + '||' + arr[j] : arr[j] + '||' + arr[i];
+        if (!linkSet.has(key)) { linkSet.add(key); links.push({ source: arr[i], target: arr[j] }); }
+      }
+    }
+  });
+  return { nodes: Object.values(fileMap), links };
+}
+
+function drawGraph(data) {
+  const canvas = document.getElementById('graph-canvas');
+  if (!canvas) return;
+  const W = canvas.clientWidth || 900, H = 500;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  const nodes = data.nodes.map(n => ({
+    ...n, x: W / 2 + (Math.random() - .5) * W * .55, y: H / 2 + (Math.random() - .5) * H * .55,
+    vx: 0, vy: 0, r: Math.max(14, Math.min(36, 10 + n.count * 4)),
+  }));
+  const byId = {};
+  nodes.forEach(n => byId[n.id] = n);
+  let frame = 0;
+  const tick = () => {
+    if (frame++ > 200) return;
+    nodes.forEach((a, i) => {
+      nodes.forEach((b, j) => {
+        if (i >= j) return;
+        const dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx*dx + dy*dy) || 1;
+        const f = 2200 / (d * d);
+        a.vx -= f*dx/d; a.vy -= f*dy/d; b.vx += f*dx/d; b.vy += f*dy/d;
+      });
+    });
+    data.links.forEach(l => {
+      const a = byId[l.source], b = byId[l.target];
+      if (!a || !b) return;
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx*dx + dy*dy) || 1;
+      const f = (d - 130) * 0.012;
+      a.vx += f*dx/d; a.vy += f*dy/d; b.vx -= f*dx/d; b.vy -= f*dy/d;
+    });
+    nodes.forEach(n => {
+      n.vx += (W/2 - n.x) * .003; n.vy += (H/2 - n.y) * .003;
+      n.vx *= .82; n.vy *= .82;
+      n.x = Math.max(n.r, Math.min(W - n.r, n.x + n.vx));
+      n.y = Math.max(n.r, Math.min(H - n.r, n.y + n.vy));
+    });
+    ctx.clearRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(45,74,106,.5)'; ctx.lineWidth = 1;
+    data.links.forEach(l => {
+      const a = byId[l.source], b = byId[l.target];
+      if (!a || !b) return;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    });
+    nodes.forEach(n => {
+      const hue = Math.round((1 - n.risk) * 120);
+      ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+      ctx.fillStyle = `hsla(${hue},68%,48%,.85)`; ctx.fill();
+      ctx.strokeStyle = `hsla(${hue},68%,70%,.9)`; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = _dark ? '#e2e8f0' : '#1a202c';
+      ctx.font = `${Math.min(11, n.r * 0.75)}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(n.id.split('/').pop().slice(0, 14), n.x, n.y);
+    });
+    requestAnimationFrame(tick);
+  };
+  tick();
+  canvas.onclick = e => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const hit = nodes.find(n => Math.hypot(n.x - mx, n.y - my) <= n.r);
+    if (hit) filterByFile(hit.id);
+  };
+  canvas.onmousemove = e => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const hit = nodes.find(n => Math.hypot(n.x - mx, n.y - my) <= n.r);
+    canvas.style.cursor = hit ? 'pointer' : 'default';
+    canvas.title = hit ? `${hit.id} · ${hit.count} insertions · risk ${(hit.risk*100).toFixed(0)}%` : '';
+  };
+}
+
+// ── ALERT FEED ────────────────────────────────────────────────────────────────
+let _alertPoll = null;
+let _alertSeen = new Set();
+let _alertCount = 0;
+
+function loadAlerts() { pollAlerts(); }
+
+function startAlertPoll() {
+  if (_alertPoll) clearInterval(_alertPoll);
+  _alertPoll = setInterval(async () => {
+    await pollAlerts();
+    const isAlertsTab = document.getElementById('t-alerts').classList.contains('on');
+    if (isAlertsTab) clearAlertBadge();
+  }, 30000);
+}
+
+function clearAlertBadge() {
+  _alertCount = 0;
+  const b = document.getElementById('alert-badge');
+  if (b) { b.style.display = 'none'; b.textContent = ''; }
+}
+
+async function pollAlerts() {
+  const el = document.getElementById('alert-feed');
+  if (!el) return;
+  try {
+    const d = await req('POST', '/search', { limit: 25 });
+    const results = d.results || [];
+    const newOnes = results.filter(r => !_alertSeen.has(r.uuid));
+    results.forEach(r => _alertSeen.add(r.uuid));
+
+    if (!results.length) {
+      el.innerHTML = '<div class="empty">No captures yet. Start coding with AI to see the live feed here.</div>'; return;
+    }
+
+    if (newOnes.length > 0) {
+      _alertCount += newOnes.length;
+      const isAlertsTab = document.getElementById('t-alerts').classList.contains('on');
+      if (!isAlertsTab) {
+        const b = document.getElementById('alert-badge');
+        if (b) { b.textContent = _alertCount; b.style.display = 'inline-block'; }
+      }
+    }
+
+    el.innerHTML = results.map(r => {
+      const isNew = newOnes.includes(r);
+      const lvl = ((r.record?.riskAssessment) || {}).level || '';
+      const snip = (r.snippet || '').replace(/\s+/g, ' ').slice(0, 110);
+      return `<div class="feed-item${isNew ? ' feed-new' : ''}">
+        <div class="feed-time">${fd(r.timestampIso)}</div>
+        <div class="feed-main">
+          <code>${esc(r.filePath || '—')}</code>
+          ${lvl ? `<span class="rsk ${esc(lvl.toLowerCase())}">${esc(lvl)}</span>` : ''}
+          <span class="feed-model">${esc(r.model || '—')}</span>
+        </div>
+        ${snip ? `<div class="feed-snip">${esc(snip)}</div>` : ''}
+        <button class="s feed-view" onclick="openRec('${esc(r.uuid||'')}')">View</button>
+      </div>`;
+    }).join('');
+
+    const st = document.getElementById('feed-status');
+    if (st) st.textContent = `Last checked ${new Date().toLocaleTimeString(undefined,{timeStyle:'short'})} · polling every 30s`;
+  } catch {}
+}
 
 // ── BOOT ─────────────────────────────────────────────────────────────────────
 showLogin();

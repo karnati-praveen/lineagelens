@@ -1,6 +1,6 @@
 'use strict';
 
-const { execFileSync, spawnSync, spawn } = require('child_process');
+const { execFileSync, spawnSync, spawn } = require('node:child_process');
 
 function checkDocker() {
   const result = spawnSync('docker', ['info'], { stdio: 'pipe' });

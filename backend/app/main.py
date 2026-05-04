@@ -19,6 +19,7 @@ from app.api.routes.search import router as search_router
 from app.api.routes.explain import router as explain_router
 from app.api.routes.insights import router as insights_router
 from app.api.routes.team import router as team_router
+from app.api.routes.report import router as report_router
 from app.api.routes.ws_capture import router as ws_capture_router
 from app.core.config import Settings, get_settings
 from app.core.rate_limit import InMemoryRateLimiter, client_identifier, effective_client_ip
@@ -266,7 +267,7 @@ app.add_middleware(
     allow_origin_regex=None,
     allow_credentials=bool(_cors_origins) and "*" not in _cors_origins,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With", "X-API-Version", "X-Trace-ID"],
     max_age=600,
 )
 
@@ -278,6 +279,7 @@ app.include_router(explain_router)
 app.include_router(insights_router)
 app.include_router(export_router)
 app.include_router(team_router)
+app.include_router(report_router)
 app.include_router(ws_capture_router)
 
 

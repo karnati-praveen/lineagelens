@@ -1,7 +1,7 @@
 'use strict';
 
-const path = require('path');
-const fs = require('fs');
+const path = require('node:path');
+const fs = require('node:fs');
 const { checkDocker, runCompose } = require('../utils/docker');
 const { envFilePath } = require('../utils/env');
 
@@ -22,7 +22,8 @@ function logs(opts) {
   const args = ['logs', '--follow', '--tail', String(opts.tail || 100)];
   if (opts.service) args.push(opts.service);
 
-  console.log(`Tailing logs for LineageLens ${mode.toUpperCase()}${opts.service ? ` / ${opts.service}` : ''}  (Ctrl+C to stop)\n`);
+  const serviceSuffix = opts.service ? ' / ' + opts.service : '';
+  console.log(`Tailing logs for LineageLens ${mode.toUpperCase()}${serviceSuffix}  (Ctrl+C to stop)\n`);
 
   const proc = runCompose(composeFile, envFile, args, { mode });
   proc.stdout?.pipe(process.stdout);

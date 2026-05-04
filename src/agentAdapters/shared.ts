@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash } from 'node:crypto';
 import type { AgentEvidence, AgentOperationType, AgentSessionKind, NormalizedAgentContext } from './types';
 
 export function toText(value: unknown): string {
@@ -164,7 +164,7 @@ export function classifyOperationType(input: {
 
 function countDistinctFiles(text: string): number {
   const matches =
-    text.match(/(?:\.\.?[\\/]|(?:[A-Za-z]:)?[\\/]|(?:[a-z0-9_.-]+[\\/])+)[^\s'"`]+?\.[a-z0-9]+/gi) ?? [];
+    text.match(/(?:\.\.?[/\\]|(?:[A-Za-z]:)?[/\\]|(?:[a-z0-9_.-]+[/\\])+)[^\s'"`]+?\.[a-z0-9]+/gi) ?? [];
   return new Set(matches.map((value) => value.toLowerCase())).size;
 }
 

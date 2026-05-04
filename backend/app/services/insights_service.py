@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import re
+import time
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
@@ -24,12 +26,34 @@ CRITICAL_RISK_THRESHOLD = 85
 AGENT_SESSION_GAP_SECONDS = 20 * 60
 MAX_DASHBOARD_RECORDS = 2000
 
+_INSIGHTS_CACHE_TTL = 300  # 5 minutes
+_insights_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _insights_cache_key(workspace_id: str, search: SearchRequest) -> str:
+    search_hash = hashlib.md5(
+        search.model_dump_json(exclude_none=True).encode(), usedforsecurity=False
+    ).hexdigest()
+    return f"{workspace_id}:{search_hash}"
+
+
+def _prune_insights_cache(now: float) -> None:
+    stale = [k for k, (ts, _) in _insights_cache.items() if now - ts > _INSIGHTS_CACHE_TTL * 2]
+    for k in stale:
+        del _insights_cache[k]
+
 
 async def get_insights_dashboard_payload(
     session: AsyncSession,
     search: SearchRequest,
     workspace_id: str,
 ) -> dict[str, Any]:
+    cache_key = _insights_cache_key(workspace_id, search)
+    now = time.monotonic()
+    cached = _insights_cache.get(cache_key)
+    if cached and (now - cached[0]) < _INSIGHTS_CACHE_TTL:
+        return cached[1]
+
     statement = (
         select(ProvenanceRecord)
         .where(and_(*build_workspace_record_filters(search, workspace_id)))
@@ -53,6 +77,9 @@ async def get_insights_dashboard_payload(
     member_stats = await build_member_stats(session, workspace_id)
     payload = build_insights_dashboard(records, extra_warnings=extra_warnings)
     payload["memberStats"] = [member.model_dump(by_alias=True) for member in member_stats]
+
+    _insights_cache[cache_key] = (now, payload)
+    _prune_insights_cache(now)
     return payload
 
 
@@ -204,11 +231,19 @@ def build_insights_dashboard(
 
 
 def _rate_status(value: float, pass_threshold: float, warn_threshold: float) -> str:
-    return "pass" if value >= pass_threshold else "warning" if value >= warn_threshold else "fail"
+    if value >= pass_threshold:
+        return "pass"
+    if value >= warn_threshold:
+        return "warning"
+    return "fail"
 
 
 def _rate_status_lower(value: float, pass_threshold: float, warn_threshold: float) -> str:
-    return "pass" if value <= pass_threshold else "warning" if value <= warn_threshold else "fail"
+    if value <= pass_threshold:
+        return "pass"
+    if value <= warn_threshold:
+        return "warning"
+    return "fail"
 
 
 def build_compliance_controls(
@@ -223,6 +258,7 @@ def build_compliance_controls(
     average_correlation_confidence: float,
 ) -> list[dict[str, Any]]:
     high_risk_ratio = (high_risk_records / total_records) if total_records else 0.0
+    overall_risk_status = "pass" if avg_risk_score < 35 else ("warning" if avg_risk_score < 60 else "fail")
 
     return [
         control(
@@ -263,7 +299,7 @@ def build_compliance_controls(
         control(
             "overall-risk",
             "Average Governance Risk",
-            "pass" if avg_risk_score < 35 else "warning" if avg_risk_score < 60 else "fail",
+            overall_risk_status,
             str(avg_risk_score),
             "Heuristic governance risk score across all filtered provenance records.",
         ),
@@ -564,7 +600,7 @@ def _compute_heuristic_risk(
     net_added_lines = int(pick_first(record, [["insertion", "netAddedLines"], ["netAddedLines"]]) or 0)
     correlation_confidence = to_number(pick_first(record, [["metadata", "correlationConfidence"]]))
 
-    _apply_prompt_capture_signal(prompt_status, score, reasons, categories)
+    _apply_prompt_capture_signal(prompt_status, reasons, categories)
     score = _apply_prompt_capture_score(prompt_status, score)
     _apply_correlation_signal(correlation_confidence, reasons, categories)
     score = _apply_correlation_score(correlation_confidence, score)
@@ -582,7 +618,7 @@ def _compute_heuristic_risk(
 
 
 def _apply_prompt_capture_signal(
-    prompt_status: str, score: int, reasons: list[str], categories: set[str]
+    prompt_status: str, reasons: list[str], categories: set[str]
 ) -> None:
     if prompt_status != "captured":
         reasons.append("Prompt capture is missing, which reduces auditability and reviewer confidence.")
@@ -766,6 +802,13 @@ def _heuristic_context_from_correlation(
         model_name=model_name,
     )
 
+    if tool_name:
+        raw_confidence = 0.55
+    elif provider:
+        raw_confidence = 0.42
+    else:
+        raw_confidence = 0.3
+
     return normalize_agent_context(
         {
             "toolName": tool_name,
@@ -776,7 +819,7 @@ def _heuristic_context_from_correlation(
             "runId": None,
             "workspaceHint": None,
             "operationType": operation_type,
-            "confidence": 0.55 if tool_name else 0.42 if provider else 0.3,
+            "confidence": raw_confidence,
             "evidence": [
                 {
                     "source": "heuristic",
@@ -890,7 +933,7 @@ def classify_operation_type(inserted_text: str, prompt_blob: str, model_name: st
 
 
 def count_distinct_file_paths(text: str) -> int:
-    matches = re.findall(r"(?:[A-Za-z]:)?[\\/][^\s'\"`]+?\.[a-z0-9]+", text, flags=re.IGNORECASE)
+    matches = re.findall(r"""(?:[A-Za-z]:)?(?:/|\\)[^\s'"`]+?\.[a-z0-9]+""", text, flags=re.IGNORECASE)
     return len({match.lower() for match in matches})
 
 
