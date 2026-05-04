@@ -1,5 +1,5 @@
-import * as http from 'http';
-import * as https from 'https';
+import * as http from 'node:http';
+import * as https from 'node:https';
 import * as vscode from 'vscode';
 
 const CONFIG_SECTION = 'aiInsertionDetector';
@@ -508,12 +508,14 @@ function isTokenExpiringSoon(token: string, skewSeconds: number): boolean {
   }
 
   const expValue = payload.exp;
-  const expEpochSeconds =
-    typeof expValue === 'number'
-      ? expValue
-      : typeof expValue === 'string'
-        ? Number(expValue)
-        : Number.NaN;
+  let expEpochSeconds: number;
+  if (typeof expValue === 'number') {
+    expEpochSeconds = expValue;
+  } else if (typeof expValue === 'string') {
+    expEpochSeconds = Number(expValue);
+  } else {
+    expEpochSeconds = Number.NaN;
+  }
 
   if (!Number.isFinite(expEpochSeconds)) {
     return true;

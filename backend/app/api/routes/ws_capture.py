@@ -54,6 +54,7 @@ async def _verify_ws_token_against_db(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """Raise HTTPException if the token has been revoked or the account is inactive."""
+    # All tokens issued by this backend include token_version; absence means a crafted token.
     try:
         token_version_claim = int(auth.token_payload.get("token_version", -1))
     except (TypeError, ValueError):
@@ -63,7 +64,10 @@ async def _verify_ws_token_against_db(
         )
 
     if token_version_claim < 0:
-        return
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token is missing version claim.",
+        )
 
     try:
         user_id = PyUUID(auth.subject)

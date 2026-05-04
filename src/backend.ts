@@ -1,5 +1,5 @@
-import * as http from 'http';
-import * as https from 'https';
+import * as http from 'node:http';
+import * as https from 'node:https';
 import * as vscode from 'vscode';
 import WebSocket, { RawData } from 'ws';
 import { BackendAuthSession } from './backendAuth';

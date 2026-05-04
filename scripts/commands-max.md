@@ -599,6 +599,160 @@ docker system prune -f
 
 ---
 
+## MCP Server
+
+The LineageLens MCP server lets Claude Code, Cursor, Continue, and any other MCP-capable client query provenance records — including Neo4j-backed graph lineage data — directly inside the AI chat.
+
+### Prerequisites
+
+- Python 3.11 or later
+- The Max backend running (`lineagelens start --mode max` or `bash quickstart.sh`)
+- A registered LineageLens account on this backend
+
+### Install dependencies
+
+```bash
+cd mcp
+pip install -r requirements.txt
+```
+
+With a virtual environment (recommended):
+
+```bash
+cd mcp
+python -m venv .venv
+source .venv/bin/activate      # macOS / Linux
+.\.venv\Scripts\activate       # Windows
+pip install -r requirements.txt
+```
+
+### Get your access token (one-time)
+
+```bash
+# Login and capture your JWT
+TOKEN=$(curl -s -X POST http://localhost:8787/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"yourpassword"}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('accessToken',''))")
+echo $TOKEN
+```
+
+### Test the server runs
+
+```bash
+cd mcp
+LINEAGELENS_USERNAME=admin \
+LINEAGELENS_PASSWORD=yourpassword \
+LINEAGELENS_BACKEND_URL=http://localhost:8787 \
+python server.py
+# No error = ready. Ctrl+C to stop.
+```
+
+### Wire into Claude Code
+
+Add to `~/.claude/settings.json` (global) or `.claude/settings.json` (project):
+
+```json
+{
+  "mcpServers": {
+    "lineagelens": {
+      "command": "python",
+      "args": ["/absolute/path/to/mcp/server.py"],
+      "env": {
+        "LINEAGELENS_USERNAME": "admin",
+        "LINEAGELENS_PASSWORD": "yourpassword",
+        "LINEAGELENS_BACKEND_URL": "http://localhost:8787"
+      }
+    }
+  }
+}
+```
+
+Replace `/absolute/path/to/mcp/server.py` with the full path on your machine. Restart Claude Code after saving.
+
+Alternatively, use a pre-obtained token instead of username/password:
+
+```json
+{
+  "mcpServers": {
+    "lineagelens": {
+      "command": "python",
+      "args": ["/absolute/path/to/mcp/server.py"],
+      "env": {
+        "LINEAGELENS_ACCESS_TOKEN": "<paste token here>",
+        "LINEAGELENS_BACKEND_URL": "http://localhost:8787"
+      }
+    }
+  }
+}
+```
+
+### Wire into Cursor
+
+Cursor → Settings → MCP → Add Server:
+
+- **Name:** `lineagelens`
+- **Command:** `python /absolute/path/to/mcp/server.py`
+- **Environment variables:**
+  - `LINEAGELENS_USERNAME` = admin
+  - `LINEAGELENS_PASSWORD` = yourpassword
+  - `LINEAGELENS_BACKEND_URL` = http://localhost:8787
+
+### Available MCP tools
+
+Once connected, the AI assistant can call:
+
+| Tool | What it does |
+|------|-------------|
+| `search_provenance(query)` | Full-text / semantic search for AI-generated code |
+| `get_record(uuid)` | Full metadata for a specific provenance record (includes Neo4j lineage node ID) |
+| `get_insights()` | Governance dashboard — risk scores, compliance, totals, agent sessions |
+| `explain_record(uuid)` | Plain-English explanation of why the code was generated |
+| `list_recent(limit)` | Most recently captured AI insertions |
+| `check_file_risk(file_path)` | Risk breakdown and model usage for a specific file |
+
+> **Max note:** `get_record` returns the `lineageNodeId` field when the record has a Neo4j lineage node. Use this value in Cypher queries (see Neo4j section above) to traverse the full evolution graph.
+
+### Windows (PowerShell) environment setup
+
+```powershell
+$env:LINEAGELENS_USERNAME = "admin"
+$env:LINEAGELENS_PASSWORD = "yourpassword"
+$env:LINEAGELENS_BACKEND_URL = "http://localhost:8787"
+cd mcp
+python server.py
+```
+
+### Verify the MCP server can reach the backend
+
+```bash
+curl -s http://localhost:8787/health | python3 -m json.tool
+# Should show "productMode": "max", "neo4j": true
+```
+
+### Troubleshooting MCP
+
+**"Authentication required" on startup**
+- `LINEAGELENS_USERNAME` and `LINEAGELENS_PASSWORD` (or `LINEAGELENS_ACCESS_TOKEN`) must be set before starting the server.
+
+**"Backend returned 401"**
+- Token expired. Restart the MCP server process — it will re-login automatically.
+- Or re-obtain the token and update `LINEAGELENS_ACCESS_TOKEN`.
+
+**"Backend returned 403"**
+- The user account does not have access to this workspace.
+- Check the workspace ID matches: `curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8787/auth/me`
+
+**"Connection refused" / "Backend returned 503"**
+- The Max backend is not running. Start it: `lineagelens start --mode max`
+- Neo4j may still be booting — wait 60–90 s, then retry.
+
+**`get_record` returns no `lineageNodeId`**
+- The record was ingested before Neo4j was enabled, or Neo4j was unreachable at ingest time.
+- Re-ingest or check Neo4j connectivity: `curl -s http://localhost:7474`
+
+---
+
 ## Quick Diagnostics Checklist
 
 ```bash

@@ -12,10 +12,10 @@ LineageLens is an AI code intelligence platform. It sits between your AI coding 
 Your AI Tool  →  LineageLens Proxy  →  AI Provider (Anthropic, OpenAI, etc.)
                         ↓
                Provenance Record
-          stored locally or sent to backend
+     stored in PostgreSQL + optional Neo4j
 ```
 
-The proxy is transparent. Your AI tool sends requests as normal. LineageLens intercepts the traffic, extracts the prompt and response, and stores a structured provenance record — without modifying any code or slowing down your workflow.
+The proxy is transparent. Your AI tool sends requests as normal. LineageLens intercepts the traffic, extracts the prompt and response, and stores a structured provenance record — without modifying any code or slowing down your workflow. The VS Code extension also captures insertions directly via file watchers and Claude Code hook events.
 
 ---
 
@@ -23,115 +23,171 @@ The proxy is transparent. Your AI tool sends requests as normal. LineageLens int
 
 ### LineageLens Base
 
-Zero setup. Fully private. Works offline.
+Zero shared infrastructure. Fully private. Works offline.
 
-- No backend required. Records stored locally as a JSON file.
+- Records stored locally as a JSON file or in VS Code global state.
 - Best for individual developers and offline workflows.
-- Start the proxy and begin capturing immediately.
+- Includes provenance capture, AI-assisted explanation, and local lineage.
+- Quickstart: `bash scripts/quickstart-base.sh`
+- Deploy: `deploy/docker-compose.base.yml`
 
 ### LineageLens Plus
 
 Shared backend without graph complexity.
 
-- Connects to the FastAPI backend for shared ingest, auth, semantic search, and the governance dashboard.
-- Runs without Neo4j or vector search.
-- Docker is optional. See [docs/native-backend.md](docs/native-backend.md) to run the backend natively.
-- Deploy: `deploy/docker-compose.plus.yml` + `deploy/.env.plus.example`
+- FastAPI backend with semantic search, governance dashboard, and team management.
+- Runs without Neo4j. pgvector enables vector search when OpenAI embeddings are configured.
+- Docker is optional. See [docs/native-backend.md](docs/native-backend.md) to run natively.
 - Quickstart: `bash scripts/quickstart-plus.sh`
+- Deploy: `deploy/docker-compose.plus.yml`
 
 ### LineageLens Max
 
 Complete provenance intelligence and auditability.
 
-- Adds Neo4j graph lineage and vector search on top of Plus.
+- Adds Neo4j graph lineage and full vector search on top of Plus.
 - Best for production deployments with compliance requirements.
-- Docker is optional. See [docs/native-backend.md](docs/native-backend.md).
-- Deploy: `deploy/docker-compose.max.yml` + `deploy/.env.max.example`
 - Quickstart: `bash scripts/quickstart-max.sh`
-
-See [docs/lightweight-adapters.md](docs/lightweight-adapters.md) for the lightweight adapter contract (CLI/script ingest).
-See [docs/shipping-modes.md](docs/shipping-modes.md) for the release layout.
+- Deploy: `deploy/docker-compose.max.yml`
 
 ---
 
 ## Quick Start
 
-**Step 1 — Install the proxy**
-```bash
-npm install -g @lineagelens/proxy
-```
+**Step 1 — Install the extension**
 
-**Step 2 — Start the proxy**
+Install `lineagelens-*.vsix` from your release bundle into VS Code.
+
+**Step 2 — Start your backend**
 ```bash
-lineagelens-proxy start --port 7777
+bash scripts/quickstart-plus.sh    # or quickstart-base.sh / quickstart-max.sh
 ```
 
 **Step 3 — Point your AI tool at the proxy**
 
-Set your AI tool's API base URL to `http://localhost:7777`. See [Proxy Setup](#proxy-setup) below for per-tool instructions.
-
-**Step 4 — Trace any line**
+The proxy runs on port `8788`. Set your AI tool's API base URL:
 ```bash
-lineagelens trace src/utils/parser.ts 42
+# Claude Code / Anthropic SDK
+export ANTHROPIC_BASE_URL=http://localhost:8788
+
+# OpenAI SDK / any compatible tool
+export OPENAI_BASE_URL=http://localhost:8788
 ```
 
-Or open the web dashboard at `http://localhost:8000/dashboard`.
+**Step 4 — Open the dashboard**
+```
+http://localhost:8787/dashboard
+```
+
+**Step 5 — Use the CLI**
+```bash
+lineagelens start --mode plus    # Start backend
+lineagelens status               # Container health
+lineagelens logs --mode plus     # Tail logs
+lineagelens stop --mode plus     # Stop backend
+```
 
 ---
 
-## Switch from Local to Backend Mode
+## CLI Commands
 
-1. Start your backend service (default: `http://127.0.0.1:8787`).
-2. Set these values in your `lineagelens.config.json` (or pass as CLI flags):
-
-```json
-{
-  "mode": "backend",
-  "backendUrl": "http://127.0.0.1:8787",
-  "websocketUrl": "ws://127.0.0.1:8787/ws/capture"
-}
-```
-
-3. Authenticate:
+Install once (requires Node ≥ 18):
 ```bash
-lineagelens login --backend http://127.0.0.1:8787
+npm install -g .
 ```
+
+| Command | Description |
+|---|---|
+| `lineagelens start --mode plus` | Start Plus backend (also: `base`, `max`) |
+| `lineagelens stop --mode plus` | Stop backend containers |
+| `lineagelens status` | Show container health for all modes |
+| `lineagelens logs --mode plus` | Tail backend logs (Ctrl+C to stop) |
+| `lineagelens logs --mode plus --service backend` | Tail a specific service |
 
 ---
 
 ## Proxy Setup
 
-LineageLens works with any AI tool that routes HTTP/HTTPS traffic through a configurable base URL.
-
-**Cursor**
-```
-API Base URL: http://localhost:7777
-```
+LineageLens works with any AI tool that routes HTTP traffic through a configurable base URL.
 
 **Claude Code**
 ```bash
-export ANTHROPIC_BASE_URL=http://localhost:7777
+export ANTHROPIC_BASE_URL=http://localhost:8788
 ```
 
-**GitHub Copilot**
-Set your editor's HTTP proxy to `http://localhost:7777`.
+**Cursor** — Settings → API → Base URL: `http://localhost:8788`
 
 **Aider**
 ```bash
-aider --openai-api-base http://localhost:7777
+aider --openai-api-base http://localhost:8788
 ```
-
-**Codeium / Windsurf**
-Set `API Server URL` to `http://localhost:7777` in Codeium settings.
 
 **Continue**
 ```json
+{ "models": [{ "provider": "anthropic", "apiBase": "http://localhost:8788" }] }
+```
+
+**Codeium / Windsurf** — Set `API Server URL` to `http://localhost:8788`
+
+**GitHub Copilot** — Set editor HTTP proxy to `http://localhost:8788`
+
+**All other tools** — Set the API base URL or HTTP proxy to `http://localhost:8788`.
+
+---
+
+## MCP Server
+
+LineageLens ships an MCP server that lets AI assistants query provenance data directly inside the chat — without switching tabs or leaving the conversation.
+
+### Install
+```bash
+cd mcp
+pip install -r requirements.txt
+```
+
+### Configure credentials
+```bash
+export LINEAGELENS_USERNAME=your-username
+export LINEAGELENS_PASSWORD=your-password
+export LINEAGELENS_BACKEND_URL=http://localhost:8787
+```
+
+Or use a pre-obtained token:
+```bash
+export LINEAGELENS_ACCESS_TOKEN=your-jwt-token
+```
+
+### Wire into Claude Code
+
+Add to `~/.claude/settings.json` (global) or `.claude/settings.json` (project):
+```json
 {
-  "models": [{ "provider": "anthropic", "apiBase": "http://localhost:7777" }]
+  "mcpServers": {
+    "lineagelens": {
+      "command": "python",
+      "args": ["/absolute/path/to/mcp/server.py"],
+      "env": {
+        "LINEAGELENS_USERNAME": "your-username",
+        "LINEAGELENS_PASSWORD": "your-password",
+        "LINEAGELENS_BACKEND_URL": "http://localhost:8787"
+      }
+    }
+  }
 }
 ```
 
-**All other tools** — set the API base URL or HTTP proxy to `http://localhost:7777`.
+### Available MCP Tools
+
+| Tool | What it does |
+|---|---|
+| `search_provenance` | Search for AI-generated code by natural language query |
+| `get_record` | Full metadata for a specific provenance record by UUID |
+| `get_insights` | Governance dashboard — risk scores, compliance, totals |
+| `explain_record` | Plain-English explanation of why code was generated |
+| `list_recent` | Most recently captured AI insertions |
+| `check_file_risk` | Risk breakdown and model usage for a specific file |
+
+See [releases/commands.md](releases/commands.md) for complete setup instructions.
 
 ---
 
@@ -141,7 +197,7 @@ LineageLens ships 10 agent adapters that identify which AI tool produced each in
 
 | Adapter | Tool | Session Kind |
 |---|---|---|
-| `cursor` | Cursor | `agentic` |
+| `cursor` | Cursor IDE | `agentic` |
 | `copilot` | GitHub Copilot | `assistant` |
 | `claude-code` | Claude Code CLI | `cli` / `agentic` |
 | `codeium` | Codeium / Windsurf | `agentic` |
@@ -153,14 +209,35 @@ LineageLens ships 10 agent adapters that identify which AI tool produced each in
 | `codex-cli` | OpenAI Codex CLI | `cli` |
 | `legacy-heuristic` | Unknown / fallback | `unknown` |
 
-Each match stores:
+Each match stores: `toolName`, `provider`, `sessionId`, `conversationId`, `runId`, `modelName`, `userAgent`, `operationType`, `confidence`, `evidence[]`, `sessionKind`.
 
-- `toolName`, `provider`, `sessionId`, `conversationId`, `runId`
-- `modelName`, `userAgent`, `workspaceHint`, `operationType`
-- `confidence` and `evidence[]` used for the match
-- `sessionKind` (`cli`, `agentic`, `assistant`, `unknown`)
+---
 
-When no adapter matches confidently, the legacy heuristic adapter fires as a fallback.
+## Dashboard
+
+The self-hosted dashboard at `http://localhost:8787/dashboard` includes:
+
+**Governance Overview** — Total records, prompt capture rate, average risk score, high-risk and critical counts, unique files, models, AI lines added, agent sessions, team members. Compliance controls and file hotspots below.
+
+**Timeline** — Chart.js bar + line chart showing AI insertions over time (bars) and average risk trend (line). File risk heatmap below: each file as a horizontal bar, width = relative insertion density, color = risk level (green → red). Click any bar to search that file.
+
+**Graph** — Force-directed canvas graph. Each node is a file; size = insertion count, color = risk. Edges connect files touched by the same AI model. Click a node to search that file.
+
+**Live Feed** — Polls every 30 seconds. New captures animate in with a blue pulse. Badge counter on the tab shows unseen captures. Includes file, risk badge, model, and code snippet per record.
+
+**Search** — Filtered search with keywords, model, file path, and date range. Results open a full record detail modal inline.
+
+**Record Detail Modal** — Click any record from anywhere in the dashboard to open the full provenance modal: inserted code, prompt messages, context snapshot, risk assessment, and an "Explain with AI" button.
+
+**Record Viewer** — Direct UUID lookup tab for manual record inspection.
+
+**Export** — Admin-only CSV audit export with date, developer, and file path filters.
+
+**Team** — Member list with per-user AI insertion counts, lines added, share %, and join date. Admin invite form.
+
+**Theme toggle** — ☀️/🌙 button switches between dark (default) and light mode. Timeline chart re-renders with matching colors.
+
+**Backend status dot** — Green/red indicator in the topbar. Shows backend version and product mode on hover.
 
 ---
 
@@ -170,10 +247,10 @@ Every stored record is editor-agnostic and tool-agnostic:
 
 - `schemaVersion` — versioned compatibility (`lineagelens.provenance-event.v1`)
 - `normalizedEvent` — provider-neutral capture: session, model, file, diff, context, confidence
-- `rawData` — original detection payload plus raw proxy request/response fragments where available
-- Adapter-declared capabilities so integrations report what they can provide
+- `rawData` — original detection payload plus raw proxy request/response fragments
+- Adapter-declared capabilities reporting what each integration can provide
 
-Full captures store prompt and response bodies. Metadata-only and tunnel-only captures still preserve routing and session evidence. Completely opaque tools produce file-diff provenance.
+Full captures store prompt and response bodies. Metadata-only and tunnel-only captures still preserve routing and session evidence. Opaque tools produce file-diff provenance.
 
 ---
 
@@ -186,32 +263,11 @@ Full captures store prompt and response bodies. Metadata-only and tunnel-only ca
 | `tunnel_only` | HTTPS CONNECT tunnel recorded; payload not decrypted |
 | `unavailable` | Tool not routing through the proxy |
 
-Check capture state:
-```bash
-lineagelens status
-```
-
----
-
-## Adapter Diagnostics
-
-Inspect why a specific insertion was attributed to a particular tool:
-
-```bash
-lineagelens diagnose <uuid>
-```
-
-Shows:
-- Which adapter matched and at what confidence
-- The evidence signals used for the match
-- The capture status and correlation confidence
-- The fallback metadata when a record was only heuristically grouped
-
 ---
 
 ## Lightweight Adapter (CLI / Script Ingest)
 
-`src/lightweightRecord.ts` is a pure TypeScript helper with no editor dependency. Use it to build provenance records from a CLI, script, CI job, or any other environment.
+`src/lightweightRecord.ts` is a pure TypeScript helper with no VS Code dependency. Use it to build provenance records from a CLI, CI job, or any other environment.
 
 ```ts
 import { buildLightweightProvenanceRecord } from './src/lightweightRecord';
@@ -228,7 +284,7 @@ const record = buildLightweightProvenanceRecord({
 });
 ```
 
-See [docs/lightweight-adapters.md](docs/lightweight-adapters.md) for the full contract and optional fields.
+See [docs/lightweight-adapters.md](docs/lightweight-adapters.md) for the full contract.
 
 ---
 
@@ -236,28 +292,34 @@ See [docs/lightweight-adapters.md](docs/lightweight-adapters.md) for the full co
 
 | Feature | Base | Plus | Max |
 |---|---|---|---|
-| Provenance capture | yes | yes | yes |
-| WebSocket ingest | yes | yes | yes |
-| LLM explain | yes | yes | yes |
-| JWT auth | yes | yes | yes |
-| Lightweight adapter ingest | yes | yes | yes |
-| Semantic search | no | yes | yes |
-| Governance dashboard | no | yes | yes |
-| Team management | no | yes | yes |
-| Neo4j graph lineage | no | no | yes |
-| Vector search | no | no | yes |
+| Provenance capture | ✓ | ✓ | ✓ |
+| WebSocket ingest | ✓ | ✓ | ✓ |
+| LLM explain | ✓ | ✓ | ✓ |
+| JWT auth + logout | ✓ | ✓ | ✓ |
+| Lightweight adapter ingest | ✓ | ✓ | ✓ |
+| MCP server | ✓ | ✓ | ✓ |
+| Semantic search | — | ✓ | ✓ |
+| Governance dashboard | — | ✓ | ✓ |
+| Timeline & risk heatmap | — | ✓ | ✓ |
+| File lineage graph | — | ✓ | ✓ |
+| Live capture feed | — | ✓ | ✓ |
+| Team management | — | ✓ | ✓ |
+| Audit export (CSV) | — | ✓ | ✓ |
+| OpenAI embeddings | — | opt | opt |
+| Neo4j graph lineage | — | — | ✓ |
+| Vector search | — | — | ✓ |
 
 ---
 
 ## GitHub Actions Integration
 
-LineageLens includes two GitHub Actions workflows:
+Two workflows included:
 
-**PR Annotation** — automatically annotates every pull request with which lines are AI-generated, which model produced them, and who accepted them.
+**PR Annotation** — Annotates every pull request with which lines are AI-generated, which model produced them, and who accepted them.
 
-**Provenance Review Bot** — posts a structured AI lineage report as a PR comment, grouping touched blocks by file with risk scores and prompt previews.
+**Provenance Review Bot** — Posts a structured AI lineage report as a PR comment, grouping touched blocks by file with risk scores and prompt previews.
 
-See [.github/workflows/](.github/workflows/) for setup instructions.
+See [.github/workflows/](.github/workflows/) for setup.
 
 ---
 
@@ -268,8 +330,7 @@ npm install
 npm run compile
 ```
 
-Mode-specific release helpers:
-
+Release helpers:
 ```bash
 npm run ship:base
 npm run ship:plus
@@ -277,9 +338,20 @@ npm run ship:max
 ```
 
 Backend helpers:
-
 ```bash
 npm run native:plus
 npm run native:max
-npm run native:test
 ```
+
+---
+
+## Default Ports
+
+| Service | Port |
+|---|---|
+| Backend API + Dashboard | 8787 |
+| Universal LLM Proxy | 8788 |
+| Local extension proxy | 8080 |
+| PostgreSQL | 5432 |
+| Neo4j Bolt | 7687 |
+| Neo4j Browser | 7474 |

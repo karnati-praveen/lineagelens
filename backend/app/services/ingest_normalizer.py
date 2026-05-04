@@ -181,16 +181,11 @@ def normalize_ingest_payload(
     agent_context = _extract_mapping(metadata, ["agentContext"])
     if agent_context is None:
         agent_context = _build_agent_context(
-            payload=payload,
             record_uuid=record_uuid,
             timestamp_iso=timestamp_iso,
             workspace_id=workspace_id,
-            file_path=file_path,
             source=source,
-            capture=capture,
             model_name=model_name,
-            inserted_text=inserted_text,
-            raw_model_response=raw_model_response,
             request_uuid=request_uuid,
             prompt_status=prompt_status,
             capture_status=capture_status,
@@ -199,7 +194,7 @@ def normalize_ingest_payload(
     normalized_event = (
         deepcopy(existing_normalized_event)
         if isinstance(existing_normalized_event, dict)
-        else _build_normalized_event(
+        else _build_normalized_event(_EventBuildParams(
             event_uuid=record_uuid,
             timestamp_iso=timestamp_iso,
             workspace_id=workspace_id,
@@ -221,10 +216,8 @@ def normalize_ingest_payload(
             agent_context=agent_context,
             capture_status=capture_status,
             prompt_status=prompt_status,
-            embeddings=embeddings,
-            ast_snapshot=ast_snapshot,
             raw_payload=raw_payload,
-        )
+        ))
     )
 
     if isinstance(normalized_event, dict):
@@ -243,7 +236,7 @@ def normalize_ingest_payload(
             context_snapshot=context_snapshot,
         )
 
-    provenance_payload = _build_legacy_provenance_payload(
+    provenance_payload = _build_legacy_provenance_payload(_LegacyPayloadParams(
         payload=raw_payload,
         record_uuid=record_uuid,
         request_uuid=request_uuid,
@@ -256,6 +249,7 @@ def normalize_ingest_payload(
         cursor_column=cursor_column,
         inserted_text=inserted_text,
         net_added_lines=net_added_lines,
+        inserted_chunks=inserted_chunks,
         prompt_messages=prompt_messages,
         model_name=model_name,
         model_parameters=model_parameters,
@@ -271,14 +265,11 @@ def normalize_ingest_payload(
         prompt_status=prompt_status,
         git_branch=git_branch,
         diff=diff,
-        inserted_chunks=inserted_chunks,
         prompt=prompt,
-        response=response,
-        model=model,
         source=source,
         capture=capture,
         extensions=extensions,
-    )
+    ))
 
     warnings: list[str] = []
     if not _first_string_from_keys(raw_payload, ["id", "eventId", "uuid"]):
@@ -320,206 +311,206 @@ def normalize_ingest_payload(
     )
 
 
-def _build_normalized_event(
-    *,
-    event_uuid: uuid_pkg.UUID,
-    timestamp_iso: datetime,
-    workspace_id: str,
-    file_path: str,
-    file_uri: str | None,
-    language_id: str | None,
-    source: dict[str, Any],
-    capture: dict[str, Any],
-    model_name: str | None,
-    model_parameters: dict[str, Any] | None,
-    prompt_messages: object | None,
-    raw_model_response: str | None,
-    raw_model_response_base64: str | None,
-    inserted_text: str,
-    net_added_lines: int,
-    surrounding_context: dict[str, Any] | None,
-    context_snapshot: dict[str, Any] | None,
-    request_uuid: uuid_pkg.UUID | None,
-    agent_context: dict[str, Any] | None,
-    capture_status: str,
-    prompt_status: str,
-    embeddings: dict[str, Any] | None,
-    ast_snapshot: dict[str, Any] | None,
-    raw_payload: dict[str, Any],
-) -> dict[str, Any]:
-    capture_level = _normalize_capture_level(_first_string(capture, ["level"]))
+@dataclass(slots=True)
+class _EventBuildParams:
+    event_uuid: uuid_pkg.UUID
+    timestamp_iso: datetime
+    workspace_id: str
+    file_path: str
+    file_uri: str | None
+    language_id: str | None
+    source: dict[str, Any]
+    capture: dict[str, Any]
+    model_name: str | None
+    model_parameters: dict[str, Any] | None
+    prompt_messages: object | None
+    raw_model_response: str | None
+    raw_model_response_base64: str | None
+    inserted_text: str
+    net_added_lines: int
+    surrounding_context: dict[str, Any] | None
+    context_snapshot: dict[str, Any] | None
+    request_uuid: uuid_pkg.UUID | None
+    agent_context: dict[str, Any] | None
+    capture_status: str
+    prompt_status: str
+    raw_payload: dict[str, Any]
+
+
+def _build_normalized_event(params: _EventBuildParams) -> dict[str, Any]:
+    capture_level = _normalize_capture_level(_first_string(params.capture, ["level"]))
 
     return {
-        "schemaVersion": raw_payload.get("schemaVersion") or PROVENANCE_EVENT_SCHEMA_VERSION,
-        "eventId": str(event_uuid),
+        "schemaVersion": params.raw_payload.get("schemaVersion") or PROVENANCE_EVENT_SCHEMA_VERSION,
+        "eventId": str(params.event_uuid),
         "timestamps": {
-            "observedAtIso": timestamp_iso.isoformat(),
-            "insertedAtIso": timestamp_iso.isoformat(),
+            "observedAtIso": params.timestamp_iso.isoformat(),
+            "insertedAtIso": params.timestamp_iso.isoformat(),
             "requestAtIso": None,
             "responseAtIso": None,
         },
         "source": {
-            "ide": source.get("ide") if isinstance(source.get("ide"), str) else None,
-            "shim": _first_string(source, ["shim"]) or "lightweight",
-            "toolName": _first_string(source, ["toolName"]),
-            "provider": _first_string(source, ["provider"]),
-            "adapterName": _first_string(source, ["adapterName"]),
+            "ide": params.source.get("ide") if isinstance(params.source.get("ide"), str) else None,
+            "shim": _first_string(params.source, ["shim"]) or "lightweight",
+            "toolName": _first_string(params.source, ["toolName"]),
+            "provider": _first_string(params.source, ["provider"]),
+            "adapterName": _first_string(params.source, ["adapterName"]),
         },
         "capture": {
             "level": capture_level,
-            "promptStatus": prompt_status,
-            "capabilities": _build_capabilities(prompt_messages, raw_model_response, source, request_uuid),
-            "evidence": source.get("evidence") if isinstance(source.get("evidence"), list) else [],
+            "promptStatus": params.prompt_status,
+            "capabilities": _build_capabilities(params.prompt_messages, params.raw_model_response, params.source, params.request_uuid),
+            "evidence": params.source.get("evidence") if isinstance(params.source.get("evidence"), list) else [],
         },
         "session": {
-            "sessionId": _first_string(source, ["sessionId"]),
-            "conversationId": _first_string(source, ["conversationId"]),
-            "runId": _first_string(source, ["runId"]),
-            "requestId": str(request_uuid) if request_uuid else None,
-            "signature": _session_signature(agent_context, workspace_id),
+            "sessionId": _first_string(params.source, ["sessionId"]),
+            "conversationId": _first_string(params.source, ["conversationId"]),
+            "runId": _first_string(params.source, ["runId"]),
+            "requestId": str(params.request_uuid) if params.request_uuid else None,
+            "signature": _session_signature(params.agent_context, params.workspace_id),
         },
         "model": {
-            "name": model_name,
-            "parameters": model_parameters,
+            "name": params.model_name,
+            "parameters": params.model_parameters,
         },
         "prompt": {
-            "body": prompt_messages,
-            "system": _first_string(source, ["systemPrompt"]) or _first_string(capture, ["systemPrompt"]),
+            "body": params.prompt_messages,
+            "system": _first_string(params.source, ["systemPrompt"]) or _first_string(params.capture, ["systemPrompt"]),
         },
         "response": {
-            "body": raw_model_response,
-            "bodyBase64": raw_model_response_base64,
+            "body": params.raw_model_response,
+            "bodyBase64": params.raw_model_response_base64,
         },
         "file": {
-            "path": file_path,
-            "uri": file_uri,
-            "languageId": language_id or "unknown",
-            "workspace": workspace_id,
-            "gitBranch": _first_string(raw_payload, ["repository", "gitBranch"]),
+            "path": params.file_path,
+            "uri": params.file_uri,
+            "languageId": params.language_id or "unknown",
+            "workspace": params.workspace_id,
+            "gitBranch": _first_string(params.raw_payload, ["repository", "gitBranch"]),
         },
         "diff": {
-            "insertedText": inserted_text,
-            "chunks": _extract_chunks(raw_payload, inserted_text),
-            "netAddedLines": net_added_lines,
+            "insertedText": params.inserted_text,
+            "chunks": _extract_chunks(params.raw_payload, params.inserted_text),
+            "netAddedLines": params.net_added_lines,
         },
         "context": {
-            "snapshot": context_snapshot,
-            "before": _extract_surrounding_context_value(surrounding_context, "before"),
-            "after": _extract_surrounding_context_value(surrounding_context, "after"),
+            "snapshot": params.context_snapshot,
+            "before": _extract_surrounding_context_value(params.surrounding_context, "before"),
+            "after": _extract_surrounding_context_value(params.surrounding_context, "after"),
         },
         "correlation": {
-            "confidence": _to_float(_first_string(capture, ["confidence"])) or 0.0,
+            "confidence": _to_float(_first_string(params.capture, ["confidence"])) or 0.0,
             "timingDifferenceMs": None,
             "windowMs": 0,
             "contentSimilarityScore": None,
             "fileContextMatched": False,
-            "captureStatus": capture_status,
-            "requestUuid": str(request_uuid) if request_uuid else None,
+            "captureStatus": params.capture_status,
+            "requestUuid": str(params.request_uuid) if params.request_uuid else None,
         },
         "confidence": {
-            "agent": _to_float(_first_string(source, ["confidence"])) if source else None,
-            "correlation": _to_float(_first_string(capture, ["confidence"])) or 0.0,
+            "agent": _to_float(_first_string(params.source, ["confidence"])) if params.source else None,
+            "correlation": _to_float(_first_string(params.capture, ["confidence"])) or 0.0,
         },
         "extensions": {
-            "operationType": _first_string(source, ["operationType"]) or "edit",
-            "sessionKind": _first_string(source, ["sessionKind"]) or _guess_session_kind(source, model_name),
-            "host": _first_string(source, ["host"]),
-            "captureStatus": capture_status,
-            "promptStatus": prompt_status,
-            "rawPayload": raw_payload,
+            "operationType": _first_string(params.source, ["operationType"]) or "edit",
+            "sessionKind": _first_string(params.source, ["sessionKind"]) or _guess_session_kind(params.source, params.model_name),
+            "host": _first_string(params.source, ["host"]),
+            "captureStatus": params.capture_status,
+            "promptStatus": params.prompt_status,
+            "rawPayload": params.raw_payload,
         },
     }
 
 
-def _build_legacy_provenance_payload(
-    *,
-    payload: dict[str, Any],
-    record_uuid: uuid_pkg.UUID,
-    request_uuid: uuid_pkg.UUID | None,
-    timestamp_iso: datetime,
-    workspace_id: str,
-    file_path: str,
-    file_uri: str | None,
-    language_id: str | None,
-    cursor_line: int | None,
-    cursor_column: int | None,
-    inserted_text: str,
-    net_added_lines: int,
-    inserted_chunks: list[dict[str, Any]],
-    prompt_messages: object | None,
-    model_name: str | None,
-    model_parameters: dict[str, Any] | None,
-    raw_model_response: str | None,
-    raw_model_response_base64: str | None,
-    surrounding_context: dict[str, Any] | None,
-    context_snapshot: dict[str, Any] | None,
-    embeddings: dict[str, Any] | None,
-    ast_snapshot: dict[str, Any] | None,
-    normalized_event: dict[str, Any],
-    agent_context: dict[str, Any] | None,
-    capture_status: str,
-    prompt_status: str,
-    git_branch: str | None,
-    diff: dict[str, Any],
-    prompt: dict[str, Any],
-    response: dict[str, Any],
-    model: dict[str, Any],
-    source: dict[str, Any],
-    capture: dict[str, Any],
-    extensions: dict[str, Any],
-) -> dict[str, Any]:
-    record = deepcopy(payload)
+@dataclass(slots=True)
+class _LegacyPayloadParams:
+    payload: dict[str, Any]
+    record_uuid: uuid_pkg.UUID
+    request_uuid: uuid_pkg.UUID | None
+    timestamp_iso: datetime
+    workspace_id: str
+    file_path: str
+    file_uri: str | None
+    language_id: str | None
+    cursor_line: int | None
+    cursor_column: int | None
+    inserted_text: str
+    net_added_lines: int
+    inserted_chunks: list[dict[str, Any]]
+    prompt_messages: object | None
+    model_name: str | None
+    model_parameters: dict[str, Any] | None
+    raw_model_response: str | None
+    raw_model_response_base64: str | None
+    surrounding_context: dict[str, Any] | None
+    context_snapshot: dict[str, Any] | None
+    embeddings: dict[str, Any] | None
+    ast_snapshot: dict[str, Any] | None
+    normalized_event: dict[str, Any]
+    agent_context: dict[str, Any] | None
+    capture_status: str
+    prompt_status: str
+    git_branch: str | None
+    diff: dict[str, Any]
+    prompt: dict[str, Any]
+    source: dict[str, Any]
+    capture: dict[str, Any]
+    extensions: dict[str, Any]
+
+
+def _build_legacy_provenance_payload(params: _LegacyPayloadParams) -> dict[str, Any]:
+    record = deepcopy(params.payload)
 
     record.setdefault("schemaVersion", PROVENANCE_EVENT_SCHEMA_VERSION)
-    record["id"] = str(record_uuid)
-    record["uuid"] = str(record_uuid)
-    record.setdefault("eventId", str(record_uuid))
-    record["timestampIso"] = timestamp_iso.isoformat()
-    record["insertionTimestampIso"] = timestamp_iso.isoformat()
-    record["workspaceId"] = workspace_id
-    record["promptStatus"] = prompt_status
-    record["prompt"] = _build_prompt_payload(prompt_messages, model_name, model_parameters, raw_model_response, raw_model_response_base64, prompt)
+    record["id"] = str(params.record_uuid)
+    record["uuid"] = str(params.record_uuid)
+    record.setdefault("eventId", str(params.record_uuid))
+    record["timestampIso"] = params.timestamp_iso.isoformat()
+    record["insertionTimestampIso"] = params.timestamp_iso.isoformat()
+    record["workspaceId"] = params.workspace_id
+    record["promptStatus"] = params.prompt_status
+    record["prompt"] = _build_prompt_payload(params.prompt_messages, params.model_name, params.model_parameters, params.raw_model_response, params.raw_model_response_base64, params.prompt)
     record["insertion"] = _build_insertion_payload(
-        inserted_text=inserted_text,
-        net_added_lines=net_added_lines,
-        cursor_line=cursor_line,
-        cursor_column=cursor_column,
-        surrounding_context=surrounding_context,
-        diff=diff,
-        inserted_chunks=inserted_chunks,
+        inserted_text=params.inserted_text,
+        net_added_lines=params.net_added_lines,
+        cursor_line=params.cursor_line,
+        cursor_column=params.cursor_column,
+        surrounding_context=params.surrounding_context,
+        diff=params.diff,
+        inserted_chunks=params.inserted_chunks,
     )
     record["file"] = {
-        "path": file_path,
-        "uri": file_uri,
-        "languageId": language_id or "unknown",
+        "path": params.file_path,
+        "uri": params.file_uri,
+        "languageId": params.language_id or "unknown",
     }
-    record["repository"] = {"gitBranch": git_branch}
-    record["contextSnapshot"] = context_snapshot
-    record["normalizedEvent"] = normalized_event
+    record["repository"] = {"gitBranch": params.git_branch}
+    record["contextSnapshot"] = params.context_snapshot
+    record["normalizedEvent"] = params.normalized_event
     record["rawData"] = {
-        "detectionPayload": deepcopy(payload),
-        "proxyRequest": _extract_from_record(payload, ["rawData", "proxyRequest"]),
-        "proxyResponse": _extract_from_record(payload, ["rawData", "proxyResponse"]),
-        "extensions": extensions,
+        "detectionPayload": deepcopy(params.payload),
+        "proxyRequest": _extract_from_record(params.payload, ["rawData", "proxyRequest"]),
+        "proxyResponse": _extract_from_record(params.payload, ["rawData", "proxyResponse"]),
+        "extensions": params.extensions,
     }
-    record["embeddings"] = embeddings or {}
-    record["astSnapshot"] = ast_snapshot or {}
+    record["embeddings"] = params.embeddings or {}
+    record["astSnapshot"] = params.ast_snapshot or {}
     record["correlation"] = _build_correlation_payload(
-        request_uuid=request_uuid,
-        model_name=model_name,
-        model_parameters=model_parameters,
-        prompt_messages=prompt_messages,
-        raw_model_response=raw_model_response,
-        raw_model_response_base64=raw_model_response_base64,
-        source=source,
-        capture=capture,
-        capture_status=capture_status,
+        request_uuid=params.request_uuid,
+        model_name=params.model_name,
+        model_parameters=params.model_parameters,
+        prompt_messages=params.prompt_messages,
+        raw_model_response=params.raw_model_response,
+        raw_model_response_base64=params.raw_model_response_base64,
+        source=params.source,
+        capture=params.capture,
+        capture_status=params.capture_status,
     )
     record["metadata"] = _build_metadata_payload(
-        capture_status=capture_status,
-        prompt_status=prompt_status,
-        agent_context=agent_context,
-        raw_payload=payload,
+        capture_status=params.capture_status,
+        prompt_status=params.prompt_status,
+        agent_context=params.agent_context,
+        raw_payload=params.payload,
     )
 
     return record
@@ -628,16 +619,11 @@ def _build_metadata_payload(
 
 def _build_agent_context(
     *,
-    payload: dict[str, Any],
     record_uuid: uuid_pkg.UUID,
     timestamp_iso: datetime,
     workspace_id: str,
-    file_path: str,
     source: dict[str, Any],
-    capture: dict[str, Any],
     model_name: str | None,
-    inserted_text: str,
-    raw_model_response: str | None,
     request_uuid: uuid_pkg.UUID | None,
     prompt_status: str,
     capture_status: str,

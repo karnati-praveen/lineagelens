@@ -1,5 +1,5 @@
-import * as fs from 'fs/promises';
-import * as path from 'path';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 
 const SECRET_ENV_KEY_PATTERN = /key|secret|password|token|auth/i;
@@ -439,12 +439,12 @@ function splitDependencyArrayItems(input: string): string[] {
 }
 
 function parsePoetrySpecifier(value: string): string | null {
-  const quoted = value.match(/^['\"]([^'\"]+)['\"]$/);
+  const quoted = value.match(/^['"]([^'"]+)['"]$/);
   if (quoted) {
     return quoted[1].trim() || null;
   }
 
-  const objectVersion = value.match(/version\s*=\s*['\"]([^'\"]+)['\"]/);
+  const objectVersion = value.match(/version\s*=\s*['"]([^'"]+)['"]/);
   if (objectVersion) {
     return objectVersion[1].trim() || null;
   }
@@ -485,7 +485,7 @@ function parseDependencyExpression(
 }
 
 function stripQuotes(value: string): string {
-  return value.replaceAll(/^['\"]|['\"]$/g, '');
+  return value.replaceAll(/^['"]|['"]$/g, '');
 }
 
 function buildDependencyPreview(entries: Array<[string, string]>): Record<string, string> {
@@ -611,10 +611,10 @@ function parseNodeImports(source: string, startLine: number): ParsedImport[] {
   const imports: ParsedImport[] = [];
   const lines = splitLines(source);
 
-  const fromPattern = /\bimport\s+.+\s+from\s+['\"]([^'\"]+)['\"]/;
-  const sideEffectPattern = /\bimport\s+['\"]([^'\"]+)['\"]/;
-  const requirePattern = /\brequire\(\s*['\"]([^'\"]+)['\"]\s*\)/;
-  const dynamicImportPattern = /\bimport\(\s*['\"]([^'\"]+)['\"]\s*\)/;
+  const fromPattern = /\bimport\s+.+\s+from\s+['"]([^'"]+)['"]/;
+  const sideEffectPattern = /\bimport\s+['"]([^'"]+)['"]/;
+  const requirePattern = /\brequire\(\s*['"]([^'"]+)['"]\s*\)/;
+  const dynamicImportPattern = /\bimport\(\s*['"]([^'"]+)['"]\s*\)/;
 
   for (let index = 0; index < lines.length; index += 1) {
     const statement = lines[index];
@@ -696,7 +696,7 @@ function parsePythonImports(source: string, startLine: number): ParsedImport[] {
       continue;
     }
 
-    const fromImportMatch = statement.match(/^from\s+([A-Za-z0-9_\.]+)\s+import\s+/);
+    const fromImportMatch = statement.match(/^from\s+([A-Za-z0-9_.]+)\s+import\s+/);
     if (fromImportMatch) {
       const modulePath = fromImportMatch[1].trim();
       imports.push({

@@ -18,6 +18,7 @@ import logging
 import os
 import posixpath
 import re
+import urllib.parse
 import uuid
 from datetime import UTC, datetime
 
@@ -42,6 +43,17 @@ _background_tasks: set[asyncio.Task] = set()
 def _sanitize_path(path: str) -> str:
     """Normalise a proxy path to prevent directory traversal."""
     return posixpath.normpath("/" + path).lstrip("/")
+
+
+def _build_upstream_url(safe_path: str, raw_query: str) -> str:
+    """Build the upstream URL from the fixed UPSTREAM_URL base and the sanitized path.
+
+    Scheme and netloc always come from the trusted UPSTREAM_URL config value so
+    user-supplied path segments can never redirect the request to a different host.
+    """
+    parsed = urllib.parse.urlparse(UPSTREAM_URL)
+    upstream_path = parsed.path.rstrip("/") + "/" + safe_path if safe_path else parsed.path
+    return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, upstream_path, "", raw_query, ""))
 
 _DROP_REQ  = {"host", "content-length", "transfer-encoding", "connection"}
 _DROP_RESP = {"content-encoding", "transfer-encoding", "connection", "content-length"}
@@ -120,7 +132,7 @@ def _text_from_sse(chunks: list[bytes]) -> str:
 
 def _extract_code(text: str) -> str:
     """Pull out fenced code blocks; fall back to full text if none found."""
-    blocks = re.findall(r"```(?:\w*)\n?(.*?)```", text, re.DOTALL)
+    blocks = re.findall(r"```\w*\n?(.*?)```", text, re.DOTALL)
     if blocks:
         return "\n\n".join(b.strip() for b in blocks if b.strip())
     return text.strip()
@@ -246,9 +258,7 @@ async def _handle_non_streaming(
 )
 async def proxy_request(request: Request, path: str) -> Response:
     safe_path = _sanitize_path(path)
-    url = f"{UPSTREAM_URL}/{safe_path}"
-    if request.url.query:
-        url = f"{url}?{request.url.query}"
+    url = _build_upstream_url(safe_path, request.url.query)
 
     content_length = request.headers.get("content-length")
     if content_length:

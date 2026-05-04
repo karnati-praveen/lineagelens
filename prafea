@@ -1,7 +1,7 @@
 # LineageLens — Complete System & Product Documentation
 
-Last reviewed from the local codebase: 2026-04-26
-Version: 0.0.7
+Last reviewed from the local codebase: 2026-05-03
+Version: 0.0.8
 
 ---
 
@@ -13,7 +13,9 @@ LineageLens is an AI provenance tracking system for software teams. It answers o
 
 AI coding assistants — Claude Code, Cursor, Aider, GitHub Copilot, Codeium, Continue, Sourcegraph Cody, Amazon Q, Gemini CLI, OpenAI Codex — now write large fractions of production codebases. The origin and intent of that code is invisible. LineageLens makes it visible. It captures every significant AI-assisted code insertion, links it to the prompt and model that produced it, stores it with structured metadata, and gives developers tools to search, explain, audit, and govern that code over time.
 
-The current detection host is a VS Code extension. The backend is a self-hosted FastAPI service backed by PostgreSQL and optionally Neo4j. The capture architecture is designed to support future IDE hosts and CLI ingest paths — the provider-agnostic event schema and agent adapter system make this straightforward to extend.
+LineageLens works with any AI tool from any environment. The universal proxy (port 8788) intercepts traffic between your AI tools and their providers regardless of which editor or terminal you are using. The MCP server lets Claude Code CLI, Cursor, Continue, and any MCP-capable client query provenance without an IDE at all. GitHub Actions integrations run in CI/CD pipelines with no local editor involved. The VS Code extension is the primary automatic-capture host today — it gives the richest per-insertion metadata — but the product's core value (provenance records, semantic search, governance dashboard, risk scoring, usage reports) is entirely backend-driven and editor-agnostic. The backend is a self-hosted FastAPI service backed by PostgreSQL and optionally Neo4j.
+
+An MCP server ships alongside the extension, letting any MCP-capable client (Claude Code, Cursor, Continue, etc.) query provenance records directly inside the AI chat without leaving the conversation.
 
 ### The Problem
 
@@ -47,14 +49,14 @@ For regulated industries — fintech, healthcare, defense — AI code governance
 
 ### Overview
 
-LineageLens has two major subsystems that work together:
+LineageLens has three major subsystems that work together:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  Detection Host (VS Code Extension)                              │
+│  VS Code Extension (primary automatic-capture host)              │
 │                                                                  │
 │  File watcher → Correlation engine → Provenance builder          │
-│  Local LLM proxy → Agent adapter registry (10 adapters)         │
+│  Local extension proxy (8080) → Agent adapter registry           │
 │  Hook listener (Claude Code) → Lightweight record builder        │
 │  Storage service (local or backend)                              │
 │  UI: Sidebar, Search, Dashboard, Reviewer                        │
@@ -62,10 +64,11 @@ LineageLens has two major subsystems that work together:
                        │  WebSocket (primary) / HTTP POST (fallback)
                        ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  FastAPI Backend                                                  │
+│  FastAPI Backend (port 8787)                                     │
 │                                                                  │
 │  Auth → Ingest → Provenance service → Search / Explain           │
 │  Team management → Insights → WebSocket capture                  │
+│  Dashboard (HTML/JS/Chart.js) served at /dashboard               │
 └─────────────┬───────────────────────────┬────────────────────────┘
               │                           │
               ▼                           ▼
@@ -76,22 +79,60 @@ LineageLens has two major subsystems that work together:
    │ provenance_recs  │       │ AIGeneratedBlock      │
    │ user_accounts    │       │ ProvenanceBlockVersion│
    └──────────────────┘       └───────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│  Universal LLM Proxy (port 8788)                                 │
+│                                                                  │
+│  proxy/proxy.py — transparent HTTP/HTTPS proxy                   │
+│  Intercepts AI tool → provider traffic                           │
+│  Forwards to Anthropic, OpenAI, etc.                             │
+│  Writes provenance captures to backend                           │
+└──────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│  MCP Server (mcp/server.py)                                      │
+│                                                                  │
+│  7 tools surfaced to any MCP-capable client                      │
+│  search_provenance, get_record, get_insights, usage_report,      │
+│  explain_record, list_recent, check_file_risk                    │
+│  Connects to backend over HTTP; auto-authenticates               │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### Detection Host (VS Code Extension)
+### VS Code Extension (primary capture host)
 
-The VS Code extension is the current observation surface. It is not the product's identity — it is a shim that produces normalized provenance records from whatever AI tool is active. The architecture is explicitly designed to support future JetBrains, Neovim, and CLI hosts.
+The VS Code extension is one capture surface among several. It produces the richest per-insertion metadata automatically — file watcher, correlation engine, agent adapter registry, sidebar UI. But the product's value layer (provenance storage, semantic search, governance dashboard, risk scoring, MCP access, GitHub Actions) runs entirely in the backend and is independent of any editor. The architecture supports future JetBrains, Neovim, and CLI hosts through the provider-agnostic event schema, lightweight record builder, and adapter registry.
 
 Key components:
 
 - **`src/extension.ts`** — Main activation, file change listeners, insertion detection, provenance record assembly.
-- **`src/proxy.ts`** — Local HTTP/HTTPS proxy that captures outbound LLM API traffic (Anthropic, OpenAI, GitHub Copilot, Codeium, OpenRouter, Sourcegraph, Google, AWS) before it leaves the machine.
+- **`src/proxy.ts`** — Local HTTP/HTTPS proxy (port 8080) that captures outbound LLM API traffic before it leaves the machine.
 - **`src/correlation.ts`** — Matches a qualifying code insertion to a recent proxy-captured request/response pair using timing, file context, Levenshtein similarity, and confidence scoring. Also correlates against Claude Code hook events.
 - **`src/agentAdapters/`** — Pluggable adapters (10 total) that identify which tool produced the insertion. Each adapter declares capabilities and evidence.
 - **`src/eventSchema.ts`** — Provider-agnostic normalized event schema (version `lineagelens.provenance-event.v1`). All adapters produce the same shape.
 - **`src/lightweightRecord.ts`** — Pure helper (no VS Code imports) for building provenance records from CLI adapters, scripts, or other non-extension hosts.
 - **`src/hookListener.ts`** — Watches `~/.lineagelens/hook-events.jsonl` for Claude Code tool-use events written by the hook capture script.
 - **`src/storage/`** — Abstraction layer with two implementations: `LocalStorageService` (VS Code global state or workspace file) and `BackendStorageService` (sends records to the FastAPI backend over WebSocket or HTTP).
+
+### Universal LLM Proxy
+
+The universal proxy (`proxy/proxy.py`) runs on port 8788. It is a transparent HTTP/HTTPS proxy that sits between any AI coding tool and its upstream AI provider. When tools are configured to use `http://localhost:8788` as their API base URL, all LLM traffic routes through this proxy. The proxy:
+
+- Forwards requests to the correct upstream provider (Anthropic, OpenAI, etc.)
+- Extracts prompt and response bodies from the intercepted traffic
+- Sends provenance capture payloads to the backend at port 8787
+- Supports CONNECT tunneling for HTTPS traffic (recorded as `tunnel_only`)
+
+Supported configuration:
+```bash
+# Claude Code / Anthropic SDK
+export ANTHROPIC_BASE_URL=http://localhost:8788
+
+# OpenAI SDK / any compatible tool
+export OPENAI_BASE_URL=http://localhost:8788
+```
+
+Also works with: Cursor, Aider, Continue, Codeium/Windsurf, GitHub Copilot (via HTTP proxy), and any other tool that accepts a configurable API base URL.
 
 ### Agent Adapter Registry
 
@@ -143,8 +184,51 @@ Python 3.11+ async FastAPI application. Handles:
 - Team management (invite, list members)
 - Governance insights dashboard
 - Real-time WebSocket ingest
+- Static HTML/JS dashboard served at `/dashboard`
 
 Entry point: `backend/app/main.py`. Default port: `8787`.
+
+### MCP Server
+
+`mcp/server.py` is a Python MCP server that lets any MCP-capable client (Claude Code, Cursor, Continue, etc.) query LineageLens provenance data directly inside the AI chat.
+
+The server uses `FastMCP` from the `mcp` package and communicates over stdio. It authenticates against the LineageLens backend using either a static JWT or auto-login with username/password. Token caching with automatic re-login on 401 prevents session expiry.
+
+**Authentication:**
+```bash
+# Option A — pre-obtained JWT
+export LINEAGELENS_ACCESS_TOKEN="<your-jwt>"
+
+# Option B — username + password (auto-login)
+export LINEAGELENS_USERNAME="your-username"
+export LINEAGELENS_PASSWORD="your-password"
+export LINEAGELENS_BACKEND_URL="http://localhost:8787"
+```
+
+**Claude Code integration** — add to `~/.claude/settings.json` or `.claude/settings.json`:
+```json
+{
+  "mcpServers": {
+    "lineagelens": {
+      "command": "python",
+      "args": ["/absolute/path/to/mcp/server.py"],
+      "env": {
+        "LINEAGELENS_USERNAME": "your-username",
+        "LINEAGELENS_PASSWORD": "your-password",
+        "LINEAGELENS_BACKEND_URL": "http://localhost:8787"
+      }
+    }
+  }
+}
+```
+
+**Cursor integration** — Cursor → Settings → MCP → Add Server, command: `python /absolute/path/to/mcp/server.py`, set the same three env vars.
+
+**Install:**
+```bash
+cd mcp
+pip install -r requirements.txt
+```
 
 ### PostgreSQL + pgvector
 
@@ -180,8 +264,9 @@ Disabled in Base and Plus (`NEO4J_ENABLED: false`). In Max mode it provides grap
 1. Developer receives AI-generated code in VS Code
 2. Extension file watcher detects the change
 3. Insertion is extracted; net line count is computed (threshold: 4 lines)
-4. Local LLM proxy is checked for a matching request/response pair (15 s window)
+4. Local extension proxy (8080) is checked for a matching request/response pair (15 s window)
    OR: Claude Code hook listener checks for matching hook events
+   OR: Universal proxy (8788) has already captured the raw traffic
 5. Agent adapter registry identifies the tool (10 adapters, best confidence wins)
 6. ProvenanceRecord is assembled:
    - Inserted code, surrounding context, cursor position
@@ -195,8 +280,143 @@ Disabled in Base and Plus (`NEO4J_ENABLED: false`). In Max mode it provides grap
 9. Backend generates 256-dim embedding vector (hash or OpenAI)
 10. Record is written to PostgreSQL (provenance_records)
 11. If Neo4j is enabled: AIGeneratedBlock + ProvenanceBlockVersion are created
-12. Record is indexed for vector search
-13. Developer can search, view, explain, or review the record from the sidebar
+12. Save lineage_node_id back to Postgres record
+13. Record is indexed for vector search (IVFFLAT index)
+14. Developer can search, view, explain, or review the record from the sidebar
+15. MCP server tools surface the same records inside the AI chat on demand
+```
+
+---
+
+### LineageLens Plus — Full Architecture Diagram
+
+```
+LINEAGELENS PLUS — HOW A PROVENANCE RECORD FLOWS
+==================================================
+
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  CAPTURE: AI tool request intercepted                                │
+  │                                                                      │
+  │  Developer → AI Tool → Universal Proxy :8788                        │
+  │                              │                                      │
+  │                              │  reads: prompt body + response body  │
+  │                              │  writes capture to backend :8787     │
+  │                              │  forwards original request           │
+  │                              ▼                                      │
+  │                        AI Provider (Anthropic / OpenAI / etc.)      │
+  │                              │  returns generated code              │
+  │                              ▼                                      │
+  │                        AI tool inserts code into editor             │
+  └──────────────────────────────────────────────────────────────────────┘
+                                  │
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  DETECT: VS Code Extension                                           │
+  │                                                                      │
+  │  File watcher detects save (≥4 net lines added)                     │
+  │       ↓                                                              │
+  │  Correlation engine matches insertion to proxy capture (15s window) │
+  │  OR matches to Claude Code hook event (hookListener.ts)             │
+  │       ↓                                                              │
+  │  Agent adapter registry — 10 adapters run in parallel:              │
+  │    cursor · copilot · claude-code · codeium · aider                │
+  │    continue · cody · amazon-q · gemini-cli · codex-cli              │
+  │    → highest confidence wins                                         │
+  │       ↓                                                              │
+  │  Provenance record assembled (schema lineagelens.provenance-v1):    │
+  │    inserted code, 200-token context window, prompt + response,      │
+  │    model name, session/run/conversation IDs, AST snapshot,          │
+  │    risk metadata                                                     │
+  └───────────────────────────────────┬──────────────────────────────────┘
+                                      │ WebSocket /ws/capture
+                                      │ (HTTP POST /ingest as fallback)
+  ┌───────────────────────────────────▼──────────────────────────────────┐
+  │  STORE: FastAPI Backend :8787                                        │
+  │                                                                      │
+  │  ingest_normalizer.py   extracts workspace, file, model, code       │
+  │       ↓                                                              │
+  │  provenance_service.py                                               │
+  │       → ast_normalizer.py       AST token sequence                  │
+  │       → embedding_service.py    256-dim vector (OpenAI or hash)     │
+  │       ↓                                                              │
+  │  PostgreSQL  provenance_records table                                │
+  │       embedding_vector col  →  IVFFLAT index (ANN vector search)    │
+  └───────────────────────────────────┬──────────────────────────────────┘
+                                      │
+              ┌───────────────────────┼────────────────────────┐
+              ▼                       ▼                        ▼
+  ┌───────────────────┐   ┌─────────────────────┐   ┌────────────────────┐
+  │  Dashboard        │   │  MCP Server         │   │  GitHub Actions    │
+  │  :8787/dashboard  │   │  mcp/server.py      │   │                    │
+  │                   │   │                     │   │  PR Annotation     │
+  │  Overview         │   │  7 tools in chat:   │   │  Risk Comments     │
+  │  Timeline         │   │  search_provenance  │   │  Usage Report      │
+  │  Graph            │   │  get_record         │   │                    │
+  │  Live Feed        │   │  get_insights       │   │  on pull_request   │
+  │  Search           │   │  explain_record     │   │  → annotates AI    │
+  │  Record Viewer    │   │  list_recent        │   │    lines + risk    │
+  │  Export (CSV)     │   │  check_file_risk    │   │                    │
+  │  Team             │   │  usage_report       │   │                    │
+  └───────────────────┘   └─────────────────────┘   └────────────────────┘
+```
+
+---
+
+### LineageLens Max — Graph Lineage Layer (Adds to Plus)
+
+```
+LINEAGELENS MAX — NEO4J GRAPH LINEAGE
+======================================
+
+  After provenance_service.py writes to PostgreSQL, Max adds:
+
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  neo4j_service.py — creates graph nodes on every ingest              │
+  │                                                                      │
+  │  1. (:AIGeneratedBlock) node                                         │
+  │        uuid, filePath, workspaceId, languageId                      │
+  │                                                                      │
+  │  2. (:ProvenanceBlockVersion) node                                   │
+  │        uuid, model, riskLevel, riskScore, timestamp, sessionId      │
+  │                                                                      │
+  │  3. AIGeneratedBlock ──[:HAS_VERSION]──▶ ProvenanceBlockVersion     │
+  │                                                                      │
+  │  4. AIGeneratedBlock ──[:LATEST_VERSION]──▶ ProvenanceBlockVersion  │
+  │        (previous LATEST_VERSION relationship removed each update)    │
+  │                                                                      │
+  │  5. lineage_node_id saved back to PostgreSQL provenance_records      │
+  │                                                                      │
+  │  Failure handling:                                                   │
+  │    Postgres commit fails  →  orphan Neo4j node deleted (cleanup)     │
+  │    Neo4j write fails      →  record stored in Postgres without node  │
+  │    LINEAGE_STRICT_MODE=true  →  raises and aborts the ingest         │
+  └──────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  Neo4j Browser :7474  (bolt://localhost:7687)                        │
+  │                                                                      │
+  │  // All AI blocks for a file                                         │
+  │  MATCH (b:AIGeneratedBlock {filePath:'src/auth.py'})                 │
+  │  RETURN b                                                            │
+  │                                                                      │
+  │  // Evolution chain from a specific record                           │
+  │  MATCH path=(v:ProvenanceBlockVersion {uuid:'<uuid>'})               │
+  │       -[:EVOLVED_FROM*]->(root)                                      │
+  │  RETURN path                                                         │
+  │                                                                      │
+  │  // All critical-risk insertions                                     │
+  │  MATCH (v:ProvenanceBlockVersion)                                    │
+  │  WHERE v.riskLevel = 'critical'                                      │
+  │  RETURN v ORDER BY v.timestamp DESC LIMIT 50                         │
+  │                                                                      │
+  │  // Files touched by a specific AI session                           │
+  │  MATCH (v:ProvenanceBlockVersion {sessionId:'<sid>'})                │
+  │       <-[:HAS_VERSION]-(b:AIGeneratedBlock)                          │
+  │  RETURN DISTINCT b.filePath                                          │
+  └──────────────────────────────────────────────────────────────────────┘
+
+  Max adds to the Plus port table:
+    Neo4j Bolt     bolt://localhost:7687
+    Neo4j Browser  http://localhost:7474
 ```
 
 ---
@@ -256,6 +476,46 @@ Base mode: `/search` returns 403 with an upgrade message.
 
 Risk scoring evaluates: secret patterns, command execution, dynamic evaluation, unsafe SQL, auth/token patterns, file system operations, network calls, broad exception handling, and path signals (auth, CI, database schema, infrastructure files).
 
+### Dashboard Web Interface
+
+The self-hosted dashboard at `http://localhost:8787/dashboard` is a full single-page application served directly by the FastAPI backend. It includes eight tabs:
+
+**Governance Overview** — Summary statistics at a glance: total records, prompt capture rate, average risk score, high-risk and critical counts, unique files, unique models, AI lines added, agent sessions, team members. Compliance control statuses and file hotspot list rendered below the counters.
+
+**Timeline** — Chart.js 4 bar + line mixed chart. Bars show AI insertion count per day; the overlaid line tracks average risk score. A file risk heatmap below renders each file as a horizontal bar: width represents relative insertion density, color shifts green → red by risk level. Clicking a heatmap bar performs a filtered search for that file.
+
+**Graph** — Force-directed canvas graph implemented in pure JavaScript. Nodes are files; size encodes insertion count, color encodes risk level. Edges connect files touched by the same AI model. Physics simulation: repulsion between nodes, spring attraction along edges, center gravity, damping. Click a node to filter search by that file.
+
+**Live Feed** — Real-time capture feed that polls the backend every 30 seconds. New captures animate in with a blue pulse. The tab badge shows how many unseen captures have arrived since last visit; it clears on tab focus. Each entry shows file path, risk badge, model, timestamp, and a code snippet preview.
+
+**Search** — Keyword + filter search with model, file path, and date range inputs. Results appear inline below the form. Clicking any result opens the full record detail modal.
+
+**Record Viewer** — Direct UUID lookup for manual record inspection. Returns full JSON representation rendered in a modal.
+
+**Export** — Admin-only CSV audit export filtered by date range, developer, and file path. Produces a downloadable file containing all matching provenance records.
+
+**Team** — Member list with per-user AI insertion counts, lines added, share %, role, and join date. Admin-only invite form creates new workspace members.
+
+**Additional UI features:**
+
+- **Record Detail Modal** — A full-screen overlay that shows inserted code, prompt messages, context snapshot, risk assessment, model, tool, session IDs, and an "Explain with AI" button that calls `/explain` and renders the result inline. Opened from search results, live feed, record viewer, and the heatmap/graph click actions. Replaces the previous tab-based navigation approach.
+- **Theme toggle** — ☀️/🌙 button in the topbar. Switches between dark (default) and light mode using CSS custom properties. The Chart.js timeline chart re-renders with theme-appropriate colors on toggle.
+- **Backend status dot** — Green/red indicator in the topbar that polls `/health` every 60 seconds. Shows backend version, product mode, and environment on hover.
+- **MCP status indicator** — Separate dot that checks whether the MCP server is reachable. Visual feedback on MCP connectivity without leaving the dashboard.
+
+### MCP Tools
+
+Six tools are available to any MCP-capable client once `mcp/server.py` is wired in:
+
+| Tool | Arguments | What it returns |
+|---|---|---|
+| `search_provenance` | `query`, `file_path?`, `model?`, `limit?` | Matching records with UUID, file, model, timestamp, score, snippet |
+| `get_record` | `uuid` | Full JSON provenance record including all stored metadata |
+| `get_insights` | (none) | Governance dashboard: risk totals, compliance controls, high-risk records |
+| `explain_record` | `uuid` | Plain-English LLM explanation of why and how the code was generated |
+| `list_recent` | `limit?`, `file_path?` | Chronological feed of recent AI insertions |
+| `check_file_risk` | `file_path` | Risk breakdown (critical/high/medium/low counts) and model usage for a file |
+
 ### Current-File Reviewer
 
 A command-driven review of the currently open file. The reviewer reads the file, queries relevant provenance records, and runs either:
@@ -272,9 +532,23 @@ Results are surfaced in the governance dashboard webview.
 
 Disabled in Base mode.
 
+### Audit Export
+
+**Plus/Max only.** Admin-only CSV export from the dashboard. Filters by date range, developer username, and file path. The exported CSV includes all matching provenance records with timestamps, file paths, model names, risk scores, and insertion metadata. Useful for compliance evidence packages and periodic governance reviews.
+
 ### WebSocket Real-Time Ingest
 
 `WS /ws/capture` — Primary ingest channel. The extension maintains a WebSocket connection and sends records as they are captured. Falls back to HTTP `POST /ingest` on connection failure. Retries are configurable.
+
+### GitHub Actions Integration
+
+Two workflows are included:
+
+**PR Annotation** — Annotates every pull request with which lines are AI-generated, which model produced them, and who accepted them.
+
+**Provenance Review Bot** — Posts a structured AI lineage report as a PR comment, grouping touched blocks by file with risk scores and prompt previews.
+
+See `.github/workflows/` for setup.
 
 ---
 
@@ -295,12 +569,14 @@ The backend reads `BACKEND_MODE` from the environment (`solo`, `team`, or `enter
 - LLM-powered explanation (`/explain`)
 - Provenance record fetch (`/provenance/{uuid}`)
 - Authentication (register, login, refresh, logout, `/auth/me`)
+- MCP server (connects to local backend)
 - Health endpoint
 
 **Disabled:**
 - Semantic search (`/search`) → 403
 - Insights dashboard (`/insights/dashboard`) → 403
 - Team management (`/team/*`) → 403
+- Audit export → admin-only, requires Plus/Max
 
 **Infrastructure:**
 - PostgreSQL only (no Neo4j)
@@ -318,9 +594,11 @@ The backend reads `BACKEND_MODE` from the environment (`solo`, `team`, or `enter
 
 **Adds over Base:**
 - Semantic search (`/search`) with pgvector cosine distance
-- Governance insights dashboard (`/insights/dashboard`)
+- Governance insights dashboard (`/insights/dashboard`) with timeline and heatmap
 - Team member listing (`/team/members`)
 - Admin-invite (`/team/invite`)
+- Audit export (CSV)
+- Full dashboard tabs: Timeline, Graph, Live Feed, Export, Team
 
 **Infrastructure:**
 - PostgreSQL + pgvector with real embedding vectors
@@ -355,9 +633,15 @@ The backend reads `BACKEND_MODE` from the environment (`solo`, `team`, or `enter
 | LLM explain                | yes  | yes  | yes |
 | JWT auth + logout          | yes  | yes  | yes |
 | Lightweight adapter ingest | yes  | yes  | yes |
+| MCP server                 | yes  | yes  | yes |
+| Universal LLM proxy        | yes  | yes  | yes |
 | Semantic search            | no   | yes  | yes |
-| Insights dashboard         | no   | yes  | yes |
+| Governance dashboard       | no   | yes  | yes |
+| Timeline & risk heatmap    | no   | yes  | yes |
+| File lineage graph         | no   | yes  | yes |
+| Live capture feed          | no   | yes  | yes |
 | Team management            | no   | yes  | yes |
+| Audit export (CSV)         | no   | yes  | yes |
 | OpenAI embeddings          | no   | opt  | opt |
 | Neo4j graph lineage        | no   | no   | yes |
 | Vector search              | no   | no   | yes |
@@ -415,6 +699,11 @@ POST /team/invite    Admin-only: create new user in workspace
 **Health** (`backend/app/main.py`)
 ```
 GET /health   Returns productMode + status. Exposes features in non-production.
+```
+
+**Dashboard** (`backend/app/static/dashboard.html` served via FastAPI static files)
+```
+GET /dashboard   Full single-page dashboard application
 ```
 
 ### Services Layer
@@ -580,6 +869,31 @@ Each script:
 6. Starts the backend and waits for `/health` 200
 7. Prints the health response and getting-started commands
 
+### CLI
+
+Install once (requires Node ≥ 18):
+```bash
+npm install -g .
+```
+
+| Command | Description |
+|---|---|
+| `lineagelens start --mode plus` | Start Plus backend (also: `base`, `max`) |
+| `lineagelens stop --mode plus` | Stop backend containers |
+| `lineagelens status` | Show container health for all modes |
+| `lineagelens logs --mode plus` | Tail backend logs (Ctrl+C to stop) |
+| `lineagelens logs --mode plus --service backend` | Tail a specific service |
+
+### Reset Scripts
+
+```
+scripts/reset-base.sh    # Destroy Base containers, volumes, and data
+scripts/reset-plus.sh    # Destroy Plus containers, volumes, and data
+scripts/reset-max.sh     # Destroy Max containers, volumes, and data
+```
+
+Use only for a full reset. These remove all data.
+
 ### Environment Variables
 
 **Required (all modes)**
@@ -697,13 +1011,20 @@ All provenance records and team operations are scoped to `workspace_id`. No cros
 - Proxy header redaction: sensitive headers stripped before storing in provenance records
 - Environment snapshot excludes variables with names matching `key`, `secret`, `password`, `token`, `auth`
 
+### Proxy Security
+
+- URL construction uses `urllib.parse.urlunparse` to prevent URL injection from user-supplied upstream host values
+- HTTPS CONNECT tunnels are recorded but not decrypted (no MITM of encrypted traffic)
+
 ### Known Risk Areas
 
 **In-memory rate limiter.** Multi-process or multi-replica deployments do not share rate limit counters. Replace with Redis-backed limiter for production scale.
 
-**HTTPS CONNECT traffic.** The local proxy captures CONNECT tunnels but does not decrypt them. Tools with strict certificate pinning or mutual TLS produce `tunnel_only` records. The system never acts as a MITM for encrypted traffic.
+**HTTPS CONNECT traffic.** The local proxy captures CONNECT tunnels but does not decrypt them. Tools with strict certificate pinning or mutual TLS produce `tunnel_only` records.
 
 **Neo4j transaction atomicity.** If Postgres commit succeeds but Neo4j write fails, the record exists in Postgres without a lineage node. The cleanup path deletes orphaned Neo4j nodes on Postgres commit failure. Best-effort cleanup, not a distributed transaction.
+
+**MCP server authentication.** The MCP server holds a cached JWT in process memory. In multi-user environments, each user should run their own MCP server process with their own credentials.
 
 ---
 
@@ -711,7 +1032,7 @@ All provenance records and team operations are scoped to `workspace_id`. No cros
 
 ### Platform
 
-**VS Code only.** The detection host is a VS Code extension. JetBrains, Neovim, CLI ingest, and manual import are supported by the architecture (provider-agnostic schema, 10-adapter system, lightweight record builder) but not yet implemented as standalone hosts.
+**Primary capture host is VS Code.** The extension gives the richest automatic per-insertion metadata. JetBrains, Neovim, and other IDE hosts are not yet implemented as standalone capture surfaces, but are supported by the underlying architecture (provider-agnostic schema, 10-adapter system, lightweight record builder). The universal proxy, MCP server, Claude Code hooks, and GitHub Actions integrations all function independently of any IDE.
 
 **External adapter loading.** The 10 built-in adapters are registered at compile time. External plugin loading is not implemented.
 
@@ -753,7 +1074,7 @@ No other tool tracks the provenance of AI-generated code. Tools exist that revie
 
 **"This function was written by an AI — which one, in response to what prompt, with what model, and what risk signals did the generated code contain at insertion time?"**
 
-LineageLens is the first system that captures provenance at insertion time, stores it persistently, and surfaces it at review time.
+LineageLens is the first system that captures provenance at insertion time, stores it persistently, and surfaces it at review time — including inside the AI conversation itself via the MCP server.
 
 ### Differentiation from Traditional Debugging Tools
 
@@ -765,14 +1086,15 @@ LineageLens is the first system that captures provenance at insertion time, stor
 | Requires a bug to exist | Captures context before a bug appears |
 | No concept of "prompt" | Stores the prompt that produced the code |
 | No model provenance | Tracks model name, version, parameters, session |
+| Requires context switching | MCP tools surface provenance in-chat |
 
 ### Key Value Propositions
 
-**For developers:** When something goes wrong in AI-generated code, know exactly what was asked, what the model produced, and what the surrounding context was — without reconstructing it from memory.
+**For developers:** When something goes wrong in AI-generated code, know exactly what was asked, what the model produced, and what the surrounding context was — without reconstructing it from memory. Ask the MCP tools from inside any AI conversation to look up provenance without switching tabs.
 
-**For engineering leads:** See your team's AI coding patterns: which models, which files, how much, what risk level — across all developers in the workspace.
+**For engineering leads:** See your team's AI coding patterns: which models, which files, how much, what risk level — across all developers in the workspace. The timeline and graph views make AI insertion patterns visible at a glance.
 
-**For compliance/security teams:** AI-generated code is in your codebase. LineageLens gives you the audit trail to prove what was generated, when, by which model, and whether it contained sensitive patterns at insertion time.
+**For compliance/security teams:** AI-generated code is in your codebase. LineageLens gives you the audit trail to prove what was generated, when, by which model, and whether it contained sensitive patterns at insertion time. Export as CSV for evidence packages.
 
 ---
 
@@ -780,13 +1102,13 @@ LineageLens is the first system that captures provenance at insertion time, stor
 
 **Base** — Free or low one-time price
 - Single user, self-hosted Docker
-- Capture + explain only
+- Capture + explain + MCP server (read-only)
 - No team features, no semantic search
 - Target: individual engineers experimenting with AI tools
 
 **Plus** — Monthly subscription per workspace
 - 5–50 developers
-- Full feature set: capture, semantic search, governance dashboard, team management
+- Full feature set: capture, semantic search, governance dashboard, timeline, graph, live feed, team management, audit export, MCP server
 - Self-hosted Docker (customer's infrastructure)
 - Target: engineering teams at product companies, agencies, startups
 
@@ -815,21 +1137,17 @@ Provenance is not a one-time problem. Teams writing AI-assisted code need ongoin
 
 **Manual import.** A command that accepts a file diff, optional prompt, and optional session metadata and creates a provenance record without automatic detection.
 
-**Paginated search.** Cursor-based pagination for search results.
-
-**pgvector IVFFLAT index.** Alembic migration for approximate nearest-neighbor index on `embedding_vector`.
-
-**Insights pre-aggregation.** Cache or pre-compute governance dashboard aggregations.
+**Insights pre-aggregation.** For very high record volume, replace the 5-minute TTL cache with a pre-computed materialized view or background job so the first load after cache expiry is also fast.
 
 ### Medium-Term (6–12 months)
+
+**JetBrains plugin.** First non-VS Code capture host. Targets the largest overlap between IDE users and enterprise engineering teams.
 
 **Rich Neo4j lineage evolution.** On ingest, detect when a new record is a refactor, extension, or replacement of an existing AI block. Write `EXTENDED`, `REFACTORED`, `MOVED`, `DELETED` relationships to Neo4j.
 
 **External adapter plugin system.** Versioned adapter interface loadable as an npm package. Teams publish adapters for new AI tools without forking the extension.
 
 **Contract test fixtures.** One canonical test fixture per adapter covering normalized event output, backend ingest payload, search result shape, and dashboard contribution.
-
-**Audit export.** Export workspace provenance records in structured JSON or CSV for compliance workflows.
 
 **Schema version migration.** Handler for `schemaVersion` upgrades.
 
@@ -852,7 +1170,10 @@ Provenance is not a one-time problem. Teams writing AI-assisted code need ongoin
 | Area | Path |
 |---|---|
 | Extension entry | `src/extension.ts` |
-| Local LLM proxy | `src/proxy.ts` |
+| Local LLM proxy (extension) | `src/proxy.ts` |
+| Universal LLM proxy | `proxy/proxy.py` |
+| MCP server | `mcp/server.py` |
+| MCP dependencies | `mcp/requirements.txt` |
 | Correlation engine | `src/correlation.ts` |
 | Normalized event schema | `src/eventSchema.ts` |
 | Lightweight record builder | `src/lightweightRecord.ts` |
@@ -877,12 +1198,16 @@ Provenance is not a one-time problem. Teams writing AI-assisted code need ongoin
 | Mode guard | `backend/app/core/mode_guard.py` |
 | Auth routes | `backend/app/api/routes/auth.py` |
 | Ingest route | `backend/app/api/routes/ingest.py` |
+| WebSocket capture | `backend/app/api/routes/ws_capture.py` |
+| Dashboard HTML | `backend/app/static/dashboard.html` |
 | DB models | `backend/app/db/models.py` |
 | Ingest service | `backend/app/services/provenance_service.py` |
 | Insights service | `backend/app/services/insights_service.py` |
 | Neo4j service | `backend/app/services/neo4j_service.py` |
 | Deploy configs | `deploy/` |
 | Quickstart scripts | `scripts/quickstart-{base,plus,max}.sh` |
+| Reset scripts | `scripts/reset-{base,plus,max}.sh` |
+| Commands reference | `releases/commands.md` |
 
 ### Alembic Migrations (in order)
 
@@ -898,11 +1223,12 @@ Provenance is not a one-time problem. Teams writing AI-assisted code need ongoin
 
 | Service | Port |
 |---|---|
-| Backend API | 8787 |
+| Backend API + Dashboard | 8787 |
+| Universal LLM Proxy | 8788 |
+| Local extension proxy | 8080 |
 | PostgreSQL | 5432 |
 | Neo4j Bolt | 7687 |
 | Neo4j Browser | 7474 |
-| Local LLM Proxy (extension) | 8080 |
 
 ### Provider → Adapter Mapping
 
@@ -919,3 +1245,275 @@ Provenance is not a one-time problem. Teams writing AI-assisted code need ongoin
 | `generativelanguage.googleapis.com` | `gemini-cli` |
 | `cursor.com` / `cursor` user-agent | `cursor` |
 | Unknown / no strong signals | `legacy-heuristic` |
+
+### MCP Tool Quick Reference
+
+| Tool | Key Args | Returns |
+|---|---|---|
+| `search_provenance` | `query`, `file_path?`, `model?`, `limit?` | Ranked matching records |
+| `get_record` | `uuid` | Full JSON provenance record |
+| `get_insights` | — | Governance dashboard summary |
+| `explain_record` | `uuid` | Plain-English LLM explanation |
+| `list_recent` | `limit?`, `file_path?` | Chronological feed |
+| `check_file_risk` | `file_path` | Risk breakdown per file |
+| `usage_report` | `date_from?`, `date_to?` | AI usage summary — lines, models, risk, developers |
+
+---
+
+## APPENDIX: WHAT EVERY FILE DOES
+
+### VS Code Extension (`src/`)
+
+**`src/extension.ts`**
+Main activation point for the VS Code extension. Registers all commands, starts the file watcher, initializes the local LLM proxy, creates the storage service (local or backend), and wires together the sidebar webview, hook listener, and provenance builder. On VS Code startup, this is the first file that runs.
+
+**`src/proxy.ts`**
+Local HTTP/HTTPS proxy running on port 8080 inside the extension process. Intercepts outbound LLM API traffic from any tool running on the machine. Captures request and response bodies for supported providers (Anthropic, OpenAI, GitHub Copilot, Codeium, OpenRouter, Sourcegraph, Google, AWS). Passes captures to the correlation engine. Separate from the universal proxy — this one is embedded in the extension.
+
+**`src/correlation.ts`**
+Correlation engine. Given a file insertion event (from the file watcher), it searches recent proxy captures for a matching LLM request/response pair within a 15-second window. Uses timing proximity, file context, and Levenshtein text similarity to score candidate pairs. Also checks the Claude Code hook event buffer. Returns a `PromptCorrelationResult` with a confidence score and capture status (`full`, `metadata_only`, `tunnel_only`, `unavailable`).
+
+**`src/eventSchema.ts`**
+TypeScript type definitions for the provider-agnostic provenance event schema (`lineagelens.provenance-event.v1`). Defines `ProviderAgnosticProvenanceEvent`, `NormalizedAgentContext`, `PromptCorrelationResult`, and all supporting types. All adapters and capture paths produce records conforming to this schema. Versioned for future migration support.
+
+**`src/lightweightRecord.ts`**
+Pure TypeScript helper with no VS Code dependency. Accepts a minimal payload and returns a fully-formed `ProviderAgnosticProvenanceEvent`. Designed for use from CLI scripts, CI jobs, or other editor integrations that don't have access to the full extension context. Automatically infers `promptStatus`, synthesizes `PromptCorrelationResult`, and sets `shimName: 'lightweight-adapter'`.
+
+**`src/hookListener.ts`**
+Watches `~/.lineagelens/hook-events.jsonl` for Claude Code tool-use events written by a hook capture script. Reads new events on a polling interval and buffers them for the correlation engine. Enables full prompt capture for Claude Code sessions even when the proxy produces a `tunnel_only` record (because Claude Code hooks fire independently of the TLS layer).
+
+**`src/contextSnapshot.ts`**
+Captures a snapshot of the current workspace context at the moment of an AI insertion. Reads the active document, open files, environment variables (filtering secrets by name pattern), import statements, git branch, and AST structure using Tree-sitter. The snapshot is stored in the provenance record to provide context for future explanation and review.
+
+**`src/backend.ts`**
+HTTP client for the LineageLens backend. Sends provenance records via WebSocket (`/ws/capture`) with HTTP POST (`/ingest`) fallback. Manages the WebSocket connection lifecycle, retry logic, and connection health. Also handles backend authentication (token storage, refresh) and provides typed API client methods for search, explain, insights, and team endpoints.
+
+**`src/backendAuth.ts`**
+Authentication layer for the VS Code extension's backend connection. Stores JWT access and refresh tokens in VS Code Secret Storage (OS keychain). Handles token refresh before expiry. Parses JWT expiry from the `exp` claim to schedule proactive refresh. Exposed as a singleton so all backend calls share the same auth state.
+
+**`src/agentAdapters/registry.ts`**
+Adapter registry. Holds the ordered list of all 10 adapters. Given a `ProvenanceEvent`, runs all adapters in parallel and selects the result with the highest confidence score. Ties broken by adapter order (lower order = higher priority). Returns a `NormalizedAgentContext` or a fallback unknown context.
+
+**`src/agentAdapters/shared.ts`**
+Shared utilities for all adapters. Includes `inferProvider` (resolves AI provider from host + model name), `clampConfidence` (bounds confidence to [0, 1]), path-matching regex utilities, and the `NormalizedAgentContext` builder helpers used by every adapter.
+
+**`src/agentAdapters/cursor.ts`**
+Cursor IDE adapter. Detects Cursor by `x-cursor-*` request headers, `cursor` user-agent substring, and `composer` payload markers. Extracts Cursor-specific session IDs and conversation IDs. Reports `sessionKind: 'agentic'`.
+
+**`src/agentAdapters/copilot.ts`**
+GitHub Copilot adapter. Detects Copilot by `api.githubcopilot.com` host, `x-github-token` header, and `editor-version` header. Reports `sessionKind: 'assistant'`.
+
+**`src/agentAdapters/claudeCode.ts`**
+Claude Code CLI adapter. Detects Claude Code by `anthropic-version` header combined with `x-app: cli` or `claude-code/` user-agent. Reports `sessionKind: 'cli'` or `'agentic'` depending on whether an agentic session marker is present.
+
+**`src/agentAdapters/codeium.ts`**, **`aider.ts`**, **`continue.ts`**, **`cody.ts`**, **`amazonQ.ts`**, **`geminiCli.ts`**, **`codex.ts`**
+Tool-specific adapters. Each detects its tool by a combination of host, headers, and user-agent signals. See the adapter table in Section 2 for the key signals per adapter.
+
+**`src/agentAdapters/legacy.ts`**
+Fallback heuristic adapter with order 1000 (always runs last). Uses keyword matching on user-agent and host strings. Returns confidence 0.3 at best (tool name detected by keyword) down to 0.1 (provider only). Never wins over a specific adapter.
+
+**`src/storage/StorageService.ts`**
+Abstract interface for provenance record storage. Implementations: `LocalStorageService` (VS Code global state or workspace JSON file, used in Base mode) and `BackendStorageService` (sends records to the FastAPI backend, used in Plus/Max). The extension selects the implementation based on which backend URL is configured.
+
+---
+
+### Universal Proxy (`proxy/`)
+
+**`proxy/proxy.py`**
+Transparent HTTP/HTTPS proxy running on port 8788. Intercepts any AI tool that routes its API traffic through it. For HTTP requests, reads the request and response bodies, extracts prompt + response, and POSTs a capture payload to the LineageLens backend at port 8787. For HTTPS CONNECT tunnels, records the routing metadata only (`tunnel_only`). Constructs upstream URLs using `urllib.parse.urlunparse` to prevent URL injection. Designed to be started as a standalone process independent of the VS Code extension.
+
+---
+
+### Backend (`backend/`)
+
+**`backend/app/main.py`**
+FastAPI application entry point. Registers all routers, configures all middleware (CORS, trusted hosts, security headers, payload size limit, rate limiting), initializes the database engine and session factory, starts the Neo4j service if enabled, and serves the static dashboard HTML. Also exposes the `/health` endpoint and the `/dashboard` file route.
+
+**`backend/app/core/config.py`**
+Pydantic `Settings` model loaded from environment variables. Holds all configuration: database URL, JWT secrets, backend mode (`solo`/`team`/`enterprise`), embedding provider, LLM explain settings, Neo4j connection, rate limits, connection pool sizes, CORS origins, and feature flags. Single source of truth for all backend configuration.
+
+**`backend/app/core/security.py`**
+JWT authentication. `get_current_auth_context` is the FastAPI dependency used by all protected routes. Validates signature, expiry, audience, issuer, required scopes, and `token_version` (for logout revocation). Returns an `AuthContext` with `workspace_id`, `user_id`, `role`, and `scopes`. `ensure_workspace_scope` enforces that every record operation uses the auth workspace, not the request payload workspace.
+
+**`backend/app/core/mode_guard.py`**
+FastAPI dependency `require_non_solo`. Applied to routes that require Plus or higher. Returns HTTP 403 with an upgrade message if `BACKEND_MODE=solo`. Keeps Base mode endpoints disabled without any per-route conditionals.
+
+**`backend/app/core/rate_limit.py`**
+In-memory sliding-window rate limiter. Tracks request counts per client IP with a configurable window. Provides `check(key, limit, window_seconds)` → `RateLimitDecision(allowed, remaining, retry_after_seconds)`. Applied by `RequestGuardsMiddleware` for HTTP and `ws_capture.py` for WebSocket connections.
+
+**`backend/app/api/routes/auth.py`**
+Authentication routes: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `GET /auth/me`, `POST /auth/logout`. Handles bcrypt hashing, password strength validation, username normalization, JWT issuance, refresh token rotation (JTI-based), and token version increment on logout.
+
+**`backend/app/api/routes/ingest.py`**
+`POST /ingest` — HTTP fallback ingest route. Accepts a provenance record payload, normalizes it, calls the provenance service, and returns the stored UUID. Used by the VS Code extension when the WebSocket connection is unavailable.
+
+**`backend/app/api/routes/ws_capture.py`**
+`WS /ws/capture` — primary ingest channel. Accepts WebSocket connections from the VS Code extension. Each message is a provenance record JSON. Applies per-connection rate limiting (message count + concurrent connection count). Falls back gracefully if the connection drops mid-send.
+
+**`backend/app/api/routes/provenance.py`**
+`GET /provenance/{uuid}` — fetch a single record by UUID, workspace-scoped. Returns the full serialized provenance record. Used by the record detail modal in the dashboard and by the `get_record` MCP tool.
+
+**`backend/app/api/routes/search.py`**
+`POST /search` — vector or keyword search across workspace records. Accepts `SearchRequest` (query, model, date range, file path, limit, offset). Returns `SearchResponse` (results, count, total, offset, warnings). Plus/Max only; returns 403 in Base mode.
+
+**`backend/app/api/routes/explain.py`**
+`POST /explain` — generate a plain-English LLM explanation for a provenance record. Accepts UUID or raw record. Calls `explanation_service.py`. Returns the explanation text, model used, and source. `GET /explain/system-prompt` returns the explanation system prompt for inspection.
+
+**`backend/app/api/routes/insights.py`**
+`POST /insights/dashboard` — full governance analytics payload. Calls `get_insights_dashboard_payload`, which fetches up to 2000 records and computes governance summary, compliance controls, hotspots, model analytics, risk trends, agent sessions, and member stats. Results cached 5 minutes per `(workspace_id, search_params)`. Plus/Max only.
+
+**`backend/app/api/routes/report.py`**
+`GET /report/usage` — AI usage report endpoint. Reshapes the cached insights payload into a CEO/compliance-friendly summary: total insertions, total AI lines, model usage breakdown, top risky files, developer breakdown, risk distribution, compliance control statuses, and weekly trend. Supports `dateFrom` / `dateTo` query params. Plus/Max only.
+
+**`backend/app/api/routes/team.py`**
+`GET /team/members` and `POST /team/invite`. Lists active workspace members with per-user record counts, lines added, and join date. Invite creates a new user in the same workspace (admin-only). Validates password strength and handles concurrent registration races with 409. Plus/Max only.
+
+**`backend/app/api/routes/export.py`**
+`GET /export/audit` — admin-only CSV audit export. Filters by `dateFrom`, `dateTo`, `developer`, `filePath`. Streams a CSV file with all matching provenance records. Plus/Max only.
+
+**`backend/app/services/provenance_service.py`**
+Core ingest and search service. `store_provenance_record` runs the full ingest pipeline: AST normalization, embedding generation, PostgreSQL write, optional Neo4j write, lineage node ID save-back. `search_provenance_records` handles three search paths: vector (pgvector cosine distance with IVFFLAT), keyword fallback (tokenized scoring), and plain listing — all with offset/limit pagination. `serialize_provenance_record` converts a database row to the API response shape.
+
+**`backend/app/services/ingest_normalizer.py`**
+Extracts and normalizes fields from the raw ingest payload. Resolves `workspace_id` from the payload or the authenticated user's workspace. Extracts `inserted_code`, `file_path`, `timestamp`, `prompt_messages`, `model_name`, `raw_model_response`. Warns when no client-provided UUID is present (retry duplication risk). Returns a `NormalizedIngestPayload` dataclass.
+
+**`backend/app/services/embedding_service.py`**
+Generates 256-dimensional embedding vectors for provenance records. Two providers: `hash` (deterministic, no API key, suitable for Base mode) and `openai` (calls `text-embedding-3-small`, enables semantic similarity search in Plus/Max). Dimension is configurable via `PGVECTOR_DIMENSION`.
+
+**`backend/app/services/ast_normalizer.py`**
+Extracts a structural AST node-type sequence from inserted code. Uses language inference from the file extension. The node-type sequence is language-agnostic (e.g., `["function_declaration", "identifier", "return_statement"]`) and stored in `ast_snapshot` for future similarity matching and lineage detection.
+
+**`backend/app/services/neo4j_service.py`**
+Creates and manages Neo4j graph nodes. `ensure_constraints` creates uniqueness constraints on startup. `create_lineage_node` creates `AIGeneratedBlock` and `ProvenanceBlockVersion` nodes and the `HAS_VERSION` / `LATEST_VERSION` relationships. `delete_lineage_node` is called on Postgres commit failure to clean up orphaned nodes. Only active when `NEO4J_ENABLED=true`.
+
+**`backend/app/services/explanation_service.py`**
+Generates plain-English explanations of provenance records. Builds a structured system prompt describing the inserted code, prompt context, agent session, and risk score. Calls an OpenAI-compatible `/chat/completions` endpoint. Falls back to a deterministic template when `EXPLAIN_LLM_API_KEY` is not set. Template fallback extracts key facts (file, model, risk, lines) without any API call.
+
+**`backend/app/services/insights_service.py`**
+Computes the full governance analytics payload. `get_insights_dashboard_payload` fetches up to 2000 records and applies a 5-minute TTL in-memory cache keyed by `(workspace_id, search_params_hash)`. `build_insights_dashboard` does the CPU-intensive work: risk scoring every record, computing compliance controls, building hotspots, model analytics, risk trends, and agent session grouping. Risk scoring evaluates 9 pattern categories (secrets, commands, eval, SQL, auth, filesystem, network, exception handling, path signals).
+
+**`backend/app/services/team_service.py`**
+Builds `TeamMemberStats` objects from `UserAccount` rows and per-user record counts and net lines added. Returns data used by `GET /team/members` and included in the insights dashboard `memberStats` field.
+
+**`backend/app/services/websocket_manager.py`**
+Manages the set of active WebSocket connections for `/ws/capture`. Tracks connection count per workspace and enforces the `RATE_LIMIT_WS_MAX_CONNECTIONS` limit. Provides `connect`, `disconnect`, and `broadcast` methods.
+
+**`backend/app/db/models.py`**
+SQLAlchemy ORM models for the two database tables: `ProvenanceRecord` (one row per AI insertion, with `embedding_vector` pgvector column) and `UserAccount` (one row per user, with `token_version` for logout revocation). Defines all column types, indexes, and constraints.
+
+**`backend/app/db/session.py`**
+SQLAlchemy async engine and session factory. `create_engine_from_settings` builds the asyncpg engine with the configured pool settings. `get_db_session` is the FastAPI dependency that provides a scoped async session per request. `initialize_database` runs Alembic migrations on startup.
+
+**`backend/app/schemas/provenance.py`**
+Pydantic schemas for all provenance API request and response shapes: `IngestRequest`, `SearchRequest` (with `offset` for pagination), `SearchResponse` (with `total`, `offset`), `SearchResultItem`, `ProvenanceResponse`, `IngestResponse`, `ExplainRequest`, `ExplainResponse`.
+
+**`backend/alembic/versions/`**
+Alembic migration files run in order at startup:
+- `202501150001` — initial schema: `provenance_records` + `user_accounts` + pgvector extension + base indexes
+- `202501160001` — adds `role` to users, `user_id` FK to records
+- `202501170001` — backfills `role='member'` for existing users
+- `202501180001` — seeds first user per workspace as admin
+- `202501190001` — adds `token_version` to users
+- `202501200001` — adds `refresh_token_jti` to users
+- `202501210001` — adds IVFFLAT index on `embedding_vector` for fast ANN vector search
+
+**`backend/app/static/dashboard.html`**
+Full single-page dashboard application served at `/dashboard`. No build step — vanilla HTML/CSS/JS + Chart.js 4 via CDN. Eight tabs: Governance Overview, Timeline (Chart.js bar+line), Graph (force-directed canvas), Live Feed (30s poll with badge), Search, Record Viewer, Export, Team. Record Detail Modal, theme toggle (dark/light), backend status dot, MCP status indicator.
+
+---
+
+### MCP Server (`mcp/`)
+
+**`mcp/server.py`**
+MCP server built with `FastMCP`. Communicates over stdio. Authenticates against the LineageLens backend using either a static JWT or auto-login with username + password. Token caching with automatic re-login on 401. Seven tools: `search_provenance`, `get_record`, `get_insights`, `explain_record`, `list_recent`, `check_file_risk`, `usage_report`. Wire into Claude Code via `~/.claude/settings.json` or into Cursor via MCP settings.
+
+**`mcp/requirements.txt`**
+MCP server dependencies: `mcp>=1.0.0`, `httpx>=0.27.0`. Install with `pip install -r requirements.txt`.
+
+---
+
+### CLI (`cli/`)
+
+**`cli/src/commands/start.js`**
+`lineagelens start --mode <base|plus|max>` — runs the correct `docker compose up --detach` command for the specified tier. Checks Docker is running, validates the compose file exists, and prints the dashboard URL on success.
+
+**`cli/src/commands/stop.js`**
+`lineagelens stop --mode <base|plus|max>` — stops the specified tier's containers. Optionally removes volumes with `--volumes`.
+
+**`cli/src/commands/status.js`**
+`lineagelens status` — shows container health for all three tiers. Runs `docker compose ps` for each and prints a summary table.
+
+**`cli/src/commands/logs.js`**
+`lineagelens logs --mode <tier> [--service <name>]` — tails logs for a tier or a specific service container. Runs `docker compose logs --follow`.
+
+**`cli/src/utils/docker.js`**
+Docker availability check and `docker compose` command runner. Wraps `node:child_process` `spawn` calls.
+
+**`cli/src/utils/env.js`**
+Environment helpers: resolves the `.env` file path for a given tier, reads config values, and validates required variables are present.
+
+---
+
+### GitHub Actions (`.github/`)
+
+**`.github/workflows/lineagelens-annotate.yml`**
+PR Annotation workflow. Fires on `pull_request` opened/synchronized/reopened. Gets the list of changed files, calls `lineagelens-annotate.mjs` to fetch provenance records for those files from the backend, and posts a structured comment to the PR. Deletes previous LineageLens bot comments to avoid duplicates.
+
+**`.github/scripts/lineagelens-annotate.mjs`**
+Node.js script that queries `POST /search` for each changed file, formats the results as a markdown PR comment with AI-generated line annotations, risk badges, model names, and prompt previews, and writes the comment body to `LINEAGELENS_COMMENT` for the workflow to post.
+
+**`.github/workflows/provenance-review.yml`**
+Provenance Review Bot workflow. Fires on non-draft PRs. Calls `provenance_pr_review.py` to generate a structured AI lineage report and posts it as a PR comment. Also supports `workflow_dispatch` for manual invocation with a PR number. Skips gracefully when backend secrets are not configured.
+
+**`.github/scripts/provenance_pr_review.py`**
+Python script that queries the LineageLens backend for all provenance records touching the PR's changed files, groups them by file, computes risk summaries, and formats a structured markdown report with risk scores, model attribution, and prompt previews.
+
+**`.github/agents/lineagelens-backend-debugger.agent.md`**
+Claude agent instructions file. Provides context for a debugging agent that helps diagnose LineageLens backend issues.
+
+---
+
+### Deploy (`deploy/`)
+
+**`deploy/docker-compose.base.yml`**
+Docker Compose for Base tier: `postgres` (pgvector/pgvector:pg16) + `backend` (builds from `backend/Dockerfile`). No Neo4j, no proxy container. `BACKEND_MODE=solo`.
+
+**`deploy/docker-compose.plus.yml`**
+Docker Compose for Plus tier: `postgres` + `backend` + `proxy` (runs `proxy/proxy.py`). `BACKEND_MODE=team`. Larger connection pool settings.
+
+**`deploy/docker-compose.max.yml`**
+Docker Compose for Max tier: `postgres` + `neo4j` (official `neo4j` image) + `backend` + `proxy`. `BACKEND_MODE=enterprise`, `NEO4J_ENABLED=true`. Neo4j health check waits up to 90s.
+
+---
+
+### Scripts (`scripts/`)
+
+**`scripts/quickstart-{base,plus,max}.sh`**
+7-step automated first-time setup for each tier. Checks prerequisites (docker, openssl, curl, python3), stops existing containers, generates or validates `.env` secrets, starts PostgreSQL, waits for health, runs Alembic migrations, starts the backend, waits for `/health` 200, prints the health response and getting-started commands.
+
+**`scripts/reset-{base,plus,max}.sh`**
+Destroys all containers, volumes, and data for a tier. Removes `.env`. Use only for a full reset.
+
+**`scripts/debug.sh`**
+Automated health check script. Runs PASS/FAIL checks for: Docker availability, compose config validity, database migration status, backend startup, and HTTP health endpoint. Prints a summary with colour-coded results.
+
+**`scripts/commands-plus.md`**
+Complete command reference for the Plus tier: CLI commands, Docker Compose commands, dashboard login, authentication API, proxy setup, team management API, provenance API, health diagnostics, MCP server setup, troubleshooting guide.
+
+**`scripts/commands-max.md`**
+Complete command reference for the Max tier: all Plus commands plus Neo4j-specific commands (Cypher shell, Browser, memory config), Neo4j troubleshooting, MCP server setup with Max-specific notes (`get_record` returns `lineageNodeId`).
+
+**`scripts/package-{base,plus,max}.ps1`**
+PowerShell packaging scripts for Windows. Bundle the VSIX, compose file, scripts, and documentation into a release zip for each tier.
+
+**`scripts/release.ps1`**
+Master release script. Runs `vsce package` to build the VSIX, then calls each packaging script to produce the three release bundles.
+
+**`scripts/run-backend-native.ps1`**
+Runs the FastAPI backend natively (without Docker) on Windows. Sets up the Python virtual environment, installs dependencies, runs Alembic migrations, and starts uvicorn.
+
+**`scripts/test-backend-native.ps1`**
+Health-checks a natively running backend. Calls `/health` and prints the response.
+
+**`scripts/use-lineagelens-proxy.ps1`**
+Sets `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL` environment variables in the current PowerShell session to route AI tool traffic through the universal proxy at port 8788.

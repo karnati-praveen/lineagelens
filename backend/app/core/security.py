@@ -67,6 +67,7 @@ async def get_current_auth_context(
         ) from error
 
     # Verify token_version to prevent use of tokens revoked on logout or password change.
+    # All tokens issued by this backend include token_version; absence means a crafted token.
     try:
         token_version_claim = int(auth.token_payload.get("token_version", -1))
     except (TypeError, ValueError):
@@ -74,20 +75,24 @@ async def get_current_auth_context(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Malformed token_version claim.",
         )
-    if token_version_claim >= 0:
-        try:
-            user_id = PyUUID(auth.subject)
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.")
-
-        result = await session.execute(
-            select(UserAccount.token_version, UserAccount.is_active).where(UserAccount.id == user_id)
+    if token_version_claim < 0:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token is missing version claim.",
         )
-        row = result.one_or_none()
-        if row is None or row.token_version != token_version_claim:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked.")
-        if not row.is_active:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account is inactive.")
+    try:
+        user_id = PyUUID(auth.subject)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.")
+
+    result = await session.execute(
+        select(UserAccount.token_version, UserAccount.is_active).where(UserAccount.id == user_id)
+    )
+    row = result.one_or_none()
+    if row is None or row.token_version != token_version_claim:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked.")
+    if not row.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account is inactive.")
 
     return auth
 

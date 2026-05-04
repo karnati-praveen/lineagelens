@@ -81,9 +81,13 @@ export function createLegacyHeuristicAdapter(): AgentAdapter {
           null
         : null;
 
-      const confidence = clampConfidence(
-        toolName ? 0.55 : provider ? 0.42 : 0.3
-      );
+      let rawConfidence = 0.3;
+      if (toolName) {
+        rawConfidence = 0.55;
+      } else if (provider) {
+        rawConfidence = 0.42;
+      }
+      const confidence = clampConfidence(rawConfidence);
 
       const evidence = [
         createEvidence('heuristic', 'rawContextBlob', rawContextBlob.slice(0, 240), 0.2, 'Legacy heuristic match.'),

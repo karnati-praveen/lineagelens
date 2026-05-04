@@ -270,11 +270,12 @@ async def search_provenance_records(
     search: SearchRequest,
     workspace_id: str,
     settings: Settings,
-) -> tuple[list[tuple[ProvenanceRecord, float | None]], list[str]]:
+) -> tuple[list[tuple[ProvenanceRecord, float | None]], list[str], int | None]:
     query_text = (search.query or search.keywords or "").strip()
 
     limit = search.top_k or search.limit or settings.search_default_limit
     limit = min(200, max(1, int(limit)))
+    offset = max(0, int(search.offset or 0))
 
     filters = build_workspace_record_filters(search, workspace_id)
 
@@ -289,15 +290,16 @@ async def search_provenance_records(
             .where(and_(*filters))
             .where(ProvenanceRecord.embedding_vector.is_not(None))
             .order_by(distance_expr.asc())
+            .offset(offset)
             .limit(limit)
         )
 
         result = await session.execute(statement)
         rows = result.all()
-        return [(row[0], to_similarity(row[1])) for row in rows], []
+        return [(row[0], to_similarity(row[1])) for row in rows], [], None
 
     if query_text:
-        keyword_scan_limit = min(limit * 10, 1000)
+        keyword_scan_limit = min((offset + limit) * 10, 2000)
         statement = (
             select(ProvenanceRecord)
             .where(and_(*filters))
@@ -325,18 +327,24 @@ async def search_provenance_records(
         )
 
         warnings = ["Vector search is disabled; using keyword fallback search."]
-        return rows_with_scores[:limit], warnings
+        return rows_with_scores[offset : offset + limit], warnings, len(rows_with_scores)
+
+    # Plain listing path: run a COUNT query so callers can paginate.
+    count_statement = select(func.count()).select_from(ProvenanceRecord).where(and_(*filters))
+    count_result = await session.execute(count_statement)
+    total = count_result.scalar_one()
 
     statement = (
         select(ProvenanceRecord)
         .where(and_(*filters))
         .order_by(desc(ProvenanceRecord.timestamp_iso))
+        .offset(offset)
         .limit(limit)
     )
 
     result = await session.execute(statement)
     records = result.scalars().all()
-    return [(record, None) for record in records], []
+    return [(record, None) for record in records], [], total
 
 
 def serialize_provenance_record(
