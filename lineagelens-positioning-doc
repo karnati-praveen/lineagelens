@@ -1,0 +1,161 @@
+# LineageLens Positioning Document
+
+Version: 1.0 | May 2026
+
+---
+
+## Positioning Statement
+
+LineageLens is the AI code provenance and governance platform for engineering teams. It captures every AI-assisted code insertion in real time, links it to the prompt, model, developer, and risk context, and delivers an audit-ready record — self-hosted, with code that never leaves your infrastructure.
+
+---
+
+## Category
+
+AI code provenance and governance.
+
+---
+
+## Target Customer
+
+**Primary:** Engineering leads, security teams, and compliance-minded orgs at companies of 5–500 engineers where AI coding tools (Cursor, Claude Code, Copilot, Aider, Continue) are already in production use.
+
+**Secondary:** Individual engineers who want a personal provenance record before formal governance is required.
+
+---
+
+## The Problem
+
+AI code is shipping into production, but engineering teams cannot reliably answer:
+
+- Which AI tool wrote this function, and which model version?
+- What prompt produced it?
+- Which developer triggered it, and when?
+- How risky is this file given its AI insertion density?
+- Can we produce a report for a security audit, compliance review, or incident post-mortem?
+
+Without answers, teams face security blind spots, no accountability for AI-authored logic, and no audit trail when an AI-generated change causes an incident.
+
+---
+
+## What the Current Product Does
+
+LineageLens captures AI code insertions in real time through a universal LLM proxy and VS Code extension, stores them in a self-hosted backend, and surfaces provenance data across four channels.
+
+**Capture**
+A transparent proxy (port 8788) intercepts every AI tool request — Claude Code, Cursor, Aider, Copilot, Continue, any tool that sends HTTP to an AI provider. No agent hooks required. No vendor cooperation needed. Each insertion is recorded with model ID, prompt excerpt, developer identity, workspace, timestamp, and confidence score.
+
+**Storage**
+Self-hosted FastAPI backend with PostgreSQL and pgvector. Code and prompt data stays inside your infrastructure — nothing is sent to an external service.
+
+**Governance**
+Risk scoring (0.0–1.0) per insertion based on code patterns and file sensitivity. Semantic vector search across all AI-generated code in the workspace. AI Usage Report: percentage AI-written code, model breakdown, developer stats, and compliance controls — formatted for engineering leads and auditors.
+
+**Delivery**
+GitHub Actions PR annotation with per-insertion risk scores and provenance context. MCP server (7 tools) allowing Claude Code, Cursor, and Continue to query provenance directly inside the AI chat. VS Code sidebar for per-file and per-session lineage browsing.
+
+---
+
+## Why We Win
+
+**1. Self-hosted — code never leaves your machine**
+Every direct competitor with real provenance capability is cloud SaaS: Span ($24/dev/month, cloud-only), Tabnine provenance ($39/user/month Enterprise, cloud-only), GitClear (SaaS). LineageLens stores everything in your own PostgreSQL instance. This is the deciding factor for regulated industries, government contractors, and any team with data residency or air-gap requirements.
+
+**2. Real-time network-layer capture, not retroactive inference**
+Span uses an ML classifier to infer AI origin after the fact (their stated 95% accuracy means 5% wrong, with no prompt data ever captured). GitClear depends on vendor telemetry APIs requiring each tool to expose its own data. LineageLens intercepts at the network layer — it sees the actual prompt and model response the moment it happens, for every AI tool, regardless of whether that vendor has an API for it.
+
+**3. Tool-agnostic by architecture**
+One proxy captures Claude Code, Cursor, Aider, Copilot, Codeium, Continue, and any tool that sends HTTP to an AI provider. Tabnine's provenance feature only covers Tabnine. GitClear needs each vendor to participate. LineageLens captures everything without asking vendors for anything.
+
+**4. Risk scoring inside GitHub PRs before merge**
+No competitor scores risk per insertion. LineageLens maps each insertion to a 0.0–1.0 risk score based on code pattern, model, and file context, surfaced as a GitHub PR comment before the code merges. Security teams can act before AI-generated code ships.
+
+**5. Queryable from inside the AI chat via MCP**
+The MCP server makes provenance queryable from Claude Code, Cursor, and Continue without leaving the conversation. Ask "what AI wrote this function and what was the prompt?" from inside the tool that wrote it. No competitor in this category has an MCP server.
+
+**6. Compliance report without a $25K implementation fee**
+Cycode and Secure Code Warrior charge enterprise implementation fees starting at $25,000 for AI governance reports. LineageLens ships a CEO and compliance-ready AI Usage Report at the Plus tier, self-hosted, at a fraction of that cost.
+
+---
+
+## Core Messaging
+
+- Git blame for AI — see which model generated every line, why, and when
+- Real-time capture at the network layer: works with every AI tool, no vendor cooperation required
+- Your code never leaves your machine
+- From insertion to PR to audit: the complete provenance chain
+
+---
+
+## Competitive Position
+
+| Claim | LineageLens | Span | Git AI | Tabnine | GitClear |
+|---|---|---|---|---|---|
+| Real-time prompt capture | Yes | No (retroactive ML) | Partial (hook-dependent) | No | No |
+| Self-hosted | Yes | No | Yes (no backend) | No | No |
+| Tool-agnostic proxy | Yes | No | No | No | No |
+| Risk scoring per insertion | Yes | No | No | No | No |
+| MCP server (in-chat) | Yes | No | No | No | No |
+| GitHub PR annotation | Yes | No | No | No | No |
+| Compliance usage report | Yes | Yes (SaaS) | No | No | Partial |
+
+Closest competitor: **Git AI** (open source, similar prompt capture concept, earlier to market). Key gaps versus Git AI: no backend, no risk scoring, no compliance report, no MCP server, no GitHub Actions integration, relies on agent hooks (tools without hooks are invisible).
+
+Funded threat: **Span** ($25M Series A, November 2025). Key gap versus Span: cloud-only, retroactive inference — no actual prompt data, no self-hosted option.
+
+---
+
+## Product Tiers
+
+**Base (free):** Solo engineers. Local capture via VS Code extension and proxy. Sidebar provenance view. Export. No team features or shared backend.
+
+**Plus:** Teams of 5–50. Shared self-hosted backend, semantic search, insights dashboard, AI Usage Report, GitHub Actions PR annotation, MCP server access.
+
+**Max:** Enterprise. All Plus features plus Neo4j graph lineage, multi-workspace support, full audit export, advanced compliance controls.
+
+---
+
+## What Is on the Roadmap (not yet shipped)
+
+The next governance layer — tool-call records as first-class events, approval chain capture, identity and permission snapshots at execution time, and downstream mutation tracking — is being scoped for Plus and Max tiers. These extend current insertion provenance into full agent action provenance. Current customers will migrate in place.
+
+These features are not in the current product. Do not present them as shipped.
+
+---
+
+## Do Not Position As
+
+- A generic LLM observability tool (that is Langfuse, Arize Phoenix, LangSmith — they serve AI app developers, not teams using AI coding assistants)
+- A code quality scanner (CodeScene, SonarQube)
+- A developer productivity metrics platform (LinearB, Swarmia, DX — they track AI adoption at the license level, not code provenance)
+- A policy enforcement gate (Cycode, Secure Code Warrior — their primary function is blocking, not recording)
+- A GitHub replacement
+
+---
+
+## Best First Wedge
+
+Engineering teams of 5–50 using two or more AI coding tools that need:
+
+- Provable AI code origin for security review or compliance evidence
+- Risk visibility before AI-generated code merges to the main branch
+- An audit trail when an AI-authored change causes an incident
+- Team-wide visibility into which models and prompts are producing the most sensitive code
+
+**The wedge conversation:**
+
+"Your team is shipping AI-generated code every day. If a security incident traces to an AI-authored function next month, can you tell me today which model wrote it, what the prompt was, and who approved the merge? LineageLens is the only self-hosted tool that can answer all three — in real time, across every AI tool your team uses, without your code leaving your infrastructure."
+
+---
+
+## Why Now
+
+AI coding adoption is already in production across engineering teams. Governance has not caught up. Three signals point to urgency:
+
+1. **Cursor published Agent Trace** (February 2026) — an open RFC for AI code attribution. Platform players are moving to define the standard. Early adopters who already have provenance data will have a compliance head start.
+
+2. **OWASP launched its AIBOM initiative** — the AI equivalent of a software bill of materials. Regulatory guidance on AI code supply chains is forming now, not later.
+
+3. **Incidents are already happening** — AI-generated security vulnerabilities, hallucinated API usage, and auth logic written without full context are documented failure modes. The teams that instrument before the incident reconstruct; the teams that don't, guess.
+
+The question is not whether teams will need to prove AI code origin. It is whether they build that audit trail proactively or reactively after an audit, a breach, or a regulator asks.
