@@ -28,8 +28,8 @@ Zero shared infrastructure. Fully private. Works offline.
 - Records stored locally as a JSON file or in VS Code global state.
 - Best for individual developers and offline workflows.
 - Includes provenance capture, AI-assisted explanation, and local lineage.
-- Quickstart: `bash scripts/quickstart-base.sh`
-- Deploy: `deploy/docker-compose.base.yml`
+- Quickstart: `bash lineagelens-scripts/quickstart-base.sh`
+- Deploy: `lineagelens-deploy/docker-compose.base.yml`
 
 ### LineageLens Plus
 
@@ -37,9 +37,9 @@ Shared backend without graph complexity.
 
 - FastAPI backend with semantic search, governance dashboard, and team management.
 - Runs without Neo4j. pgvector enables vector search when OpenAI embeddings are configured.
-- Docker is optional. See [docs/native-backend.md](docs/native-backend.md) to run natively.
-- Quickstart: `bash scripts/quickstart-plus.sh`
-- Deploy: `deploy/docker-compose.plus.yml`
+- Docker is optional. See [lineagelens-docs/native-backend.md](lineagelens-docs/native-backend.md) to run natively.
+- Quickstart: `bash lineagelens-scripts/quickstart-plus.sh`
+- Deploy: `lineagelens-deploy/docker-compose.plus.yml`
 
 ### LineageLens Max
 
@@ -47,8 +47,8 @@ Complete provenance intelligence and auditability.
 
 - Adds Neo4j graph lineage and full vector search on top of Plus.
 - Best for production deployments with compliance requirements.
-- Quickstart: `bash scripts/quickstart-max.sh`
-- Deploy: `deploy/docker-compose.max.yml`
+- Quickstart: `bash lineagelens-scripts/quickstart-max.sh`
+- Deploy: `lineagelens-deploy/docker-compose.max.yml`
 
 ---
 
@@ -60,7 +60,7 @@ Install `lineagelens-*.vsix` from your release bundle into VS Code.
 
 **Step 2 — Start your backend**
 ```bash
-bash scripts/quickstart-plus.sh    # or quickstart-base.sh / quickstart-max.sh
+bash lineagelens-scripts/quickstart-plus.sh    # or quickstart-base.sh / quickstart-max.sh
 ```
 
 **Step 3 — Point your AI tool at the proxy**
@@ -81,7 +81,7 @@ http://localhost:8787/dashboard
 
 **Step 5 — Use the CLI**
 ```bash
-lineagelens start --mode plus    # Start backend
+lineagelens start --mode plus    # Start backend (plus or max)
 lineagelens status               # Container health
 lineagelens logs --mode plus     # Tail logs
 lineagelens stop --mode plus     # Stop backend
@@ -98,7 +98,7 @@ npm install -g .
 
 | Command | Description |
 |---|---|
-| `lineagelens start --mode plus` | Start Plus backend (also: `base`, `max`) |
+| `lineagelens start --mode plus` | Start Plus backend (also: `max`) |
 | `lineagelens stop --mode plus` | Stop backend containers |
 | `lineagelens status` | Show container health for all modes |
 | `lineagelens logs --mode plus` | Tail backend logs (Ctrl+C to stop) |
@@ -141,8 +141,8 @@ LineageLens ships an MCP server that lets AI assistants query provenance data di
 
 ### Install
 ```bash
-cd mcp
-pip install -r requirements.txt
+cd lineagelens-mcp
+pip install -r lineagelens-mcp-requirements.txt
 ```
 
 ### Configure credentials
@@ -165,7 +165,7 @@ Add to `~/.claude/settings.json` (global) or `.claude/settings.json` (project):
   "mcpServers": {
     "lineagelens": {
       "command": "python",
-      "args": ["/absolute/path/to/mcp/server.py"],
+      "args": ["/absolute/path/to/lineagelens-mcp/lineagelens-mcp.py"],
       "env": {
         "LINEAGELENS_USERNAME": "your-username",
         "LINEAGELENS_PASSWORD": "your-password",
@@ -186,14 +186,15 @@ Add to `~/.claude/settings.json` (global) or `.claude/settings.json` (project):
 | `explain_record` | Plain-English explanation of why code was generated |
 | `list_recent` | Most recently captured AI insertions |
 | `check_file_risk` | Risk breakdown and model usage for a specific file |
+| `usage_report` | AI usage summary — lines, models, risk, developers (date-range filterable) |
 
-See [releases/commands.md](releases/commands.md) for complete setup instructions.
+See [lineagelens-releases/commands.md](lineagelens-releases/commands.md) for complete setup instructions.
 
 ---
 
 ## Supported AI Tools
 
-LineageLens ships 10 agent adapters that identify which AI tool produced each insertion. The registry runs all adapters in parallel and selects the highest-confidence match.
+LineageLens ships 11 agent adapters that identify which AI tool produced each insertion. The registry runs all adapters in parallel and selects the highest-confidence match.
 
 | Adapter | Tool | Session Kind |
 |---|---|---|
@@ -267,10 +268,10 @@ Full captures store prompt and response bodies. Metadata-only and tunnel-only ca
 
 ## Lightweight Adapter (CLI / Script Ingest)
 
-`src/lightweightRecord.ts` is a pure TypeScript helper with no VS Code dependency. Use it to build provenance records from a CLI, CI job, or any other environment.
+`lineagelens-src/lightweightRecord.ts` is a pure TypeScript helper with no VS Code dependency. Use it to build provenance records from a CLI, CI job, or any other environment.
 
 ```ts
-import { buildLightweightProvenanceRecord } from './src/lightweightRecord';
+import { buildLightweightProvenanceRecord } from './lineagelens-src/lightweightRecord';
 
 const record = buildLightweightProvenanceRecord({
   eventId: crypto.randomUUID(),
@@ -284,7 +285,7 @@ const record = buildLightweightProvenanceRecord({
 });
 ```
 
-See [docs/lightweight-adapters.md](docs/lightweight-adapters.md) for the full contract.
+See [lineagelens-docs/lightweight-adapters.md](lineagelens-docs/lightweight-adapters.md) for the full contract.
 
 ---
 

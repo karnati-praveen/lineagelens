@@ -1,0 +1,30 @@
+{
+  "name": "lineagelens-cli",
+  "version": "0.1.0",
+  "description": "CLI to manage LineageLens Plus and Max backends — AI code provenance for your team.",
+  "keywords": ["ai", "provenance", "code-intelligence", "ai-governance", "lineagelens"],
+  "license": "MIT",
+  "author": "Karnati Praveen <karnatipraveen17@gmail.com>",
+  "homepage": "https://lineage-website.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/karnati-praveen/lineagelens"
+  },
+  "bugs": {
+    "url": "https://github.com/karnati-praveen/lineagelens/issues"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "bin": {
+    "lineagelens": "./bin/lineagelens-cli.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "deploy/"
+  ],
+  "dependencies": {
+    "commander": "^12.1.0"
+  }
+}

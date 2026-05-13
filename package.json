@@ -20,9 +20,9 @@
     "pgvector",
     "neo4j"
   ],
-  "version": "0.0.7",
+  "version": "0.1.0",
   "publisher": "karnatipraveen",
-  "icon": "media/icon.png",
+  "icon": "lineagelens-media/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/karnati-praveen/lineagelens"
@@ -131,17 +131,17 @@
         {
           "id": "aiInsertionDetector.provenanceSidebar",
           "name": "AI Provenance",
-          "icon": "media/icon.png"
+          "icon": "lineagelens-media/icon.png"
         },
         {
           "id": "aiInsertionDetector.provenanceSearchSidebar",
           "name": "AI Provenance Search",
-          "icon": "media/icon.png"
+          "icon": "lineagelens-media/icon.png"
         },
         {
           "id": "aiInsertionDetector.insightsDashboard",
           "name": "AI Governance Dashboard",
-          "icon": "media/icon.png"
+          "icon": "lineagelens-media/icon.png"
         }
       ]
     },
@@ -395,12 +395,12 @@
   },
   "scripts": {
     "typecheck": "tsc -p ./ --noEmit --strict",
-    "bundle": "esbuild ./src/extension.ts --bundle --platform=node --format=cjs --target=node18 --outfile=dist/extension.js --external:vscode --external:tree-sitter --external:tree-sitter-javascript --external:tree-sitter-python --external:tree-sitter-typescript",
+    "bundle": "esbuild ./lineagelens-src/extension.ts --bundle --platform=node --format=cjs --target=node18 --outfile=dist/extension.js --external:vscode --external:tree-sitter --external:tree-sitter-javascript --external:tree-sitter-python --external:tree-sitter-typescript",
     "lint": "npm run typecheck",
     "pretest": "npm run typecheck",
     "ci": "npm run typecheck && npm run lint && npm run bundle",
     "compile": "npm run typecheck && npm run bundle",
-    "test": "tsx --test src/test/**/*.test.ts",
+    "test": "tsx --test lineagelens-src/test/**/*.test.ts",
     "watch": "tsc -watch -p ./ --noEmit",
     "vscode:prepublish": "npm run lint && npm run test && npm run bundle",
     "package:vsix": "npm run compile && npx @vscode/vsce package",
@@ -408,13 +408,13 @@
     "package:win32-x64": "npm run compile && npx @vscode/vsce package --target win32-x64",
     "package:linux-x64": "npm run compile && npx @vscode/vsce package --target linux-x64",
     "package:darwin-arm64": "npm run compile && npx @vscode/vsce package --target darwin-arm64",
-    "native:plus": "powershell -ExecutionPolicy Bypass -File ./scripts/run-backend-native.ps1 -Mode plus",
-    "native:max": "powershell -ExecutionPolicy Bypass -File ./scripts/run-backend-native.ps1 -Mode max",
-    "native:test": "powershell -ExecutionPolicy Bypass -File ./scripts/test-backend-native.ps1",
-    "release": "powershell -ExecutionPolicy Bypass -File ./scripts/release.ps1",
-    "ship:base": "powershell -ExecutionPolicy Bypass -File ./scripts/package-base.ps1",
-    "ship:plus": "powershell -ExecutionPolicy Bypass -File ./scripts/package-plus.ps1",
-    "ship:max": "powershell -ExecutionPolicy Bypass -File ./scripts/package-max.ps1",
+    "native:plus": "powershell -ExecutionPolicy Bypass -File ./lineagelens-scripts/run-backend-native.ps1 -Mode plus",
+    "native:max": "powershell -ExecutionPolicy Bypass -File ./lineagelens-scripts/run-backend-native.ps1 -Mode max",
+    "native:test": "powershell -ExecutionPolicy Bypass -File ./lineagelens-scripts/test-backend-native.ps1",
+    "release": "powershell -ExecutionPolicy Bypass -File ./lineagelens-scripts/release.ps1",
+    "ship:base": "powershell -ExecutionPolicy Bypass -File ./lineagelens-scripts/package-base.ps1",
+    "ship:plus": "powershell -ExecutionPolicy Bypass -File ./lineagelens-scripts/package-plus.ps1",
+    "ship:max": "powershell -ExecutionPolicy Bypass -File ./lineagelens-scripts/package-max.ps1",
     "publish": "npx @vscode/vsce publish",
     "publish:patch": "npx @vscode/vsce publish patch",
     "publish:minor": "npx @vscode/vsce publish minor",

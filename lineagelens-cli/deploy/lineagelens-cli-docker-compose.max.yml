@@ -1,0 +1,124 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: lineagelens-max-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: provenance
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "5432:5432"
+    volumes:
+      - lineagelens_max_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d provenance"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  neo4j:
+    image: neo4j:5
+    container_name: lineagelens-max-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}
+      NEO4J_server_memory_pagecache_size: 512M
+      NEO4J_server_memory_heap_initial__size: 512M
+      NEO4J_server_memory_heap_max__size: 1024M
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - lineagelens_max_neo4j_data:/data
+      - lineagelens_max_neo4j_logs:/logs
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "echo 'RETURN 1;' | cypher-shell -a bolt://localhost:7687 -u neo4j -p ${NEO4J_PASSWORD} || exit 1"
+        ]
+      interval: 15s
+      timeout: 15s
+      retries: 30
+      start_period: 60s
+
+  backend:
+    image: karnatipraveen/lineagelens-backend:latest
+    container_name: lineagelens-max-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    environment:
+      BACKEND_MODE: enterprise
+      NEO4J_ENABLED: "true"
+      VECTOR_SEARCH_ENABLED: "true"
+      LINEAGE_STRICT_MODE: "false"
+      APP_ENV: production
+      APP_TITLE: LineageLens Max Backend
+      APP_VERSION: 0.1.0
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@postgres:5432/provenance
+      PGVECTOR_DIMENSION: 256
+      DB_POOL_SIZE: 10
+      DB_MAX_OVERFLOW: 20
+      DB_POOL_TIMEOUT_SECONDS: 30
+      DB_POOL_RECYCLE_SECONDS: 1800
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      NEO4J_DATABASE: neo4j
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}
+      JWT_REFRESH_SECRET_KEY: ${JWT_REFRESH_SECRET_KEY:?Set JWT_REFRESH_SECRET_KEY in .env}
+      JWT_ALGORITHM: HS256
+      JWT_AUDIENCE: provenance-api
+      JWT_ISSUER: provenance-backend
+      JWT_ACCESS_TOKEN_TTL_MINUTES: 30
+      JWT_REFRESH_TOKEN_TTL_MINUTES: 10080
+      JWT_REQUIRED_SCOPES: provenance:write provenance:read
+      AUTH_PASSWORD_MIN_LENGTH: 8
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://127.0.0.1:3000,http://localhost:3000}
+      HTTP_MAX_BODY_BYTES: 2000000
+      WS_MAX_MESSAGE_BYTES: 2000000
+      RATE_LIMIT_ENABLED: "true"
+      RATE_LIMIT_WINDOW_SECONDS: 60
+      RATE_LIMIT_MAX_REQUESTS: 120
+      RATE_LIMIT_WS_WINDOW_SECONDS: 60
+      RATE_LIMIT_WS_MAX_MESSAGES: 120
+      RATE_LIMIT_WS_MAX_CONNECTIONS: 30
+      RATE_LIMIT_MAX_TRACKED_KEYS: 50000
+      EXPLAIN_LLM_API_URL: https://api.openai.com/v1/chat/completions
+      EXPLAIN_LLM_API_KEY: ${EXPLAIN_LLM_API_KEY:-}
+      EXPLAIN_LLM_MODEL: gpt-4o-mini
+      EXPLAIN_LLM_TIMEOUT_SECONDS: 25
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-hash}
+      EMBEDDING_API_URL: ${EMBEDDING_API_URL:-https://api.openai.com/v1/embeddings}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-text-embedding-3-small}
+    ports:
+      - "8787:8787"
+
+  proxy:
+    image: karnatipraveen/lineagelens-proxy:latest
+    container_name: lineagelens-max-proxy
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      UPSTREAM_URL: ${PROXY_UPSTREAM_URL:-https://api.anthropic.com}
+      BACKEND_URL: http://backend:8787
+      BACKEND_INGEST_TOKEN: ${PROXY_INGEST_TOKEN:-}
+      PROXY_WORKSPACE_ID: ${PROXY_WORKSPACE_ID:-proxy-capture}
+      PROXY_PORT: 8788
+    ports:
+      - "8788:8788"
+
+volumes:
+  lineagelens_max_postgres:
+  lineagelens_max_neo4j_data:
+  lineagelens_max_neo4j_logs:

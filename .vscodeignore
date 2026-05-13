@@ -1,15 +1,15 @@
-﻿# Exclude development and infrastructure content from extension package.
+# Exclude development and infrastructure content from extension package.
 .agents/**
 .claude/**
 .git/**
 .github/**
 .venv/**
-backend/**
-deploy/**
-docs/**
+lineagelens-backend/**
+lineagelens-deploy/**
+lineagelens-docs/**
 lineagelens-ad/**
-proxy/**
-src/**
+lineagelens-proxy/**
+lineagelens-src/**
 out/**
 .vscode/**
 
@@ -27,14 +27,14 @@ docker-compose.enterprise.yml
 .gitignore
 .env.team.example
 .env.enterprise.example
-docs/SHIP_PRODUCTS_COMMANDS.md
+lineagelens-docs/SHIP_PRODUCTS_COMMANDS.md
 file.md
-prafea
+lineagelens-prafea
 skills-lock.json
-releases/**
-scripts/**
+lineagelens-releases/**
+lineagelens-scripts/**
 cli/**
-docs/shipping-modes.md
+lineagelens-docs/shipping-modes.md
 
 # Exclude all node_modules by default, then allow required runtime native modules.
 node_modules/**
@@ -49,6 +49,6 @@ node_modules/**
 # Keep package metadata/docs
 !package.json
 !README.md
-!docs/CHANGELOG.md
+!lineagelens-docs/CHANGELOG.md
 !LICENSE
-!docs/SUPPORT.md
+!lineagelens-docs/SUPPORT.md

@@ -6,7 +6,7 @@
       "ES2022"
     ],
     "outDir": "out",
-    "rootDir": "src",
+    "rootDir": "lineagelens-src",
     "sourceMap": true,
     "strict": true,
     "moduleResolution": "Node16",
