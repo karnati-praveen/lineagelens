@@ -121,11 +121,11 @@ jobs:
           if github_token and pr_number and repo:
               gh_headers = {"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"}
               status_emoji = "🔴" if violations else "🟢"
-              comment_body = f"""## {status_emoji} LineageLens AI Provenance Report
-
-**PR:** #{pr_number} | **Files checked:** {len(changed_files)} | **AI insertions found:** {total_ai_lines} | **Policy violations:** {len(violations)}
-
-"""
+              comment_body = (
+                  f"## {status_emoji} LineageLens AI Provenance Report\n\n"
+                  f"**PR:** #{pr_number} | **Files checked:** {len(changed_files)} | "
+                  f"**AI insertions found:** {total_ai_lines} | **Policy violations:** {len(violations)}\n\n"
+              )
               if violations:
                   comment_body += "### ⚠️ Policy Violations\n\n| File | Risk | Model | UUID |\n|---|---|---|---|\n"
                   for v in violations[:10]:
