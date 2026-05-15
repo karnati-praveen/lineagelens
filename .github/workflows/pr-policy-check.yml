@@ -1,0 +1,161 @@
+# Required GitHub repository variables (Settings → Variables → Actions):
+#   LINEAGELENS_BACKEND_URL: URL of your LineageLens backend (e.g. https://lineagelens.yourcompany.com)
+#
+# Required GitHub repository secrets (Settings → Secrets → Actions):
+#   LINEAGELENS_ACCESS_TOKEN: A valid LineageLens JWT access token or API key
+#
+# Optional:
+#   LINEAGELENS_FAIL_ON_VIOLATION: Set to "true" to fail the PR check on high-risk violations
+#
+# The backend must be reachable from the GitHub Actions runner.
+# For self-hosted runners on the same network, use the internal URL.
+# For cloud deployments, expose the backend via HTTPS with authentication.
+
+name: LineageLens PR Policy Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  lineage-policy-check:
+    name: AI Provenance Policy Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run LineageLens Policy Check
+        id: policy_check
+        env:
+          LINEAGELENS_BACKEND_URL: ${{ vars.LINEAGELENS_BACKEND_URL || 'http://localhost:8787' }}
+          LINEAGELENS_ACCESS_TOKEN: ${{ secrets.LINEAGELENS_ACCESS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python - << 'EOF'
+          import os
+          import json
+          import subprocess
+          import sys
+          import requests
+
+          backend_url = os.environ.get("LINEAGELENS_BACKEND_URL", "http://localhost:8787").rstrip("/")
+          token = os.environ.get("LINEAGELENS_ACCESS_TOKEN", "")
+          github_token = os.environ.get("GITHUB_TOKEN", "")
+          pr_number = os.environ.get("PR_NUMBER", "")
+          repo = os.environ.get("REPO", "")
+          base_sha = os.environ.get("BASE_SHA", "")
+          head_sha = os.environ.get("HEAD_SHA", "")
+
+          headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"} if token else {}
+
+          # Get changed files in this PR
+          result = subprocess.run(
+              ["git", "diff", "--name-only", f"{base_sha}...{head_sha}"],
+              capture_output=True, text=True
+          )
+          changed_files = [f.strip() for f in result.stdout.splitlines() if f.strip()]
+          print(f"Changed files: {changed_files}")
+
+          violations = []
+          annotations = []
+          total_ai_lines = 0
+
+          for file_path in changed_files[:20]:  # limit to 20 files
+              if not any(file_path.endswith(ext) for ext in [".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java"]):
+                  continue
+              try:
+                  resp = requests.get(
+                      f"{backend_url}/diff/file/{file_path}",
+                      headers=headers,
+                      timeout=10,
+                  )
+                  if resp.status_code != 200:
+                      continue
+                  data = resp.json()
+                  records = data.get("records", [])
+                  if not records:
+                      continue
+
+                  for rec in records:
+                      risk = rec.get("riskScore") or 0
+                      total_ai_lines += 1
+                      if risk >= 80:
+                          violations.append({
+                              "file": file_path,
+                              "uuid": rec.get("uuid"),
+                              "risk": risk,
+                              "model": rec.get("modelName", "unknown"),
+                              "line": rec.get("cursorLine") or 1,
+                          })
+                          annotations.append({
+                              "path": file_path,
+                              "line": rec.get("cursorLine") or 1,
+                              "annotation_level": "warning" if risk < 90 else "failure",
+                              "message": f"High-risk AI insertion (risk={risk}) from {rec.get('modelName', 'unknown')}. UUID: {rec.get('uuid', '')}",
+                              "title": "LineageLens: High-Risk AI Code",
+                          })
+              except Exception as e:
+                  print(f"Warning: could not check {file_path}: {e}")
+
+          # Post PR comment
+          if github_token and pr_number and repo:
+              gh_headers = {"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"}
+              status_emoji = "🔴" if violations else "🟢"
+              comment_body = f"""## {status_emoji} LineageLens AI Provenance Report
+
+**PR:** #{pr_number} | **Files checked:** {len(changed_files)} | **AI insertions found:** {total_ai_lines} | **Policy violations:** {len(violations)}
+
+"""
+              if violations:
+                  comment_body += "### ⚠️ Policy Violations\n\n| File | Risk | Model | UUID |\n|---|---|---|---|\n"
+                  for v in violations[:10]:
+                      comment_body += f"| `{v['file']}` | {v['risk']} | {v['model']} | `{v['uuid'][:8]}...` |\n"
+                  comment_body += "\n> Records with risk ≥ 80 require review before merge.\n"
+              else:
+                  comment_body += "✅ No high-risk AI insertions detected in changed files.\n"
+
+              comment_body += f"\n_Powered by [LineageLens](https://github.com/lineagelens/lineagelens) — AI code provenance._"
+
+              try:
+                  requests.post(
+                      f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments",
+                      headers=gh_headers,
+                      json={"body": comment_body},
+                      timeout=15,
+                  )
+              except Exception as e:
+                  print(f"Warning: could not post PR comment: {e}")
+
+          if violations:
+              print(f"::warning::LineageLens found {len(violations)} high-risk AI insertion(s) in this PR.")
+              # Don't fail the build — warn only. Set fail_on_violation: true in vars to fail.
+              fail_on_violation = os.environ.get("LINEAGELENS_FAIL_ON_VIOLATION", "false").lower() == "true"
+              if fail_on_violation:
+                  sys.exit(1)
+          else:
+              print("LineageLens: No policy violations detected.")
+          EOF
+
+      - name: Policy check summary
+        if: always()
+        run: echo "LineageLens policy check complete."

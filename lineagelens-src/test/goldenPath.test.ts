@@ -76,12 +76,12 @@ function buildCapturedCorrelation(
         { role: 'user', content: 'Edit this function.' }
       ],
     modelName: overrides.modelName ?? 'gpt-4o-mini',
-    parameters: { temperature: 0.2, ...(overrides.parameters ?? {}) },
+    parameters: { temperature: 0.2, ...overrides.parameters },
     targetHost: overrides.targetHost ?? 'api.openai.com',
     requestHeaders: {
       'user-agent': overrides.userAgent ?? 'test-agent/1.0',
       'x-request-id': overrides.requestUuid ?? '11111111-1111-4111-8111-111111111111',
-      ...(overrides.requestHeaders ?? {})
+      ...overrides.requestHeaders
     },
     systemPrompt: overrides.systemPrompt ?? 'You are a coding assistant.',
     rawModelResponse: overrides.rawModelResponse ?? 'Generated response',
@@ -118,7 +118,7 @@ test('golden path: cursor adapter — all signals fire, confidence in expected r
   assert.equal(result.sessionKind, 'agentic');
   // userAgent(0.26)+host(0.18)+payload(0.22 for "cursor")+model(0.08) = 0.74 → 0.5+0.74*0.6 ≈ 0.944
   assert.ok(result.confidence >= 0.8, `confidence ${result.confidence} should be >= 0.8`);
-  assert.ok(result.confidence <= 1.0, `confidence ${result.confidence} should be <= 1.0`);
+  assert.ok(result.confidence <= 1, `confidence ${result.confidence} should be <= 1.0`);
   assert.ok(result.evidence.length >= 3, 'at least 3 evidence entries expected');
 });
 
@@ -165,7 +165,7 @@ test('golden path: claude code adapter — full signal set yields max confidence
   assert.equal(result.sessionKind, 'cli');
   // ua(0.30)+host(0.18)+anthropic-version(0.12)+x-app(0.15)+system(0.18)+msgs(0.12) = 1.05 → clamped to 1.0
   assert.ok(result.confidence >= 0.9, `confidence ${result.confidence} should be >= 0.9`);
-  assert.ok(result.confidence <= 1.0, 'confidence must not exceed 1.0');
+  assert.ok(result.confidence <= 1, 'confidence must not exceed 1.0');
   assert.equal(result.operationType, 'test-fix');
 });
 
@@ -211,7 +211,7 @@ test('golden path: copilot adapter — full signal set yields max confidence', (
   assert.equal(result.sessionKind, 'assistant');
   // ua(0.28)+host(0.22)+token(0.20)+editor-ver(0.10)+payload(0.12) = 0.92 → clamped 1.0
   assert.ok(result.confidence >= 0.9, `confidence ${result.confidence} should be >= 0.9`);
-  assert.ok(result.confidence <= 1.0);
+  assert.ok(result.confidence <= 1);
 });
 
 test('golden path: aider adapter — user-agent + payload + model + host', () => {
@@ -233,7 +233,7 @@ test('golden path: aider adapter — user-agent + payload + model + host', () =>
   assert.equal(result.sessionKind, 'agentic');
   // ua(0.28)+payload(0.20)+model(0.10)+host(0.10) = 0.68 → 0.5+0.68*0.6 ≈ 0.908
   assert.ok(result.confidence >= 0.7, `confidence ${result.confidence} should be >= 0.7`);
-  assert.ok(result.confidence <= 1.0);
+  assert.ok(result.confidence <= 1);
   assert.equal(result.operationType, 'multi-file-run');
 });
 
@@ -271,7 +271,7 @@ test('golden path: codeium adapter — api-key header + host + user-agent', () =
   assert.equal(result.matchSource, 'adapter');
   // ua(0.27)+host(0.22)+api-key(0.20)+payload(0) = 0.69 → 0.5+0.69*0.6 ≈ 0.914
   assert.ok(result.confidence >= 0.85, `confidence ${result.confidence} should be >= 0.85`);
-  assert.ok(result.confidence <= 1.0);
+  assert.ok(result.confidence <= 1);
 });
 
 test('golden path: codeium adapter — windsurf variant is detected as Windsurf', () => {
@@ -310,7 +310,7 @@ test('golden path: continue adapter — version header + unique-id + user-agent'
   assert.equal(result.sessionKind, 'agentic');
   // ua(0.26)+version(0.22)+unique-id(0.18)+payload(0.14) = 0.80 → 0.5+0.80*0.6 = 0.98
   assert.ok(result.confidence >= 0.85, `confidence ${result.confidence} should be >= 0.85`);
-  assert.ok(result.confidence <= 1.0);
+  assert.ok(result.confidence <= 1);
 });
 
 test('golden path: cody adapter — sourcegraph host + token + user-agent', () => {
@@ -334,7 +334,7 @@ test('golden path: cody adapter — sourcegraph host + token + user-agent', () =
   assert.equal(result.matchSource, 'adapter');
   // ua(0.27)+host(0.22)+sg-client(0.20)+payload(0.12) = 0.81 → 0.5+0.81*0.6 ≈ 0.986
   assert.ok(result.confidence >= 0.85, `confidence ${result.confidence} should be >= 0.85`);
-  assert.ok(result.confidence <= 1.0);
+  assert.ok(result.confidence <= 1);
   assert.equal(result.operationType, 'explain');
 });
 
@@ -360,7 +360,7 @@ test('golden path: amazon-q adapter — host + amz-request-id + user-agent + tar
   assert.equal(result.provider, 'AWS');
   // ua(0.27)+host(0.22)+amz-request-id(0.18)+amz-target(0.15)+payload(0.10) = 0.92 → clamped 1.0
   assert.ok(result.confidence >= 0.9, `confidence ${result.confidence} should be >= 0.9`);
-  assert.ok(result.confidence <= 1.0);
+  assert.ok(result.confidence <= 1);
 });
 
 test('golden path: gemini-cli adapter — google host + goog-api-client + user-agent', () => {
@@ -385,7 +385,7 @@ test('golden path: gemini-cli adapter — google host + goog-api-client + user-a
   assert.equal(result.provider, 'Google');
   // ua(0.26)+host(0.25)+goog-api-client(0.20)+request-reason(0.10)+payload(0.10) = 0.91 → clamped 1.0
   assert.ok(result.confidence >= 0.9, `confidence ${result.confidence} should be >= 0.9`);
-  assert.ok(result.confidence <= 1.0);
+  assert.ok(result.confidence <= 1);
 });
 
 test('golden path: codex-cli adapter — user-agent + openai host + o-series model', () => {
@@ -408,7 +408,7 @@ test('golden path: codex-cli adapter — user-agent + openai host + o-series mod
   assert.equal(result.sessionKind, 'cli');
   // ua(0.30)+host(0.18)+org(0.12)+model(0.15)+payload(0) = 0.75 → 0.5+0.75*0.6 = 0.95
   assert.ok(result.confidence >= 0.85, `confidence ${result.confidence} should be >= 0.85`);
-  assert.ok(result.confidence <= 1.0);
+  assert.ok(result.confidence <= 1);
 });
 
 test('golden path: legacy adapter — tool detected via raw blob', () => {

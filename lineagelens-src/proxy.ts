@@ -686,14 +686,14 @@ function normalizeIncomingHeaders(headers: http.IncomingHttpHeaders): Normalized
   const normalized: NormalizedHeaders = {};
 
   for (const [key, value] of Object.entries(headers)) {
-    if (typeof value === 'undefined') {
+    if (value === undefined) {
       continue;
     }
 
     if (Array.isArray(value)) {
       normalized[key] = SENSITIVE_HEADER_PATTERN.test(key)
         ? value.map(() => REDACTED_HEADER_VALUE)
-        : value.map((item) => String(item));
+        : value.map(String);
       continue;
     }
 
@@ -709,7 +709,7 @@ function sanitizeOutgoingHeaders(headers: http.IncomingHttpHeaders): http.Outgoi
   const outgoing: http.OutgoingHttpHeaders = {};
 
   for (const [key, value] of Object.entries(headers)) {
-    if (typeof value !== 'undefined') {
+    if (value !== undefined) {
       outgoing[key] = value;
     }
   }
@@ -753,7 +753,7 @@ function extractSystemPrompt(payloadRecord: Record<string, unknown> | undefined)
     return undefined;
   }
 
-  if (Object.prototype.hasOwnProperty.call(payloadRecord, 'system')) {
+  if (Object.hasOwn(payloadRecord, 'system')) {
     return payloadRecord.system;
   }
 
@@ -768,7 +768,7 @@ function extractSystemPrompt(payloadRecord: Record<string, unknown> | undefined)
     }
 
     const role = typeof message.role === 'string' ? message.role.toLowerCase() : '';
-    if (role === 'system' && Object.prototype.hasOwnProperty.call(message, 'content')) {
+    if (role === 'system' && Object.hasOwn(message, 'content')) {
       return message.content;
     }
   }

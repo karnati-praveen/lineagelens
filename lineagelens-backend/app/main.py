@@ -1,6 +1,10 @@
+from __future__ import annotations
+
 from contextlib import asynccontextmanager
+import json
 import logging
 import os
+import time
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,20 +15,56 @@ from starlette.types import ASGIApp
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
+from app.api.routes.analytics import router as analytics_router
+from app.api.routes.audit import router as audit_router
 from app.api.routes.auth import router as auth_router
+from app.api.routes.bulk import router as bulk_router
+from app.api.routes.comments import router as comments_router
+from app.api.routes.deletion import router as deletion_router
 from app.api.routes.export import router as export_router
 from app.api.routes.ingest import router as ingest_router
+from app.api.routes.lineage import router as lineage_router
 from app.api.routes.provenance import router as provenance_router
+from app.api.routes.retention import router as retention_router
+from app.api.routes.saved_queries import router as saved_queries_router
 from app.api.routes.search import router as search_router
 from app.api.routes.explain import router as explain_router
 from app.api.routes.insights import router as insights_router
+from app.api.routes.tags import router as tags_router
 from app.api.routes.team import router as team_router
 from app.api.routes.report import router as report_router
+from app.api.routes.webhooks import router as webhooks_router
+from app.api.routes.workspaces import router as workspaces_router
 from app.api.routes.ws_capture import router as ws_capture_router
+from app.api.routes.policies import router as policies_router
+from app.api.routes.permissions import router as permissions_router
+from app.api.routes.alert_config import router as alert_config_router
+from app.api.routes.reviews import router as reviews_router
+from app.api.routes.developers import router as developers_router
+from app.api.routes.api_keys import router as api_keys_router
+from app.api.routes.diff import router as diff_router
+from app.api.routes.github import router as github_router
+from app.api.routes.quality import router as quality_router
+from app.api.routes.scheduled_reports import router as scheduled_reports_router
+from app.api.routes.sso import router as sso_router
+from app.api.routes.setup import router as setup_router
 from app.core.config import Settings, get_settings
 from app.core.rate_limit import InMemoryRateLimiter, client_identifier, effective_client_ip
 from app.db.session import create_engine_from_settings, create_session_factory, initialize_database
 from app.services.neo4j_service import Neo4jLineageService
+
+
+class JsonLogFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        entry: dict = {
+            "ts": time.time(),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        if record.exc_info:
+            entry["exc"] = self.formatException(record.exc_info)
+        return json.dumps(entry)
 
 
 logger = logging.getLogger(__name__)
@@ -89,6 +129,65 @@ class SecurityHeadersMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_with_headers)
+
+
+_SETUP_BYPASS_PREFIXES = {"/setup", "/health", "/auth/sso/callback"}
+
+
+class SetupGuardMiddleware:
+    """Redirect all traffic to /setup until the first admin account exists."""
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path: str = scope.get("path", "/")
+
+        # Always allow setup and health routes through
+        if any(path.startswith(p) for p in _SETUP_BYPASS_PREFIXES):
+            await self.app(scope, receive, send)
+            return
+
+        app_state = scope.get("app").state if scope.get("app") is not None else None
+        if app_state is None:
+            await self.app(scope, receive, send)
+            return
+
+        # Fast-path: setup already complete (cached after first check or first setup POST)
+        if getattr(app_state, "setup_complete", False):
+            await self.app(scope, receive, send)
+            return
+
+        # Slow-path: check DB once, then cache result
+        try:
+            session_factory = getattr(app_state, "db_session_factory", None)
+            if session_factory is not None:
+                from sqlalchemy import func, select
+                from app.db.models import UserAccount
+                async with session_factory() as session:
+                    result = await session.execute(select(func.count()).select_from(UserAccount))
+                    count = result.scalar_one() or 0
+                if count > 0:
+                    app_state.setup_complete = True
+                    await self.app(scope, receive, send)
+                    return
+        except Exception:
+            # If DB is not ready yet, let the request through so health checks work
+            await self.app(scope, receive, send)
+            return
+
+        # Setup not complete — redirect to /setup
+        redirect_body = b""
+        await send({
+            "type": "http.response.start",
+            "status": 302,
+            "headers": [(b"location", b"/setup"), (b"content-length", b"0")],
+        })
+        await send({"type": "http.response.body", "body": redirect_body, "more_body": False})
 
 
 class RequestGuardsMiddleware(BaseHTTPMiddleware):
@@ -222,6 +321,17 @@ class StreamingBodyLimitMiddleware:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Structured JSON logging when LOG_FORMAT=json
+    if os.environ.get("LOG_FORMAT", "").strip().lower() == "json":
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers:
+            handler.setFormatter(JsonLogFormatter())
+        if not root_logger.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(JsonLogFormatter())
+            root_logger.addHandler(handler)
+        logger.info("JSON log format enabled.")
+
     settings = get_settings()
     engine = create_engine_from_settings(settings)
     session_factory = create_session_factory(engine)
@@ -229,6 +339,7 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.db_engine = engine
     app.state.db_session_factory = session_factory
+    app.state.webhooks = {}
     app.title = settings.app_title
     app.version = settings.app_version
     if settings.redis_url:
@@ -246,8 +357,14 @@ async def lifespan(app: FastAPI):
         await initialize_database(engine)
         neo4j_service = await initialize_neo4j_service(settings)
         app.state.neo4j_service = neo4j_service
+
+        from app.services.report_scheduler import start_scheduler, stop_scheduler
+        await start_scheduler(session_factory)
+
         yield
     finally:
+        from app.services.report_scheduler import stop_scheduler
+        await stop_scheduler()
         if neo4j_service is not None:
             await neo4j_service.close()
         if hasattr(rate_limiter, "close"):
@@ -266,6 +383,7 @@ _allowed_hosts = _startup_settings.trusted_hosts
 _cors_origins = _startup_settings.cors_origins
 
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(SetupGuardMiddleware)
 app.add_middleware(StreamingBodyLimitMiddleware)
 app.add_middleware(RequestGuardsMiddleware)
 if _allowed_hosts:
@@ -275,21 +393,44 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_origin_regex=None,
     allow_credentials=bool(_cors_origins) and "*" not in _cors_origins,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Requested-With", "X-API-Version", "X-Trace-ID", "X-Idempotency-Key"],
     max_age=600,
 )
 
 app.include_router(auth_router)
 app.include_router(ingest_router)
+app.include_router(lineage_router)
 app.include_router(provenance_router)
+app.include_router(deletion_router)
 app.include_router(search_router)
 app.include_router(explain_router)
 app.include_router(insights_router)
 app.include_router(export_router)
 app.include_router(team_router)
 app.include_router(report_router)
+app.include_router(webhooks_router)
+app.include_router(workspaces_router)
 app.include_router(ws_capture_router)
+app.include_router(audit_router)
+app.include_router(analytics_router)
+app.include_router(bulk_router)
+app.include_router(comments_router)
+app.include_router(tags_router)
+app.include_router(saved_queries_router)
+app.include_router(retention_router)
+app.include_router(policies_router)
+app.include_router(permissions_router)
+app.include_router(alert_config_router)
+app.include_router(reviews_router)
+app.include_router(developers_router)
+app.include_router(api_keys_router)
+app.include_router(diff_router)
+app.include_router(github_router)
+app.include_router(quality_router)
+app.include_router(scheduled_reports_router)
+app.include_router(sso_router)
+app.include_router(setup_router)
 
 
 @app.get("/dashboard", include_in_schema=False)

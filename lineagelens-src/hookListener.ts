@@ -1,6 +1,6 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 export const HOOK_EVENTS_DIR = path.join(os.homedir(), '.lineagelens');
 export const HOOK_EVENTS_FILE = path.join(HOOK_EVENTS_DIR, 'hook-events.jsonl');
@@ -139,7 +139,7 @@ export function extractHookEventContent(event: HookEvent): string {
 
 export function extractHookEventFilePath(event: HookEvent): string {
   const input = event.tool_input;
-  return (typeof input.file_path === 'string' ? input.file_path : input.path ?? '') as string;
+  return typeof input.file_path === 'string' ? input.file_path : input.path ?? '';
 }
 
 export function generateHookCaptureScript(): string {
@@ -159,7 +159,7 @@ export function generateHookCaptureScript(): string {
     "    const dir = path.join(os.homedir(), '.lineagelens');",
     "    fs.mkdirSync(dir, { recursive: true });",
     '    const entry = Object.assign({}, event, { capturedAtIso: new Date().toISOString() });',
-    "    fs.appendFileSync(path.join(dir, 'hook-events.jsonl'), JSON.stringify(entry) + '\\n');",
+    String.raw`    fs.appendFileSync(path.join(dir, 'hook-events.jsonl'), JSON.stringify(entry) + '\n');`,
     '  } catch (_) {',
     '    // never block Claude Code on errors',
     '  }',

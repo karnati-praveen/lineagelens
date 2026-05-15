@@ -1,6 +1,6 @@
 import * as fs from 'fs/promises';
-import * as http from 'http';
-import * as https from 'https';
+import * as http from 'node:http';
+import * as https from 'node:https';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import simpleGit from 'simple-git';
@@ -15,7 +15,11 @@ import { normalizeAST, ProvenanceRecord } from '../provenance';
 import {
   buildSearchText as buildLocalStoreSearchText,
   createEmptyStore as createLocalStoreDocument,
-  sanitizeStoreDocument as sanitizeLocalStoreDocument
+  sanitizeStoreDocument as sanitizeLocalStoreDocument,
+  type LineageRelationshipType,
+  type LocalLineage,
+  type LocalRecordEntry,
+  type LocalStoreDocument
 } from './localStoreDocument';
 import {
   ExplanationResult,
@@ -38,37 +42,6 @@ const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434/api/generate';
 const DEFAULT_OLLAMA_MODEL = 'qwen2.5-coder:7b';
 const DEFAULT_OLLAMA_TIMEOUT_MS = 15_000;
 const MAX_SNIPPET_LENGTH = 700;
-
-type LineageRelationshipType =
-  | 'INITIAL'
-  | 'EXTENDED'
-  | 'REFACTORED'
-  | 'MOVED'
-  | 'DELETED'
-  | 'UNKNOWN';
-
-type LocalLineage = {
-  parentUuid: string | null;
-  relationshipType: LineageRelationshipType;
-  similarity: number | null;
-  commitHash: string | null;
-  updatedAtIso: string;
-};
-
-type LocalRecordEntry = {
-  uuid: string;
-  record: ProvenanceRecord;
-  searchText: string;
-  storedAtIso: string;
-  updatedAtIso: string;
-  lineage: LocalLineage;
-};
-
-type LocalStoreDocument = {
-  schemaVersion: 1;
-  records: LocalRecordEntry[];
-  updatedAtIso: string;
-};
 
 type OllamaConfig = {
   provider: 'templated' | 'ollama';
@@ -769,96 +742,11 @@ function passesSearchFilters(
 }
 
 function cloneRecord(record: ProvenanceRecord): ProvenanceRecord {
-  return JSON.parse(JSON.stringify(record)) as ProvenanceRecord;
+  return structuredClone(record);
 }
 
 function toPlainRecord(record: ProvenanceRecord): Record<string, unknown> {
-  return JSON.parse(JSON.stringify(record)) as Record<string, unknown>;
-}
-
-function createEmptyStore(): LocalStoreDocument {
-  return {
-    schemaVersion: 1,
-    records: [],
-    updatedAtIso: new Date().toISOString()
-  };
-}
-
-function sanitizeStoreDocument(value: unknown): LocalStoreDocument {
-  if (!isRecord(value)) {
-    return createEmptyStore();
-  }
-
-  const recordsValue = Array.isArray(value.records) ? value.records : [];
-  const records: LocalRecordEntry[] = [];
-
-  for (const entry of recordsValue) {
-    if (!isRecord(entry)) {
-      continue;
-    }
-
-    const uuid = toNonEmptyString(entry.uuid)?.toLowerCase();
-    if (!uuid) {
-      continue;
-    }
-
-    const recordCandidate = entry.record;
-    if (!isRecord(recordCandidate)) {
-      continue;
-    }
-
-    const normalizedRecord = recordCandidate as unknown as ProvenanceRecord;
-    const lineage = sanitizeLineage(entry.lineage);
-
-    records.push({
-      uuid,
-      record: normalizedRecord,
-      searchText:
-        toNonEmptyString(entry.searchText) ?? buildSearchText(normalizedRecord),
-      storedAtIso: toNonEmptyString(entry.storedAtIso) ?? new Date().toISOString(),
-      updatedAtIso: toNonEmptyString(entry.updatedAtIso) ?? new Date().toISOString(),
-      lineage
-    });
-  }
-
-  return {
-    schemaVersion: 1,
-    records,
-    updatedAtIso: toNonEmptyString(value.updatedAtIso) ?? new Date().toISOString()
-  };
-}
-
-function sanitizeLineage(value: unknown): LocalLineage {
-  if (!isRecord(value)) {
-    return {
-      parentUuid: null,
-      relationshipType: 'INITIAL',
-      similarity: null,
-      commitHash: null,
-      updatedAtIso: new Date().toISOString()
-    };
-  }
-
-  const relationshipType = toNonEmptyString(value.relationshipType);
-
-  return {
-    parentUuid: toNonEmptyString(value.parentUuid) ?? null,
-    relationshipType: isValidLineageRelationship(relationshipType) ? relationshipType : 'UNKNOWN',
-    similarity: toFiniteNumber(value.similarity),
-    commitHash: toNonEmptyString(value.commitHash) ?? null,
-    updatedAtIso: toNonEmptyString(value.updatedAtIso) ?? new Date().toISOString()
-  };
-}
-
-function isValidLineageRelationship(value?: string): value is LineageRelationshipType {
-  return (
-    value === 'INITIAL' ||
-    value === 'EXTENDED' ||
-    value === 'REFACTORED' ||
-    value === 'MOVED' ||
-    value === 'DELETED' ||
-    value === 'UNKNOWN'
-  );
+  return structuredClone(record) as unknown as Record<string, unknown>;
 }
 
 function inferLineageFromPrevious(
@@ -1039,23 +927,6 @@ function recordMatchesChangedFiles(
       pathsReferToSameFile(recordFilePath, absolutePath)
     );
   });
-}
-
-function buildSearchText(record: ProvenanceRecord): string {
-  const parts: string[] = [];
-
-  parts.push(record.uuid);
-  parts.push(record.file.path);
-  parts.push(record.file.languageId);
-  parts.push(record.repository.gitBranch ?? '');
-  parts.push(stringify(record.prompt.modelName));
-  parts.push(stringify(record.prompt.fullMessages));
-  parts.push(record.insertion.extractedInsertedCodeBlock);
-  parts.push(record.insertion.surroundingContext.before);
-  parts.push(record.insertion.surroundingContext.after);
-  parts.push(stringify(record.contextSnapshot));
-
-  return parts.join('\n').toLowerCase();
 }
 
 type QueryTfidfVector = {
@@ -1301,7 +1172,7 @@ function stringify(value: unknown): string {
     return String(value);
   }
 
-  if (value === null || typeof value === 'undefined') {
+  if (value === null || value === undefined) {
     return 'n/a';
   }
 

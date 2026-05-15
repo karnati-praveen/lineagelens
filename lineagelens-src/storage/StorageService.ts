@@ -77,7 +77,7 @@ export type DashboardRecordPreview = {
   filePath: string;
   timestampIso: string;
   model: string | null;
-  promptStatus: 'captured' | 'not-captured';
+  promptStatus: 'captured' | 'not-captured' | 'partial';
   riskScore: number;
   riskLevel: 'low' | 'medium' | 'high' | 'critical';
   summary: string;
@@ -137,6 +137,7 @@ export type DashboardMemberMetric = {
   username: string;
   role: string;
   recordCount: number;
+  netAddedLines: number;
   joinedAtIso: string;
 };
 

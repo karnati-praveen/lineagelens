@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LineageLens — Setup</title>
+<style>
+:root {
+  --bg:#0f1923; --bg2:#162232; --bg3:#1e3048; --accent:#3b82f6; --accent2:#60a5fa;
+  --text:#e2e8f0; --text2:#94a3b8; --border:#2d4a6a;
+  --danger:#ef4444; --ok:#22c55e; --r:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:40px;width:100%;max-width:420px}
+
+.logo{text-align:center;margin-bottom:32px}
+.logo h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
+.logo h1 span{color:var(--accent2)}
+.logo p{color:var(--text2);font-size:13px;margin-top:6px}
+
+.steps{display:flex;justify-content:center;gap:0;margin-bottom:32px}
+.step{display:flex;align-items:center;gap:0}
+.step-dot{width:28px;height:28px;border-radius:50%;border:2px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--text2);background:var(--bg3);transition:all .2s;flex-shrink:0}
+.step-dot.active{border-color:var(--accent);color:var(--accent2);background:rgba(59,130,246,.15)}
+.step-dot.done{border-color:var(--ok);color:var(--ok);background:rgba(34,197,94,.1)}
+.step-line{width:48px;height:2px;background:var(--border);transition:background .2s}
+.step-line.done{background:var(--ok)}
+
+.step-label{text-align:center;margin-top:8px;font-size:11px;color:var(--text2)}
+.steps-wrap{margin-bottom:28px}
+.steps-row{display:flex;justify-content:center;align-items:center}
+.steps-labels{display:flex;justify-content:space-around;padding:0 0}
+
+.panel{display:none}
+.panel.active{display:block}
+
+label{display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em}
+input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:9px 12px;color:var(--text);font-size:14px;outline:none;transition:border-color .15s}
+input:focus{border-color:var(--accent)}
+.field{margin-bottom:16px}
+
+button{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px 20px;border-radius:6px;border:none;cursor:pointer;font-size:14px;font-weight:600;transition:opacity .15s;width:100%}
+button.p{background:var(--accent);color:#fff}
+button.s{background:var(--bg3);color:var(--text);border:1px solid var(--border)}
+button:hover{opacity:.85}
+button:disabled{opacity:.45;cursor:not-allowed}
+
+.err{color:var(--danger);font-size:13px;margin-top:12px;min-height:20px;text-align:center}
+.hint{color:var(--text2);font-size:12px;margin-top:5px}
+
+.strength{display:flex;gap:3px;margin-top:6px}
+.strength-bar{flex:1;height:3px;border-radius:2px;background:var(--bg3);transition:background .2s}
+
+.success-icon{font-size:48px;text-align:center;margin-bottom:16px}
+.success-msg{text-align:center;color:var(--text2);font-size:13px;margin-bottom:24px}
+.success-title{text-align:center;font-size:18px;font-weight:700;margin-bottom:8px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <h1>Lineage<span>Lens</span></h1>
+    <p>First-time setup — takes less than a minute</p>
+  </div>
+
+  <!-- Step indicators -->
+  <div class="steps-wrap">
+    <div class="steps-row">
+      <div class="step-dot active" id="dot-1">1</div>
+      <div class="step-line" id="line-1"></div>
+      <div class="step-dot" id="dot-2">2</div>
+      <div class="step-line" id="line-2"></div>
+      <div class="step-dot" id="dot-3">3</div>
+    </div>
+    <div class="steps-labels" style="display:flex;justify-content:space-between;margin-top:6px">
+      <span style="font-size:11px;color:var(--text2);width:60px;text-align:center">Admin</span>
+      <span style="font-size:11px;color:var(--text2);width:60px;text-align:center">Workspace</span>
+      <span style="font-size:11px;color:var(--text2);width:60px;text-align:center">Done</span>
+    </div>
+  </div>
+
+  <!-- Step 1: Admin account -->
+  <div class="panel active" id="panel-1">
+    <div class="field">
+      <label for="username">Admin username</label>
+      <input id="username" type="text" placeholder="admin" autocomplete="username" autocapitalize="none" spellcheck="false">
+      <div class="hint">Lowercase letters, numbers, dots, hyphens only</div>
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input id="password" type="password" placeholder="At least 8 characters" autocomplete="new-password">
+      <div class="strength">
+        <div class="strength-bar" id="sb1"></div>
+        <div class="strength-bar" id="sb2"></div>
+        <div class="strength-bar" id="sb3"></div>
+        <div class="strength-bar" id="sb4"></div>
+      </div>
+    </div>
+    <div class="field">
+      <label for="confirm">Confirm password</label>
+      <input id="confirm" type="password" placeholder="Re-enter password" autocomplete="new-password">
+    </div>
+    <div class="err" id="err-1"></div>
+    <button class="p" onclick="nextStep1()">Continue →</button>
+  </div>
+
+  <!-- Step 2: Workspace -->
+  <div class="panel" id="panel-2">
+    <div class="field">
+      <label for="workspace">Workspace name</label>
+      <input id="workspace" type="text" placeholder="My Organisation" maxlength="128">
+      <div class="hint">This is the name shown in the dashboard header</div>
+    </div>
+    <div class="err" id="err-2"></div>
+    <div style="display:flex;gap:8px">
+      <button class="s" style="width:auto;padding:10px 16px" onclick="prevStep()">← Back</button>
+      <button class="p" onclick="runSetup()" id="submit-btn">Create workspace →</button>
+    </div>
+  </div>
+
+  <!-- Step 3: Done -->
+  <div class="panel" id="panel-3">
+    <div class="success-icon">🎉</div>
+    <div class="success-title">All set!</div>
+    <div class="success-msg">Your admin account and workspace have been created. Taking you to the dashboard…</div>
+    <button class="p" onclick="goToDashboard()" id="dash-btn">Open Dashboard</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+let _step = 1;
+let _tokens = null;
+
+function setStep(n) {
+  _step = n;
+  [1,2,3].forEach(i => {
+    document.getElementById(`panel-${i}`).classList.toggle('active', i === n);
+    const dot = document.getElementById(`dot-${i}`);
+    dot.classList.toggle('active', i === n);
+    dot.classList.toggle('done', i < n);
+  });
+  [1,2].forEach(i => {
+    document.getElementById(`line-${i}`).classList.toggle('done', i < n);
+  });
+}
+
+function nextStep1() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const confirm  = document.getElementById('confirm').value;
+  const err = document.getElementById('err-1');
+  err.textContent = '';
+
+  if (!username) { err.textContent = 'Username is required.'; return; }
+  if (!/^[a-z0-9._@-]+$/.test(username)) { err.textContent = 'Username contains invalid characters.'; return; }
+  if (password.length < 8) { err.textContent = 'Password must be at least 8 characters.'; return; }
+  if (password !== confirm) { err.textContent = 'Passwords do not match.'; return; }
+
+  setStep(2);
+  document.getElementById('workspace').focus();
+}
+
+function prevStep() { setStep(1); }
+
+async function runSetup() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const workspace_name = document.getElementById('workspace').value.trim() || 'My Workspace';
+  const err = document.getElementById('err-2');
+  const btn = document.getElementById('submit-btn');
+  err.textContent = '';
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+
+  try {
+    const res = await fetch('/setup', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username, password, workspace_name}),
+    });
+    const data = await res.json();
+    if (!res.ok) { err.textContent = data.detail || 'Setup failed.'; btn.disabled = false; btn.textContent = 'Create workspace →'; return; }
+    _tokens = data;
+    // Store tokens for auto-login on dashboard
+    sessionStorage.setItem('ll_access', data.accessToken);
+    sessionStorage.setItem('ll_refresh', data.refreshToken);
+    setStep(3);
+    setTimeout(goToDashboard, 2200);
+  } catch(e) {
+    err.textContent = 'Network error — is the server running?';
+    btn.disabled = false;
+    btn.textContent = 'Create workspace →';
+  }
+}
+
+function goToDashboard() {
+  window.location.href = '/dashboard';
+}
+
+// Password strength meter
+document.getElementById('password').addEventListener('input', function() {
+  const v = this.value;
+  let score = 0;
+  if (v.length >= 8) score++;
+  if (v.length >= 12) score++;
+  if (/[A-Z]/.test(v) && /[0-9]/.test(v)) score++;
+  if (/[^A-Za-z0-9]/.test(v)) score++;
+  const colors = ['', '#ef4444', '#f59e0b', '#3b82f6', '#22c55e'];
+  [1,2,3,4].forEach(i => {
+    document.getElementById(`sb${i}`).style.background = i <= score ? colors[score] : 'var(--bg3)';
+  });
+});
+
+// Allow Enter key to advance
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Enter') return;
+  if (_step === 1) nextStep1();
+  else if (_step === 2) runSetup();
+});
+</script>
+</body>
+</html>

@@ -110,7 +110,7 @@ const PATH_RISK_SIGNALS: RiskSignalDefinition[] = [
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
 export type RiskCategory = 'security' | 'compliance' | 'reliability' | 'provenance';
 export type ComplianceStatus = 'pass' | 'warning' | 'fail';
-export type AgentSessionKind = 'agentic' | 'assistant' | 'unknown';
+export type AgentSessionKind = 'agentic' | 'assistant' | 'cli' | 'unknown';
 
 export type InsightsFilters = {
   dateFrom: string;
@@ -160,7 +160,7 @@ export type DashboardRecordPreview = {
   filePath: string;
   timestampIso: string;
   model: string | null;
-  promptStatus: 'captured' | 'not-captured';
+  promptStatus: 'captured' | 'not-captured' | 'partial';
   riskScore: number;
   riskLevel: RiskLevel;
   summary: string;
@@ -220,6 +220,7 @@ export type DashboardMemberMetric = {
   username: string;
   role: string;
   recordCount: number;
+  netAddedLines: number;
   joinedAtIso: string;
 };
 
@@ -292,6 +293,8 @@ export function buildInsightsDashboard(
     totalRecords > 0 ? Number((promptCapturedRecords / totalRecords).toFixed(4)) : 0;
   const avgRiskScore = totalRecords > 0 ? Number((totalRiskScore / totalRecords).toFixed(2)) : 0;
 
+  highRiskRecords.sort((a, b) => compareRiskEntries(b, a));
+
   return {
     mode,
     generatedAtIso: new Date().toISOString(),
@@ -319,7 +322,6 @@ export function buildInsightsDashboard(
       averageCorrelationConfidence: averageCorrelationConfidence(recordSummaries.map((entry) => entry.record))
     }),
     highRiskRecords: highRiskRecords
-      .sort((left, right) => compareRiskEntries(right, left))
       .slice(0, 12)
       .map((entry) => toDashboardRecordPreview(entry.record, entry.risk, entry.agentContext, entry.model)),
     hotspots: buildFileHotspots(recordSummaries),
@@ -470,6 +472,8 @@ export function deriveAgentContext(input: {
     createEvidence('heuristic', 'userAgent', userAgent ?? 'unknown', 0.1, 'Heuristic user-agent match.')
   ];
 
+  const rawConfidence = toolName ? 0.55 : provider ? 0.42 : 0.3;
+
   return {
     toolName,
     provider,
@@ -478,7 +482,7 @@ export function deriveAgentContext(input: {
     runId,
     workspaceHint: null,
     operationType,
-    confidence: clampConfidence(toolName ? 0.55 : provider ? 0.42 : 0.3),
+    confidence: clampConfidence(rawConfidence),
     evidence,
     adapterName: 'legacy-heuristic',
     matchSource: 'heuristic',
@@ -525,15 +529,19 @@ function applyInsightsFilters(
   });
 }
 
-function higherIsBetter(value: number, passAt: number, warnAt: number): 'pass' | 'warning' | 'fail' {
-  return value >= passAt ? 'pass' : value >= warnAt ? 'warning' : 'fail';
+type ControlStatus = 'pass' | 'warning' | 'fail';
+
+function higherIsBetter(value: number, passAt: number, warnAt: number): ControlStatus {
+  const status: ControlStatus = value >= passAt ? 'pass' : value >= warnAt ? 'warning' : 'fail';
+  return status;
 }
 
-function lowerIsBetter(value: number, passAt: number, warnAt: number): 'pass' | 'warning' | 'fail' {
-  return value <= passAt ? 'pass' : value <= warnAt ? 'warning' : 'fail';
+function lowerIsBetter(value: number, passAt: number, warnAt: number): ControlStatus {
+  const status: ControlStatus = value <= passAt ? 'pass' : value <= warnAt ? 'warning' : 'fail';
+  return status;
 }
 
-function agentSessionControlStatus(agenticRecords: number, uniqueAgentSessions: number): 'pass' | 'warning' | 'fail' {
+function agentSessionControlStatus(agenticRecords: number, uniqueAgentSessions: number): ControlStatus {
   if (agenticRecords === 0) {
     return 'warning';
   }
@@ -1105,12 +1113,12 @@ function normalizeModelName(value: unknown): string {
     return value.trim();
   }
 
-  if (value === null || typeof value === 'undefined') {
+  if (value === null || value === undefined) {
     return '';
   }
 
   try {
-    return JSON.stringify(value);
+    return String(JSON.stringify(value));
   } catch {
     return String(value);
   }
@@ -1202,7 +1210,7 @@ function dedupeStrings(values: readonly string[]): string[] {
   return [...new Set(values.filter((value) => value.trim().length > 0))];
 }
 
-function isRecord(value: unknown): value is Record<string, any> {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
@@ -1211,5 +1219,5 @@ function isRiskLevel(value: unknown): value is RiskLevel {
 }
 
 function isAgentSessionKind(value: unknown): value is AgentSessionKind {
-  return value === 'agentic' || value === 'assistant' || value === 'unknown';
+  return value === 'agentic' || value === 'assistant' || value === 'cli' || value === 'unknown';
 }

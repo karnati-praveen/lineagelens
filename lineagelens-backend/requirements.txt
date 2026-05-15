@@ -1,12 +1,27 @@
+# Core — required for all modes
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
-alembic==1.14.0
 sqlalchemy[asyncio]==2.0.36
-asyncpg==0.30.0
-pgvector==0.3.6
-neo4j==5.26.0
 python-jose[cryptography]==3.3.0
 pydantic-settings==2.7.0
 python-dotenv==1.0.1
-tree-sitter==0.21.3; python_version < "3.12"
-tree-sitter-languages==1.10.2; python_version < "3.12"
+httpx>=0.27.0
+pyarrow>=14.0.0
+
+# Lite mode (SQLite) — zero external DB deps
+aiosqlite>=0.20.0
+
+# Postgres mode — install when DATABASE_URL is postgresql+asyncpg://
+# asyncpg==0.30.0
+# alembic==1.14.0
+# pgvector==0.3.6
+
+# Graph lineage — install when NEO4J_ENABLED=true
+# neo4j==5.26.0
+
+# Redis rate limiter — install when REDIS_URL is set
+# redis[asyncio]>=5.0.0
+
+# AST parsing — optional, improves code analysis accuracy
+# tree-sitter==0.21.3; python_version < "3.12"
+# tree-sitter-languages==1.10.2; python_version < "3.12"

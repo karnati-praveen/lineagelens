@@ -104,7 +104,7 @@ export interface ProvenanceRecord {
   requestUuid: string | null;
   timestampIso: string;
   insertionTimestampIso: string;
-  promptStatus: 'captured' | 'not-captured';
+  promptStatus: 'captured' | 'not-captured' | 'partial';
   prompt: {
     fullMessages: unknown;
     modelName: unknown;
@@ -165,7 +165,7 @@ export function normalizeAST(code: string, language?: string): string[] {
 
   try {
     const ParserConstructor = loadParserConstructor();
-    const parser = new ParserConstructor() as TreeSitterParser;
+    const parser = new ParserConstructor();
     const runtimeLanguage = loadRuntimeLanguage(parserLanguage);
 
     parser.setLanguage(runtimeLanguage);
@@ -250,9 +250,9 @@ function unwrapDefaultExport(moduleValue: unknown): unknown {
     typeof moduleValue === 'object' &&
     moduleValue !== null &&
     'default' in moduleValue &&
-    (moduleValue as { default?: unknown }).default
+    moduleValue.default
   ) {
-    return (moduleValue as { default: unknown }).default;
+    return moduleValue.default;
   }
 
   return moduleValue;
@@ -314,10 +314,10 @@ function normalizeLanguageHint(language?: string): SupportedParserLanguage | und
 
 function looksLikePython(sample: string): boolean {
   return (
-    /(^|\n)\s*def\s+[A-Za-z_][A-Za-z0-9_]*\s*\(/.test(sample) ||
-    /(^|\n)\s*from\s+[A-Za-z_][A-Za-z0-9_.]*\s+import\s+/.test(sample) ||
-    /(^|\n)\s*import\s+[A-Za-z_][A-Za-z0-9_.]*/.test(sample) ||
-    /(^|\n)\s*class\s+[A-Za-z_][A-Za-z0-9_]*\s*(:|\()/.test(sample)
+    /(^|\n)\s*def\s+[A-Za-z_]\w*\s*\(/.test(sample) ||
+    /(^|\n)\s*from\s+[A-Za-z_][\w.]*\s+import\s+/.test(sample) ||
+    /(^|\n)\s*import\s+[A-Za-z_][\w.]*/.test(sample) ||
+    /(^|\n)\s*class\s+[A-Za-z_]\w*\s*(:|\()/.test(sample)
   );
 }
 
@@ -331,12 +331,12 @@ function looksLikeTsx(sample: string): boolean {
 
 function looksLikeTypeScript(sample: string): boolean {
   return (
-    /\binterface\s+[A-Za-z_][A-Za-z0-9_]*\b/.test(sample) ||
-    /\btype\s+[A-Za-z_][A-Za-z0-9_]*\s*=/.test(sample) ||
-    /\benum\s+[A-Za-z_][A-Za-z0-9_]*\b/.test(sample) ||
-    /\bimplements\s+[A-Za-z_][A-Za-z0-9_,\s]*/.test(sample) ||
-    /\bpublic\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*/.test(sample) ||
-    /:\s*[A-Z][A-Za-z0-9_<>{}\[\]|, ]*(\s*[=;,)])/m.test(sample)
+    /\binterface\s+[A-Za-z_]\w*\b/.test(sample) ||
+    /\btype\s+[A-Za-z_]\w*\s*=/.test(sample) ||
+    /\benum\s+[A-Za-z_]\w*\b/.test(sample) ||
+    /\bimplements\s+[A-Za-z_][\w,\s]*/.test(sample) ||
+    /\bpublic\s+[A-Za-z_]\w*\s*:\s*/.test(sample) ||
+    /:\s*[A-Z][\w<>{}\[\]|, ]*(\s*[=;,)])/m.test(sample)
   );
 }
 

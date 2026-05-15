@@ -18,10 +18,12 @@ import logging
 import os
 import posixpath
 import re
+import tempfile
 import urllib.parse
 import uuid
 from datetime import UTC, datetime
 
+import anyio
 import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
@@ -48,6 +50,53 @@ PROXY_CA_KEY_PATH     = os.environ.get("PROXY_CA_KEY_PATH", "")
 _background_tasks: set[asyncio.Task] = set()
 # Cache of per-host generated certs: hostname -> (cert_pem, key_pem)
 _host_cert_cache: dict[str, tuple[bytes, bytes]] = {}
+
+MAX_RESPONSE_BODY_BYTES = MAX_BODY_BYTES  # reuse same limit for response pre-flight check
+
+
+def detect_provider_and_format(url: str, headers: dict) -> str:
+    """Detect which LLM provider this request targets.
+
+    Checks the destination URL and, for Anthropic, the presence of the
+    anthropic-version header.  Returns one of: "anthropic", "openai",
+    "gemini", or "unknown".
+    """
+    url_lower = url.lower()
+    header_keys = {k.lower() for k in headers}
+
+    if "anthropic.com" in url_lower or "anthropic-version" in header_keys:
+        return "anthropic"
+    if "openai.com" in url_lower:
+        return "openai"
+    if "googleapis.com" in url_lower or "generativelanguage.googleapis.com" in url_lower:
+        return "gemini"
+    return "unknown"
+
+
+def extract_file_path(request_headers: dict, request_body: "dict | None") -> str:
+    """Resolve a meaningful file path from request metadata.
+
+    Priority:
+    1. X-File-Path header
+    2. X-Lineage-File header
+    3. "File: /path" pattern inside the system prompt
+    4. Fallback literal "proxy-capture"
+    """
+    lower_headers = {k.lower(): v for k, v in request_headers.items()}
+
+    if "x-file-path" in lower_headers:
+        return lower_headers["x-file-path"].strip()
+    if "x-lineage-file" in lower_headers:
+        return lower_headers["x-lineage-file"].strip()
+
+    if request_body:
+        system = request_body.get("system", "") or ""
+        if isinstance(system, str):
+            m = re.search(r'(?:File|file|path):\s*([^\n\r]+)', system)
+            if m:
+                return m.group(1).strip()
+
+    return "proxy-capture"
 
 
 def _sanitize_path(path: str) -> str:
@@ -116,34 +165,97 @@ def _text_from_body(body: bytes) -> str:
     return ""
 
 
-def _text_from_sse(chunks: list[bytes]) -> str:
-    """Reconstruct assistant text from a stream of SSE chunks."""
-    parts: list[str] = []
-    for chunk in chunks:
+def _delta_from_sse_payload(payload: str, provider: str = "unknown") -> str:
+    """Extract the text delta from a single parsed SSE data payload.
+
+    Accepts an explicit *provider* hint ("anthropic", "openai", "gemini", or
+    "unknown") so the correct format is tried first.  For "unknown" the
+    function falls back through all known formats.
+
+    Returns the assistant text fragment or an empty string.
+    """
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return ""
+
+    def _try_anthropic(d: dict) -> str:
+        if d.get("type") == "content_block_delta":
+            return d.get("delta", {}).get("text", "") or ""
+        return ""
+
+    def _try_openai(d: dict) -> str:
         try:
-            raw = chunk.decode("utf-8", errors="replace")
-        except Exception:
+            return d["choices"][0]["delta"].get("content") or ""
+        except (KeyError, IndexError, TypeError):
+            return ""
+
+    def _try_gemini(d: dict) -> str:
+        try:
+            return d["candidates"][0]["content"]["parts"][0]["text"] or ""
+        except (KeyError, IndexError, TypeError):
+            return ""
+
+    if provider == "anthropic":
+        return _try_anthropic(data)
+    if provider == "openai":
+        return _try_openai(data)
+    if provider == "gemini":
+        return _try_gemini(data)
+    # "unknown": try all formats in order
+    return _try_anthropic(data) or _try_openai(data) or _try_gemini(data)
+
+
+def _text_from_chunk(chunk: bytes, provider: str = "unknown") -> list[str]:
+    """Decode one SSE chunk and return all text deltas found in it."""
+    try:
+        raw = chunk.decode("utf-8", errors="replace")
+    except Exception:
+        return []
+    parts: list[str] = []
+    for line in raw.splitlines():
+        if not line.startswith("data:"):
             continue
-        for line in raw.splitlines():
+        payload = line[5:].strip()
+        if payload in ("", "[DONE]"):
+            continue
+        delta = _delta_from_sse_payload(payload, provider)
+        if delta:
+            parts.append(delta)
+    return parts
+
+
+def _text_from_sse(chunks: list[bytes], provider: str = "unknown") -> str:
+    """Reconstruct assistant text from a stream of SSE chunks.
+
+    Carries a remainder across chunk boundaries so a TCP segment split inside a
+    data: line never silently drops a text delta.  Accepts a *provider* hint so
+    the correct SSE format is parsed (anthropic / openai / gemini / unknown).
+    """
+    parts: list[str] = []
+    remainder = ""
+    for chunk in chunks:
+        raw = remainder + chunk.decode("utf-8", errors="replace")
+        lines = raw.split("\n")
+        remainder = lines[-1]
+        for line in lines[:-1]:
+            line = line.rstrip("\r")
             if not line.startswith("data:"):
                 continue
             payload = line[5:].strip()
             if payload in ("", "[DONE]"):
                 continue
-            try:
-                data = json.loads(payload)
-            except json.JSONDecodeError:
-                continue
-            # OpenAI streaming delta
-            try:
-                delta = data["choices"][0]["delta"].get("content") or ""
+            delta = _delta_from_sse_payload(payload, provider)
+            if delta:
                 parts.append(delta)
-                continue
-            except (KeyError, IndexError, TypeError):
-                pass
-            # Anthropic streaming delta
-            if data.get("type") == "content_block_delta":
-                parts.append(data.get("delta", {}).get("text", ""))
+    if remainder:
+        line = remainder.rstrip("\r")
+        if line.startswith("data:"):
+            payload = line[5:].strip()
+            if payload not in ("", "[DONE]"):
+                delta = _delta_from_sse_payload(payload, provider)
+                if delta:
+                    parts.append(delta)
     return "".join(parts)
 
 
@@ -157,7 +269,12 @@ def _extract_code(text: str) -> str:
 
 # ── ingest ────────────────────────────────────────────────────────────────────
 
-async def _ingest(text: str, upstream_path: str) -> None:
+async def _ingest(
+    text: str,
+    upstream_path: str,
+    provider: str = "unknown",
+    file_path: str = "proxy-capture",
+) -> None:
     if not text.strip():
         return
     if not INGEST_TOKEN:
@@ -171,28 +288,31 @@ async def _ingest(text: str, upstream_path: str) -> None:
     payload = {
         "id": str(uuid.uuid4()),
         "timestampIso": datetime.now(tz=UTC).isoformat(),
-        "filePath": "proxy-capture",
+        "filePath": file_path,
         "insertedText": code,
         "workspaceId": WORKSPACE_ID,
         "provenance": {
             "source": "lineagelens-universal-proxy",
             "upstreamPath": upstream_path,
+            "provider": provider,
         },
     }
 
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
-            r = await client.post(
+            resp = await client.post(
                 f"{BACKEND_URL}/ingest",
                 json=payload,
                 headers={"Authorization": f"Bearer {INGEST_TOKEN}"},
+                timeout=10.0,
             )
-        if r.status_code in (200, 201):
-            logger.info("captured %d chars → backend", len(code))
-        else:
-            logger.warning("ingest %s: %s", r.status_code, r.text[:200])
+            resp.raise_for_status()
+        logger.info("captured %d chars → backend (provider=%s)", len(code), provider)
     except Exception as exc:
-        logger.warning("ingest error: %s", exc)
+        logger.error(
+            "Failed to deliver ingest to backend: %s %s", type(exc).__name__, exc
+        )
+        # Do NOT re-raise — the LLM response was already sent to the client
 
 
 # ── routes ────────────────────────────────────────────────────────────────────
@@ -209,8 +329,16 @@ async def proxy_health() -> dict:
 
 
 async def _handle_streaming(
-    method: str, url: str, headers: dict, body: bytes, safe_path: str
+    method: str,
+    url: str,
+    headers: dict,
+    body: bytes,
+    safe_path: str,
+    provider: str = "unknown",
+    file_path: str = "proxy-capture",
 ) -> Response:
+    # URL base is from UPSTREAM_URL (env-configured, trusted); only path is from request.
+    # Scheme and host are pinned by _build_upstream_url — never sourced from user input.
     client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=300.0))
     try:
         upstream = await client.send(
@@ -219,23 +347,52 @@ async def _handle_streaming(
         )
     except Exception as exc:
         await client.aclose()
-        logger.error("upstream error: %s", exc)
+        logger.exception("upstream error: %s", exc)
         return Response(content=f"Upstream error: {exc}", status_code=502)
 
+    # Pre-flight Content-Length check: if upstream declares a body that is too
+    # large we still forward it transparently but skip provenance capture.
+    skip_capture = False
+    resp_content_length = upstream.headers.get("content-length")
+    if resp_content_length:
+        try:
+            if int(resp_content_length) > MAX_RESPONSE_BODY_BYTES:
+                skip_capture = True
+                logger.warning(
+                    "Response body too large to capture (%d bytes); proxying without storage",
+                    int(resp_content_length),
+                )
+        except ValueError:
+            pass
+
     collected: list[bytes] = []
+    _collected_bytes = 0
+    _capture_overflow = False
 
     async def stream_gen():
+        nonlocal _collected_bytes, _capture_overflow
         try:
             async for chunk in upstream.aiter_bytes():
-                collected.append(chunk)
+                if not skip_capture and not _capture_overflow:
+                    collected.append(chunk)
+                    _collected_bytes += len(chunk)
+                    if _collected_bytes > MAX_BODY_BYTES:
+                        _capture_overflow = True
                 yield chunk
         finally:
             await upstream.aclose()
             await client.aclose()
-            text = _text_from_sse(collected)
-            _task = asyncio.create_task(_ingest(text, f"/{safe_path}"))
-            _background_tasks.add(_task)
-            _task.add_done_callback(_background_tasks.discard)
+            if skip_capture:
+                pass  # already logged above
+            elif not _capture_overflow:
+                text = _text_from_sse(collected, provider)
+                _task = asyncio.create_task(
+                    _ingest(text, f"/{safe_path}", provider=provider, file_path=file_path)
+                )
+                _background_tasks.add(_task)
+                _task.add_done_callback(_background_tasks.discard)
+            else:
+                logger.warning("streaming response too large, skipping capture")
 
     return StreamingResponse(
         stream_gen(),
@@ -246,20 +403,51 @@ async def _handle_streaming(
 
 
 async def _handle_non_streaming(
-    method: str, url: str, headers: dict, body: bytes, safe_path: str
+    method: str,
+    url: str,
+    headers: dict,
+    body: bytes,
+    safe_path: str,
+    provider: str = "unknown",
+    file_path: str = "proxy-capture",
 ) -> Response:
+    # URL base is from UPSTREAM_URL (env-configured, trusted); only path is from request.
+    # Scheme and host are pinned by _build_upstream_url — never sourced from user input.
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=120.0)) as client:
             upstream = await client.request(method, url, headers=headers, content=body)
     except Exception as exc:
-        logger.error("upstream error: %s", exc)
+        logger.exception("upstream error: %s", exc)
         return Response(content=f"Upstream error: {exc}", status_code=502)
 
-    text = _text_from_body(upstream.content)
-    if text:
-        _task = asyncio.create_task(_ingest(text, f"/{safe_path}"))
-        _background_tasks.add(_task)
-        _task.add_done_callback(_background_tasks.discard)
+    # Pre-flight Content-Length check on the upstream response.
+    resp_content_length = upstream.headers.get("content-length")
+    skip_capture = False
+    if resp_content_length:
+        try:
+            if int(resp_content_length) > MAX_RESPONSE_BODY_BYTES:
+                skip_capture = True
+                logger.warning(
+                    "Response body too large to capture (%d bytes); proxying without storage",
+                    int(resp_content_length),
+                )
+        except ValueError:
+            pass
+
+    if not skip_capture:
+        if len(upstream.content) <= MAX_BODY_BYTES:
+            text = _text_from_body(upstream.content)
+            if text:
+                _task = asyncio.create_task(
+                    _ingest(text, f"/{safe_path}", provider=provider, file_path=file_path)
+                )
+                _background_tasks.add(_task)
+                _task.add_done_callback(_background_tasks.discard)
+        else:
+            logger.warning(
+                "upstream response too large (%d bytes), skipping capture",
+                len(upstream.content),
+            )
 
     return Response(
         content=upstream.content,
@@ -269,14 +457,12 @@ async def _handle_non_streaming(
     )
 
 
-@app.api_route(
-    "/{path:path}",
-    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
-)
-async def proxy_request(request: Request, path: str) -> Response:
-    safe_path = _sanitize_path(path)
-    url = _build_upstream_url(safe_path, request.url.query)
+async def _read_request_body(request: Request) -> Response | bytes:
+    """Read and size-limit the request body.
 
+    Returns a Response (4xx) if the body is invalid or too large, otherwise
+    returns the raw bytes. Extracted to keep proxy_request complexity in check.
+    """
     content_length = request.headers.get("content-length")
     if content_length:
         try:
@@ -292,12 +478,43 @@ async def proxy_request(request: Request, path: str) -> Response:
         if seen_bytes > MAX_BODY_BYTES:
             return Response(content="Request body too large", status_code=413)
         body_parts.append(chunk)
-    body = b"".join(body_parts)
+    return b"".join(body_parts)
+
+
+@app.api_route(
+    "/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
+)
+async def proxy_request(request: Request, path: str) -> Response:
+    safe_path = _sanitize_path(path)
+    url = _build_upstream_url(safe_path, request.url.query)
+
+    body_or_error = await _read_request_body(request)
+    if isinstance(body_or_error, Response):
+        return body_or_error
+    body: bytes = body_or_error
 
     headers = _fwd_headers(request.headers)
+
+    # Detect provider from the resolved upstream URL and request headers.
+    provider = detect_provider_and_format(url, dict(request.headers))
+
+    # Extract the best available file path from request metadata.
+    try:
+        req_body_dict = json.loads(body) if body else None
+    except Exception:
+        req_body_dict = None
+    file_path = extract_file_path(dict(request.headers), req_body_dict)
+
     if _is_streaming(body):
-        return await _handle_streaming(request.method, url, headers, body, safe_path)
-    return await _handle_non_streaming(request.method, url, headers, body, safe_path)
+        return await _handle_streaming(
+            request.method, url, headers, body, safe_path,
+            provider=provider, file_path=file_path,
+        )
+    return await _handle_non_streaming(
+        request.method, url, headers, body, safe_path,
+        provider=provider, file_path=file_path,
+    )
 
 
 # ── HTTPS CONNECT tunnel server ───────────────────────────────────────────────
@@ -360,7 +577,9 @@ async def _pipe(
                 break
             writer.write(data)
             await writer.drain()
-    except (ConnectionResetError, BrokenPipeError, asyncio.CancelledError, OSError):
+    # ConnectionResetError and BrokenPipeError are both subclasses of OSError;
+    # keeping only the base class avoids the redundant-exception-class warning.
+    except (OSError, asyncio.CancelledError):
         pass
     finally:
         try:
@@ -369,85 +588,155 @@ async def _pipe(
             pass
 
 
+async def _parse_connect_request(
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+) -> tuple[str, int] | None:
+    """Read and parse the CONNECT request line and drain headers.
+
+    Returns (host, port) on success, or None after writing a 400 response.
+    """
+    line = await asyncio.wait_for(reader.readline(), timeout=15.0)
+    parts = line.rstrip(b"\r\n").split(b" ")
+    if len(parts) < 2 or parts[0].upper() != b"CONNECT":
+        writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\n")
+        await writer.drain()
+        return None
+
+    host_port = parts[1].decode("ascii", errors="replace")
+    host, _, port_str = host_port.rpartition(":")
+    port = int(port_str) if port_str.isdigit() else 443
+
+    # Drain remaining request headers; cap at 100 lines to prevent slow-header DoS.
+    for _ in range(100):
+        hline = await asyncio.wait_for(reader.readline(), timeout=5.0)
+        if hline in (b"\r\n", b"\n", b""):
+            break
+    else:
+        writer.write(b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n")
+        await writer.drain()
+        return None
+
+    return host, port
+
+
+async def _connect_to_upstream(
+    host: str,
+    port: int,
+    writer: asyncio.StreamWriter,
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter] | None:
+    """Open a TCP (or TLS) connection to the upstream host.
+
+    Returns (up_reader, up_writer) on success, or None after writing a 502.
+    When MITM is enabled the connection uses TLS so we can intercept traffic.
+    """
+    import ssl as _ssl
+
+    try:
+        if PROXY_CA_CERT_PATH and PROXY_CA_KEY_PATH:
+            # MITM: connect to real server with TLS so we can forward decrypted traffic.
+            # ssl.create_default_context() is already secure (TLS 1.2+ CA-verified).
+            server_ctx = _ssl.create_default_context()
+            up_reader, up_writer = await asyncio.open_connection(
+                host, port, ssl=server_ctx
+            )
+        else:
+            up_reader, up_writer = await asyncio.open_connection(host, port)
+    except Exception as exc:
+        logger.warning("CONNECT upstream error %s:%s — %s", host, port, exc)
+        writer.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
+        await writer.drain()
+        return None
+
+    return up_reader, up_writer
+
+
+async def _write_temp_pem(data: bytes, suffix: str = ".pem") -> str:
+    """Write *data* to a new temporary file and return its path.
+
+    Uses anyio for non-blocking I/O. The caller is responsible for unlinking
+    the file when it is no longer needed.
+    """
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+    try:
+        os.close(fd)
+    except OSError as exc:
+        logger.warning("Failed to close mkstemp fd for %s: %s", tmp_path, exc)
+        raise
+    async with await anyio.open_file(tmp_path, "wb") as fh:
+        await fh.write(data)
+    return tmp_path
+
+
+async def _mitm_upgrade_client_tls(
+    host: str,
+    client_writer: asyncio.StreamWriter,
+    up_writer: asyncio.StreamWriter,
+) -> bool:
+    """Upgrade the inbound client connection to TLS for MITM interception.
+
+    Generates a per-host certificate signed by the proxy CA, writes it to
+    temporary files, and performs a server-side TLS handshake with the client.
+    Temporary files are always cleaned up.  Returns True on success.
+    """
+    import ssl as _ssl
+
+    cert_pem, key_pem = _generate_host_cert(host)
+    cert_file = key_file = ""
+    try:
+        cert_file = await _write_temp_pem(cert_pem, suffix=".pem")
+        key_file = await _write_temp_pem(key_pem, suffix=".pem")
+
+        # PROTOCOL_TLS_SERVER with TLSv1_2 minimum ensures the proxy never
+        # negotiates a protocol weaker than TLS 1.2 with the connecting client.
+        client_ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+        client_ctx.minimum_version = _ssl.TLSVersion.TLSv1_2
+        client_ctx.load_cert_chain(cert_file, key_file)
+
+        loop = asyncio.get_running_loop()
+        transport = client_writer.transport
+        protocol = transport.get_protocol()
+        await loop.start_tls(transport, protocol, client_ctx, server_side=True)
+        # After start_tls the StreamReader/Writer are updated in-place.
+        return True
+    except Exception as exc:
+        logger.warning(
+            "MITM TLS upgrade failed for %s: %s — transparent fallback", host, exc
+        )
+        up_writer.close()
+        return False
+    finally:
+        for f in (cert_file, key_file):
+            if f:
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
+
+
 async def _handle_connect_client(
     client_reader: asyncio.StreamReader,
     client_writer: asyncio.StreamWriter,
 ) -> None:
     """Handle one inbound CONNECT request."""
-    import ssl as _ssl
-    import tempfile as _tmpfile
-
     try:
-        # Read request line: CONNECT host:port HTTP/1.1
-        line = await asyncio.wait_for(client_reader.readline(), timeout=15.0)
-        parts = line.rstrip(b"\r\n").split(b" ")
-        if len(parts) < 2 or parts[0].upper() != b"CONNECT":
-            client_writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\n")
-            await client_writer.drain()
+        result = await _parse_connect_request(client_reader, client_writer)
+        if result is None:
             return
+        host, port = result
 
-        host_port = parts[1].decode("ascii", errors="replace")
-        host, _, port_str = host_port.rpartition(":")
-        port = int(port_str) if port_str.isdigit() else 443
-
-        # Drain remaining request headers
-        while True:
-            hline = await asyncio.wait_for(client_reader.readline(), timeout=5.0)
-            if hline in (b"\r\n", b"\n", b""):
-                break
-
-        # Connect to upstream (plain TCP — we add TLS in MITM mode ourselves)
-        try:
-            if PROXY_CA_CERT_PATH and PROXY_CA_KEY_PATH:
-                # MITM: connect to real server with TLS so we can forward decrypted traffic
-                server_ctx = _ssl.create_default_context()
-                up_reader, up_writer = await asyncio.open_connection(
-                    host, port, ssl=server_ctx
-                )
-            else:
-                up_reader, up_writer = await asyncio.open_connection(host, port)
-        except Exception as exc:
-            logger.warning("CONNECT upstream error %s:%s — %s", host, port, exc)
-            client_writer.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
-            await client_writer.drain()
+        up_pair = await _connect_to_upstream(host, port, client_writer)
+        if up_pair is None:
             return
+        up_reader, up_writer = up_pair
 
         client_writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
         await client_writer.drain()
 
         if PROXY_CA_CERT_PATH and PROXY_CA_KEY_PATH:
-            # MITM mode: upgrade the client side to TLS using the generated host cert
-            cert_pem, key_pem = _generate_host_cert(host)
-
-            cert_file = key_file = ""
-            try:
-                with _tmpfile.NamedTemporaryFile(delete=False, suffix=".pem") as cf:
-                    cf.write(cert_pem)
-                    cert_file = cf.name
-                with _tmpfile.NamedTemporaryFile(delete=False, suffix=".pem") as kf:
-                    kf.write(key_pem)
-                    key_file = kf.name
-
-                client_ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
-                client_ctx.load_cert_chain(cert_file, key_file)
-
-                loop = asyncio.get_event_loop()
-                transport = client_writer.transport
-                protocol = transport.get_protocol()
-                await loop.start_tls(transport, protocol, client_ctx, server_side=True)
-                # After start_tls the StreamReader/Writer are updated in-place.
-            except Exception as exc:
-                logger.warning("MITM TLS upgrade failed for %s: %s — transparent fallback", host, exc)
-                # Can't fall back to transparent here (server connection is TLS) — close
-                up_writer.close()
+            ok = await _mitm_upgrade_client_tls(host, client_writer, up_writer)
+            if not ok:
                 return
-            finally:
-                for f in (cert_file, key_file):
-                    if f:
-                        try:
-                            os.unlink(f)
-                        except OSError:
-                            pass
 
         await asyncio.gather(
             _pipe(client_reader, up_writer),

@@ -192,7 +192,7 @@ export function buildProviderAgnosticProvenanceEvent(
       host: agentContext?.host ?? input.correlation.targetHost,
       matchedFileContextTokens: input.correlation.matchedFileContextTokens,
       captureEvidence: input.correlation.captureEvidence,
-      ...(input.extensions ?? {})
+      ...input.extensions
     }
   };
 }

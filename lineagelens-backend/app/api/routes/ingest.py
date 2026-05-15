@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import uuid as uuid_stdlib
 from typing import Annotated, Any
@@ -65,6 +67,7 @@ async def ingest_provenance(
             auth=auth,
             settings=settings,
             neo4j_service=neo4j_service,
+            app_state=request.app.state,
         )
     except Exception:
         logger.exception(

@@ -1,0 +1,39 @@
+version: "3.9"
+
+# LineageLens Lite — single container, SQLite, zero external dependencies.
+# Runs on a $5 VPS or a laptop. No Postgres, no Redis, no Neo4j.
+#
+# Usage:
+#   1. Copy .env.lite.example to .env and fill in JWT_SECRET_KEY
+#   2. docker compose -f docker-compose.lite.yml up -d
+#   3. Open http://localhost:8787 — setup wizard runs on first visit
+
+services:
+  lineagelens:
+    build:
+      context: ../lineagelens-backend
+      dockerfile: Dockerfile
+    image: lineagelens/lineagelens:lite
+    container_name: lineagelens
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./data:/app/data
+    env_file: .env
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:///./data/lineagelens.db
+      BACKEND_MODE: solo
+      NEO4J_ENABLED: "false"
+      VECTOR_SEARCH_ENABLED: "false"
+      LINEAGE_STRICT_MODE: "false"
+      APP_TITLE: LineageLens
+      APP_ENV: production
+      EMBEDDING_PROVIDER: hash
+      RATE_LIMIT_ENABLED: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8787/health')\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

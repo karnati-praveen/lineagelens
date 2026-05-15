@@ -1,5 +1,5 @@
-import * as http from 'http';
-import * as https from 'https';
+import * as http from 'node:http';
+import * as https from 'node:https';
 import * as vscode from 'vscode';
 import { BackendIngestClient } from '../backend';
 import { BackendAuthSession } from '../backendAuth';
@@ -289,7 +289,7 @@ export class BackendStorageService implements ProvenanceStorageService {
     payload?: unknown
   ): Promise<BackendResponse> {
     const targetUrl = new URL(endpointUrl);
-    const body = typeof payload === 'undefined' ? undefined : JSON.stringify(payload);
+    const body = payload === undefined ? undefined : JSON.stringify(payload);
 
     const headers: Record<string, string> = {
       Accept: 'application/json, text/plain;q=0.9,*/*;q=0.8',
@@ -440,7 +440,7 @@ function parseSearchResults(rawBody: string): Array<Omit<ProvenanceSearchResultI
       sanitizeSnippet(toStringValue(getAtPath(candidate, ['record', 'insertedText']))) ||
       '(no snippet)';
 
-    const fullRecord = isRecord(candidate.record) ? (candidate.record as Record<string, unknown>) : undefined;
+    const fullRecord = isRecord(candidate.record) ? candidate.record : undefined;
 
     results.push({
       uuid,
@@ -636,7 +636,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
+
 function extractUuidFromText(text: string): string | undefined {
-  const match = text.match(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i);
+  const match = UUID_PATTERN.exec(text);
   return match ? match[0].toLowerCase() : undefined;
 }

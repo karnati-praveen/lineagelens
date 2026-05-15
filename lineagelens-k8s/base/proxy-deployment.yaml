@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lineagelens-proxy
+  namespace: lineagelens
+  labels:
+    app: lineagelens-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lineagelens-proxy
+  template:
+    metadata:
+      labels:
+        app: lineagelens-proxy
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: proxy
+          image: lineagelens/proxy:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8788
+              name: http
+          env:
+            - name: LINEAGELENS_BACKEND_URL
+              value: "http://lineagelens-backend:8787"
+          envFrom:
+            - secretRef:
+                name: lineagelens-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

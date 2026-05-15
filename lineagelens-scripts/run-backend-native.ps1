@@ -9,7 +9,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$backendDir = Join-Path $repoRoot "backend"
+$backendDir = Join-Path $repoRoot "lineagelens-backend"
 $venvDir = Join-Path $repoRoot ".venv"
 $pythonExe = Join-Path $venvDir "Scripts\python.exe"
 

@@ -21,7 +21,7 @@ Install the `lineagelens` npm package once and manage everything with simple com
 
 ```bash
 # Install globally (requires Node.js 18+)
-npm install -g lineagelens
+npm install -g lineagelens-cli
 
 # Start Plus backend (Docker must be running)
 lineagelens start --mode plus

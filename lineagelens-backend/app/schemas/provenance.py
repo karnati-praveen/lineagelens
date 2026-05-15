@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64
 import uuid
 from datetime import datetime
@@ -59,6 +61,18 @@ class SearchRequest(BaseModel):
     offset: int = Field(default=0, ge=0)
     cursor: str | None = None
 
+    # Advanced filters
+    risk_level: str | None = Field(default=None, alias="riskLevel")
+    risk_min: int | None = Field(default=None, alias="riskMin", ge=0, le=100)
+    risk_max: int | None = Field(default=None, alias="riskMax", ge=0, le=100)
+    model_name: str | None = Field(default=None, alias="modelName")
+    agent_tool: str | None = Field(default=None, alias="agentTool")
+    file_extension: str | None = Field(default=None, alias="fileExtension")
+    capture_status: str | None = Field(default=None, alias="captureStatus")
+    has_prompt: bool | None = Field(default=None, alias="hasPrompt")
+    is_redacted: bool | None = Field(default=None, alias="isRedacted")
+    tags: list[str] | None = None
+
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
     @field_validator("query", "keywords", mode="before")
@@ -109,6 +123,8 @@ class SearchResponse(BaseModel):
     count: int
     total: int | None = None
     offset: int = 0
+    limit: int | None = None
+    has_more: bool = Field(default=False, alias="hasMore")
     next_cursor: str | None = Field(default=None, alias="nextCursor")
     warnings: list[str] = Field(default_factory=list)
 

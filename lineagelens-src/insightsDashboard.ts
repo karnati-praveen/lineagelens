@@ -311,7 +311,7 @@ export class InsightsDashboardViewProvider
 
   private getCurrentFilePath(): string | undefined {
     const activeEditor = vscode.window.activeTextEditor;
-    if (!activeEditor || activeEditor.document.uri.scheme !== 'file') {
+    if (activeEditor?.document.uri.scheme !== 'file') {
       return undefined;
     }
 
@@ -899,7 +899,7 @@ export class InsightsDashboardViewProvider
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
-        .replace(/\"/g, '&quot;')
+        .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
     }
   </script>
@@ -917,29 +917,31 @@ function renderDashboardMarkdown(
   const adminCount = memberStats.filter((item) => String(item.role || '').toLowerCase() === 'admin').length;
   const activeContributors = memberStats.filter((item) => Number(item.recordCount || 0) > 0).length;
 
-  lines.push('# AI Governance Dashboard Report');
-  lines.push('');
-  lines.push('Generated: ' + dashboard.generatedAtIso);
-  lines.push('Mode: ' + dashboard.mode);
-  lines.push('');
-  lines.push('## Summary');
-  lines.push('');
-  lines.push('- Total records: ' + String(dashboard.summary.totalRecords));
-  lines.push('- Prompt capture rate: ' + formatPercentage(dashboard.summary.promptCaptureRate));
-  lines.push('- Average risk score: ' + String(dashboard.summary.avgRiskScore));
-  lines.push('- High-risk records: ' + String(dashboard.summary.highRiskRecords));
-  lines.push('- Critical records: ' + String(dashboard.summary.criticalRecords));
-  lines.push('- Unique files: ' + String(dashboard.summary.uniqueFiles));
-  lines.push('- Unique models: ' + String(dashboard.summary.uniqueModels));
-  lines.push('- Unique agent sessions: ' + String(dashboard.summary.uniqueAgentSessions));
-  lines.push('- Agentic records: ' + String(dashboard.summary.agenticRecords));
-  lines.push('- AI net added lines: ' + String(dashboard.summary.totalNetAddedLines));
-  lines.push('- Team members: ' + String(memberStats.length));
-  lines.push('- Admins: ' + String(adminCount));
-  lines.push('- Active contributors: ' + String(activeContributors));
-  lines.push('');
-  lines.push('## Compliance Controls');
-  lines.push('');
+  lines.push(
+    '# AI Governance Dashboard Report',
+    '',
+    'Generated: ' + dashboard.generatedAtIso,
+    'Mode: ' + dashboard.mode,
+    '',
+    '## Summary',
+    '',
+    '- Total records: ' + String(dashboard.summary.totalRecords),
+    '- Prompt capture rate: ' + formatPercentage(dashboard.summary.promptCaptureRate),
+    '- Average risk score: ' + String(dashboard.summary.avgRiskScore),
+    '- High-risk records: ' + String(dashboard.summary.highRiskRecords),
+    '- Critical records: ' + String(dashboard.summary.criticalRecords),
+    '- Unique files: ' + String(dashboard.summary.uniqueFiles),
+    '- Unique models: ' + String(dashboard.summary.uniqueModels),
+    '- Unique agent sessions: ' + String(dashboard.summary.uniqueAgentSessions),
+    '- Agentic records: ' + String(dashboard.summary.agenticRecords),
+    '- AI net added lines: ' + String(dashboard.summary.totalNetAddedLines),
+    '- Team members: ' + String(memberStats.length),
+    '- Admins: ' + String(adminCount),
+    '- Active contributors: ' + String(activeContributors),
+    '',
+    '## Compliance Controls',
+    ''
+  );
 
   for (const control of dashboard.complianceControls) {
     lines.push(
@@ -954,9 +956,7 @@ function renderDashboardMarkdown(
     );
   }
 
-  lines.push('');
-  lines.push('## High-Risk Records');
-  lines.push('');
+  lines.push('', '## High-Risk Records', '');
   for (const record of dashboard.highRiskRecords) {
     lines.push(
       '- ' +
@@ -977,9 +977,7 @@ function renderDashboardMarkdown(
     );
   }
 
-  lines.push('');
-  lines.push('## File Hotspots');
-  lines.push('');
+  lines.push('', '## File Hotspots', '');
   for (const hotspot of dashboard.hotspots) {
     lines.push(
       '- ' +
@@ -993,9 +991,7 @@ function renderDashboardMarkdown(
     );
   }
 
-  lines.push('');
-  lines.push('## Model Analytics');
-  lines.push('');
+  lines.push('', '## Model Analytics', '');
   for (const model of dashboard.modelAnalytics) {
     lines.push(
       '- ' +
@@ -1011,9 +1007,7 @@ function renderDashboardMarkdown(
     );
   }
 
-  lines.push('');
-  lines.push('## Agent Sessions');
-  lines.push('');
+  lines.push('', '## Agent Sessions', '');
   for (const session of dashboard.agentSessions) {
     lines.push(
       '- ' +
@@ -1035,9 +1029,7 @@ function renderDashboardMarkdown(
     );
   }
 
-  lines.push('');
-  lines.push('## Team Members');
-  lines.push('');
+  lines.push('', '## Team Members', '');
   if (Array.isArray(dashboard.memberStats) && dashboard.memberStats.length > 0) {
     for (const member of dashboard.memberStats) {
       lines.push(
@@ -1059,14 +1051,16 @@ function renderDashboardMarkdown(
   }
 
   if (review) {
-    lines.push('');
-    lines.push('## Reviewer Output');
-    lines.push('');
-    lines.push('- Source: ' + review.source);
-    lines.push('- Model: ' + review.model);
-    lines.push('- File: ' + review.filePath);
-    lines.push('- Summary: ' + review.summary);
-    lines.push('');
+    lines.push(
+      '',
+      '## Reviewer Output',
+      '',
+      '- Source: ' + review.source,
+      '- Model: ' + review.model,
+      '- File: ' + review.filePath,
+      '- Summary: ' + review.summary,
+      ''
+    );
     for (const finding of review.findings) {
       lines.push(
         '- ' +

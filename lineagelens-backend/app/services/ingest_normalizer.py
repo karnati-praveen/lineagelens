@@ -7,6 +7,8 @@ import hashlib
 import uuid as uuid_pkg
 from typing import Any
 
+from app.core.model_names import normalize_model_name as _normalize_model_name_canonical
+
 
 PROVENANCE_EVENT_SCHEMA_VERSION = "lineagelens.provenance-event.v1"
 
@@ -160,81 +162,52 @@ def normalize_ingest_payload(
     capture = _extract_mapping(payload, ["capture"]) or {}
     diff = _extract_mapping(payload, ["diff"]) or {}
     prompt = _extract_mapping(payload, ["prompt"]) or {}
-    response = _extract_mapping(payload, ["response"]) or {}
-    model = _extract_mapping(payload, ["model"]) or {}
     extensions = _extract_mapping(payload, ["extensions"]) or {}
     metadata = _extract_mapping(payload, ["metadata"]) or {}
     inserted_chunks = _extract_chunks(payload, inserted_text)
 
-    prompt_status = _normalize_prompt_status(
-        _first_string(capture, ["promptStatus"]) or _first_string(payload, ["promptStatus"])
-    )
-    if prompt_status is None:
-        prompt_status = "captured" if _prompt_was_captured(prompt_messages, raw_model_response) else "not-captured"
-
+    prompt_status = _resolve_prompt_status(capture, payload, prompt_messages, raw_model_response)
     capture_status = _resolve_capture_status(
         capture, payload, metadata, inserted_text, prompt_messages, raw_model_response
     )
 
-    existing_normalized_event = _extract_mapping(payload, ["normalizedEvent"])
-
-    agent_context = _extract_mapping(metadata, ["agentContext"])
-    if agent_context is None:
-        agent_context = _build_agent_context(
-            record_uuid=record_uuid,
-            timestamp_iso=timestamp_iso,
-            workspace_id=workspace_id,
-            source=source,
-            model_name=model_name,
-            request_uuid=request_uuid,
-            prompt_status=prompt_status,
-            capture_status=capture_status,
-        )
-
-    normalized_event = (
-        deepcopy(existing_normalized_event)
-        if isinstance(existing_normalized_event, dict)
-        else _build_normalized_event(_EventBuildParams(
-            event_uuid=record_uuid,
-            timestamp_iso=timestamp_iso,
-            workspace_id=workspace_id,
-            file_path=file_path,
-            file_uri=file_uri,
-            language_id=language_id,
-            source=source,
-            capture=capture,
-            model_name=model_name,
-            model_parameters=model_parameters,
-            prompt_messages=prompt_messages,
-            raw_model_response=raw_model_response,
-            raw_model_response_base64=raw_model_response_base64,
-            inserted_text=inserted_text,
-            net_added_lines=net_added_lines,
-            surrounding_context=surrounding_context,
-            context_snapshot=context_snapshot,
-            request_uuid=request_uuid,
-            agent_context=agent_context,
-            capture_status=capture_status,
-            prompt_status=prompt_status,
-            raw_payload=raw_payload,
-        ))
+    agent_context = _resolve_agent_context(
+        metadata=metadata,
+        record_uuid=record_uuid,
+        timestamp_iso=timestamp_iso,
+        workspace_id=workspace_id,
+        source=source,
+        model_name=model_name,
+        request_uuid=request_uuid,
+        prompt_status=prompt_status,
+        capture_status=capture_status,
     )
 
-    if isinstance(normalized_event, dict):
-        _patch_normalized_event_defaults(
-            normalized_event,
-            schema_version=raw_payload.get("schemaVersion") or PROVENANCE_EVENT_SCHEMA_VERSION,
-            event_id=str(record_uuid),
-            capture_status=capture_status,
-            prompt_status=prompt_status,
-            file_path=file_path,
-            file_uri=file_uri,
-            language_id=language_id,
-            workspace_id=workspace_id,
-            inserted_text=inserted_text,
-            net_added_lines=net_added_lines,
-            context_snapshot=context_snapshot,
-        )
+    normalized_event = _resolve_normalized_event(
+        payload=payload,
+        raw_payload=raw_payload,
+        record_uuid=record_uuid,
+        timestamp_iso=timestamp_iso,
+        workspace_id=workspace_id,
+        file_path=file_path,
+        file_uri=file_uri,
+        language_id=language_id,
+        source=source,
+        capture=capture,
+        model_name=model_name,
+        model_parameters=model_parameters,
+        prompt_messages=prompt_messages,
+        raw_model_response=raw_model_response,
+        raw_model_response_base64=raw_model_response_base64,
+        inserted_text=inserted_text,
+        net_added_lines=net_added_lines,
+        surrounding_context=surrounding_context,
+        context_snapshot=context_snapshot,
+        request_uuid=request_uuid,
+        agent_context=agent_context,
+        capture_status=capture_status,
+        prompt_status=prompt_status,
+    )
 
     provenance_payload = _build_legacy_provenance_payload(_LegacyPayloadParams(
         payload=raw_payload,
@@ -271,14 +244,7 @@ def normalize_ingest_payload(
         extensions=extensions,
     ))
 
-    warnings: list[str] = []
-    if not _first_string_from_keys(raw_payload, ["id", "eventId", "uuid"]):
-        warnings.append(
-            "Payload missing a client-provided UUID; a random UUID was assigned. "
-            "HTTP retries for this event will create duplicate provenance records."
-        )
-    if capture_status == "file_diff":
-        warnings.append("Captured file-diff-only provenance without prompt or response evidence.")
+    warnings = _build_ingest_warnings(raw_payload, capture_status)
 
     return NormalizedIngestPayload(
         record_uuid=record_uuid,
@@ -309,6 +275,131 @@ def normalize_ingest_payload(
         prompt_status=prompt_status,
         agent_context=agent_context,
     )
+
+
+def _resolve_prompt_status(
+    capture: dict[str, Any],
+    payload: dict[str, Any],
+    prompt_messages: object | None,
+    raw_model_response: str | None,
+) -> str:
+    status = _normalize_prompt_status(
+        _first_string(capture, ["promptStatus"]) or _first_string(payload, ["promptStatus"])
+    )
+    if status is None:
+        return "captured" if _prompt_was_captured(prompt_messages, raw_model_response) else "not-captured"
+    return status
+
+
+def _resolve_agent_context(
+    *,
+    metadata: dict[str, Any],
+    record_uuid: uuid_pkg.UUID,
+    timestamp_iso: datetime,
+    workspace_id: str,
+    source: dict[str, Any],
+    model_name: str | None,
+    request_uuid: uuid_pkg.UUID | None,
+    prompt_status: str,
+    capture_status: str,
+) -> dict[str, Any] | None:
+    agent_context = _extract_mapping(metadata, ["agentContext"])
+    if agent_context is None:
+        agent_context = _build_agent_context(
+            record_uuid=record_uuid,
+            timestamp_iso=timestamp_iso,
+            workspace_id=workspace_id,
+            source=source,
+            model_name=model_name,
+            request_uuid=request_uuid,
+            prompt_status=prompt_status,
+            capture_status=capture_status,
+        )
+    return agent_context
+
+
+def _resolve_normalized_event(
+    *,
+    payload: dict[str, Any],
+    raw_payload: dict[str, Any],
+    record_uuid: uuid_pkg.UUID,
+    timestamp_iso: datetime,
+    workspace_id: str,
+    file_path: str,
+    file_uri: str | None,
+    language_id: str | None,
+    source: dict[str, Any],
+    capture: dict[str, Any],
+    model_name: str | None,
+    model_parameters: dict[str, Any] | None,
+    prompt_messages: object | None,
+    raw_model_response: str | None,
+    raw_model_response_base64: str | None,
+    inserted_text: str,
+    net_added_lines: int,
+    surrounding_context: dict[str, Any] | None,
+    context_snapshot: dict[str, Any] | None,
+    request_uuid: uuid_pkg.UUID | None,
+    agent_context: dict[str, Any] | None,
+    capture_status: str,
+    prompt_status: str,
+) -> dict[str, Any]:
+    existing = _extract_mapping(payload, ["normalizedEvent"])
+    if isinstance(existing, dict):
+        normalized_event = deepcopy(existing)
+    else:
+        normalized_event = _build_normalized_event(_EventBuildParams(
+            event_uuid=record_uuid,
+            timestamp_iso=timestamp_iso,
+            workspace_id=workspace_id,
+            file_path=file_path,
+            file_uri=file_uri,
+            language_id=language_id,
+            source=source,
+            capture=capture,
+            model_name=model_name,
+            model_parameters=model_parameters,
+            prompt_messages=prompt_messages,
+            raw_model_response=raw_model_response,
+            raw_model_response_base64=raw_model_response_base64,
+            inserted_text=inserted_text,
+            net_added_lines=net_added_lines,
+            surrounding_context=surrounding_context,
+            context_snapshot=context_snapshot,
+            request_uuid=request_uuid,
+            agent_context=agent_context,
+            capture_status=capture_status,
+            prompt_status=prompt_status,
+            raw_payload=raw_payload,
+        ))
+    if isinstance(normalized_event, dict):
+        _patch_normalized_event_defaults(
+            normalized_event,
+            schema_version=raw_payload.get("schemaVersion") or PROVENANCE_EVENT_SCHEMA_VERSION,
+            event_id=str(record_uuid),
+            capture_status=capture_status,
+            prompt_status=prompt_status,
+            file_path=file_path,
+            file_uri=file_uri,
+            language_id=language_id,
+            workspace_id=workspace_id,
+            inserted_text=inserted_text,
+            net_added_lines=net_added_lines,
+            context_snapshot=context_snapshot,
+        )
+    return normalized_event
+
+
+def _build_ingest_warnings(raw_payload: dict[str, Any], capture_status: str) -> list[str]:
+    warnings: list[str] = []
+    if not _first_string_from_keys(raw_payload, ["id", "eventId", "uuid"]):
+        warnings.append(
+            "Payload missing a client-provided UUID; a random UUID was assigned. "
+            "HTTP retries for this event will create duplicate provenance records."
+        )
+    if capture_status == "file_diff":
+        warnings.append("Captured file-diff-only provenance without prompt or response evidence.")
+    return warnings
 
 
 @dataclass(slots=True)
@@ -802,7 +893,7 @@ def _resolve_model_name(
     correlation: dict[str, Any],
 ) -> str | None:
     _model_str = payload.get("model") if isinstance(payload.get("model"), str) else None
-    return (
+    raw = (
         _first_string(prompt or {}, ["modelName"])
         or _first_string(provenance or {}, ["modelName"])
         or _first_string(model, ["name"])
@@ -812,6 +903,7 @@ def _resolve_model_name(
         or _first_string(payload, ["modelName"])
         or _first_string(payload, ["model_name"])
     )
+    return _normalize_model_name_canonical(raw)
 
 
 def _extract_prompt_payload(
@@ -933,7 +1025,7 @@ def _session_signature(agent_context: dict[str, Any] | None, workspace_id: str) 
         _first_string(agent_context or {}, ["sessionId"]) or workspace_id,
     ]
 
-    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha1("|".join(parts).encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
 
 
 def _guess_session_kind(source: dict[str, Any], model_name: str | None) -> str:

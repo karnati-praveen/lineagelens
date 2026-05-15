@@ -1,0 +1,13 @@
+apiVersion: v2
+name: lineagelens
+description: LineageLens AI code provenance platform
+type: application
+version: 0.1.0
+appVersion: "0.0.8"
+keywords:
+  - ai
+  - provenance
+  - code-governance
+  - llm
+maintainers:
+  - name: Karnati Praveen

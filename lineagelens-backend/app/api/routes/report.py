@@ -4,10 +4,12 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.mode_guard import require_non_solo
 from app.core.security import AuthContext, get_current_auth_context
+from app.db.models import ProvenanceRecord
 from app.db.session import get_db_session
 from app.schemas.provenance import SearchRequest
 from app.services.insights_service import get_insights_dashboard_payload
@@ -20,8 +22,8 @@ router = APIRouter(tags=["report"])
 async def get_usage_report(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
-    date_from: datetime | None = Query(default=None, alias="dateFrom"),
-    date_to: datetime | None = Query(default=None, alias="dateTo"),
+    date_from: Annotated[datetime | None, Query(alias="dateFrom")] = None,
+    date_to: Annotated[datetime | None, Query(alias="dateTo")] = None,
 ) -> dict:
     """AI usage report — % AI-written code, risky files, model breakdown, developer stats.
 
@@ -51,14 +53,17 @@ async def get_usage_report(
     total = summary.get("totalRecords", 0)
     high_risk = summary.get("highRiskRecords", 0)
     critical = summary.get("criticalRecords", 0)
-    medium_risk = max(0, high_risk - critical)
 
-    risk_distribution = {
-        "critical": critical,
-        "high": max(0, high_risk - critical),
-        "medium": _count_risk_level(insights, "medium"),
-        "low": _count_risk_level(insights, "low"),
-    }
+    risk_distribution = await _fetch_risk_distribution(session, auth.workspace_id, date_from, date_to)
+    if risk_distribution is None:
+        # Fall back to summary-derived counts when no stored risk_scores exist
+        risk_distribution = {
+            "critical": critical,
+            "high": max(0, high_risk - critical),
+            "medium": 0,
+            "low": max(0, total - high_risk),
+            "unscored": total,
+        }
 
     return {
         "generatedAt": insights.get("generatedAtIso"),
@@ -101,7 +106,7 @@ async def get_usage_report(
             {
                 "username": m.get("username", ""),
                 "insertions": m.get("recordCount", 0),
-                "linesAdded": m.get("netLinesAdded", 0),
+                "linesAdded": m.get("netAddedLines", 0),
                 "aiShare": round(
                     m.get("recordCount", 0) / total if total else 0,
                     3,
@@ -111,7 +116,7 @@ async def get_usage_report(
         ],
         "complianceStatus": [
             {
-                "control": c.get("name", ""),
+                "control": c.get("title", c.get("name", "")),
                 "status": c.get("status", ""),
                 "metric": c.get("metric", ""),
             }
@@ -123,26 +128,69 @@ async def get_usage_report(
 
 
 def _score_to_label(score: float) -> str:
-    if score >= 0.85:
+    """Convert a 0–100 risk score to a human-readable label.
+
+    Thresholds mirror ``CRITICAL_RISK_THRESHOLD`` (85) and
+    ``HIGH_RISK_THRESHOLD`` (65) defined in insights_service.py.
+    """
+    if score >= 85:
         return "critical"
-    if score >= 0.65:
+    if score >= 65:
         return "high"
-    if score >= 0.35:
+    if score >= 35:
         return "medium"
     return "low"
 
 
-def _count_risk_level(insights: dict, level: str) -> int:
-    for trend_item in insights.get("riskTrends", []):
-        counts = trend_item.get("riskCounts", {})
-        if counts:
-            pass
-    high_risk_records = insights.get("highRiskRecords", [])
-    total = insights.get("summary", {}).get("totalRecords", 0)
-    high = insights.get("summary", {}).get("highRiskRecords", 0)
-    critical = insights.get("summary", {}).get("criticalRecords", 0)
-    if level == "medium":
-        return max(0, high - critical)
-    if level == "low":
-        return max(0, total - high)
-    return 0
+async def _fetch_risk_distribution(
+    session: AsyncSession,
+    workspace_id: str,
+    date_from: datetime | None,
+    date_to: datetime | None,
+) -> dict | None:
+    """Return per-band record counts using stored risk_score values.
+
+    Executes a single aggregate query using SQLAlchemy func.count with .filter()
+    clauses.  Returns None if no scored records exist (caller should fall back
+    to summary-derived counts).
+
+    SQL equivalent:
+        SELECT
+          COUNT(*) FILTER (WHERE risk_score >= 85) AS critical,
+          COUNT(*) FILTER (WHERE risk_score >= 65 AND risk_score < 85) AS high,
+          COUNT(*) FILTER (WHERE risk_score >= 35 AND risk_score < 65) AS medium,
+          COUNT(*) FILTER (WHERE risk_score < 35) AS low,
+          COUNT(*) FILTER (WHERE risk_score IS NULL) AS unscored
+        FROM provenance_records WHERE workspace_id = :wid
+    """
+    base_filters = [ProvenanceRecord.workspace_id == workspace_id]
+    if date_from:
+        base_filters.append(ProvenanceRecord.timestamp_iso >= date_from)
+    if date_to:
+        base_filters.append(ProvenanceRecord.timestamp_iso <= date_to)
+
+    rs = ProvenanceRecord.risk_score
+    stmt = select(
+        func.count(rs).filter(rs >= 85).label("critical"),
+        func.count(rs).filter(and_(rs >= 65, rs < 85)).label("high"),
+        func.count(rs).filter(and_(rs >= 35, rs < 65)).label("medium"),
+        func.count(rs).filter(rs < 35).label("low"),
+        func.count(ProvenanceRecord.id).filter(rs.is_(None)).label("unscored"),
+    ).where(and_(*base_filters))
+
+    result = await session.execute(stmt)
+    row = result.one_or_none()
+    if row is None:
+        return None
+
+    scored_total = (row.critical or 0) + (row.high or 0) + (row.medium or 0) + (row.low or 0)
+    if scored_total == 0:
+        return None
+
+    return {
+        "critical": row.critical or 0,
+        "high": row.high or 0,
+        "medium": row.medium or 0,
+        "low": row.low or 0,
+        "unscored": row.unscored or 0,
+    }

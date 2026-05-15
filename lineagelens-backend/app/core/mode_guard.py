@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from fastapi import Depends, HTTPException, status
 
 from app.core.config import Settings, get_settings

@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-TeamRole = Literal["admin", "member"]
+TeamRole = Literal["admin", "member", "viewer", "reviewer", "auditor", "data-engineer"]
 
 
 class TeamMemberStats(BaseModel):

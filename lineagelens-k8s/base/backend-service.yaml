@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: lineagelens-backend
+  namespace: lineagelens
+  labels:
+    app: lineagelens-backend
+spec:
+  selector:
+    app: lineagelens-backend
+  ports:
+    - name: http
+      port: 8787
+      targetPort: 8787
+      protocol: TCP
+  type: ClusterIP

@@ -418,7 +418,7 @@ async function requestJson(
   payload?: unknown
 ): Promise<JsonRequestResult> {
   const target = new URL(endpointUrl);
-  const body = typeof payload === 'undefined' ? undefined : JSON.stringify(payload);
+  const body = payload === undefined ? undefined : JSON.stringify(payload);
 
   const requestHeaders: Record<string, string> = {
     ...headers
@@ -614,7 +614,7 @@ function toStringValue(value: unknown): string | undefined {
     return trimmed.length > 0 ? trimmed : undefined;
   }
 
-  if (value === null || typeof value === 'undefined') {
+  if (value === null || value === undefined) {
     return undefined;
   }
 

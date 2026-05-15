@@ -1,0 +1,109 @@
+name: LineageLens Risk Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main, master, develop]
+
+jobs:
+  risk-check:
+    name: AI Code Risk Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --name-only origin/${{ github.base_ref }}...HEAD > /tmp/changed_files.txt
+          else
+            git diff --name-only HEAD~1...HEAD > /tmp/changed_files.txt || git diff --name-only HEAD > /tmp/changed_files.txt
+          fi
+          echo "Changed files:"
+          cat /tmp/changed_files.txt
+
+      - name: Run LineageLens risk check
+        id: risk
+        env:
+          LINEAGELENS_API_KEY: ${{ secrets.LINEAGELENS_API_KEY }}
+          LINEAGELENS_BACKEND_URL: ${{ vars.LINEAGELENS_BACKEND_URL || 'http://localhost:8787' }}
+        run: |
+          FAILED=0
+          MAX_RISK=0
+          REPORT=""
+
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            [ ! -f "$file" ] && continue
+
+            # Only check source code files
+            case "$file" in
+              *.py|*.js|*.ts|*.tsx|*.jsx|*.java|*.go|*.rs|*.rb|*.cs|*.cpp|*.c)
+                CODE=$(cat "$file" 2>/dev/null || echo "")
+                [ -z "$CODE" ] && continue
+
+                RESPONSE=$(curl -sf \
+                  -X POST "${LINEAGELENS_BACKEND_URL}/github/check" \
+                  -H "Content-Type: application/json" \
+                  -H "X-API-Key: ${LINEAGELENS_API_KEY}" \
+                  -d "{\"filePath\":\"${file}\",\"code\":$(echo "$CODE" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}" \
+                  2>&1) || { echo "Warning: LineageLens check failed for $file (backend unreachable)"; continue; }
+
+                RISK=$(echo "$RESPONSE" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("riskScore",0))' 2>/dev/null || echo "0")
+                PASSED=$(echo "$RESPONSE" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(str(d.get("passed",True)).lower())' 2>/dev/null || echo "true")
+
+                if [ "$RISK" -gt "$MAX_RISK" ] 2>/dev/null; then MAX_RISK=$RISK; fi
+
+                if [ "$PASSED" = "false" ]; then
+                  FAILED=1
+                  REPORT="${REPORT}\n❌ **${file}** — risk score: ${RISK}"
+                else
+                  REPORT="${REPORT}\n✅ **${file}** — risk score: ${RISK}"
+                fi
+                ;;
+            esac
+          done < /tmp/changed_files.txt
+
+          echo "max_risk=$MAX_RISK" >> "$GITHUB_OUTPUT"
+          echo "failed=$FAILED" >> "$GITHUB_OUTPUT"
+          printf "report=%b" "$REPORT" >> "$GITHUB_OUTPUT"
+
+          if [ "$FAILED" = "1" ]; then
+            echo "::error::LineageLens risk check failed. High-risk AI-generated code detected."
+            exit 1
+          fi
+
+      - name: Comment PR with risk summary
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const maxRisk = '${{ steps.risk.outputs.max_risk }}';
+            const failed = '${{ steps.risk.outputs.failed }}' === '1';
+            const status = failed ? '🔴 FAILED' : '🟢 PASSED';
+
+            const body = [
+              `## LineageLens AI Risk Check ${status}`,
+              `**Max risk score in this PR:** ${maxRisk}/100`,
+              '',
+              '${{ steps.risk.outputs.report }}'.replace(/\\n/g, '\n') || '_No source files changed_',
+              '',
+              '_Powered by [LineageLens](https://github.com/KarnatiPraveen/lineagelens)_'
+            ].join('\n');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });

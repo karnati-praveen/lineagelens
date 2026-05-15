@@ -1,0 +1,74 @@
+replicaCount: 2
+
+image:
+  backend:
+    repository: lineagelens/backend
+    tag: latest
+    pullPolicy: Always
+  proxy:
+    repository: lineagelens/proxy
+    tag: latest
+    pullPolicy: Always
+
+service:
+  backend:
+    type: ClusterIP
+    port: 8787
+  proxy:
+    type: ClusterIP
+    port: 8788
+
+ingress:
+  enabled: false
+  className: nginx
+  host: lineagelens.yourdomain.com
+  tls: false
+  tlsSecretName: lineagelens-tls
+
+config:
+  backendMode: "team"   # solo | team | enterprise
+  neo4jEnabled: "false"
+  vectorSearchEnabled: "false"
+  appEnv: "production"
+  logFormat: "json"
+  rateLimitEnabled: "true"
+  rateLimitMaxRequests: "200"
+  rateLimitWindowSeconds: "60"
+
+secrets:
+  # These are not stored in values.yaml in production.
+  # Provide via --set or a values-secret.yaml file that is .gitignored.
+  databaseUrl: ""
+  jwtSecretKey: ""
+  jwtRefreshSecretKey: ""
+  redisUrl: ""
+  neo4jUri: ""
+  neo4jUser: ""
+  neo4jPassword: ""
+  openaiApiKey: ""
+  anthropicApiKey: ""
+  smtpHost: ""
+  smtpPort: "587"
+  smtpUser: ""
+  smtpPassword: ""
+
+resources:
+  backend:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  proxy:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000

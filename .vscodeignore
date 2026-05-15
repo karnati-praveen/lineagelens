@@ -10,7 +10,7 @@ lineagelens-docs/**
 lineagelens-ad/**
 lineagelens-proxy/**
 lineagelens-src/**
-out/**
+dist/**
 .vscode/**
 
 # Local and build artifacts
@@ -21,19 +21,15 @@ out/**
 
 # Workspace files not needed in the VSIX
 tsconfig.json
-docker-compose.yml
-docker-compose.team.yml
-docker-compose.enterprise.yml
 .gitignore
-.env.team.example
-.env.enterprise.example
+.env.plus.example
+.env.max.example
 lineagelens-docs/SHIP_PRODUCTS_COMMANDS.md
-file.md
-lineagelens-prafea
 skills-lock.json
 lineagelens-releases/**
 lineagelens-scripts/**
-cli/**
+lineagelens-cli/**
+lineagelens-mcp/**
 lineagelens-docs/shipping-modes.md
 
 # Exclude all node_modules by default, then allow required runtime native modules.

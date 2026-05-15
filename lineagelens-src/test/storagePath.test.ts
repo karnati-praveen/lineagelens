@@ -8,8 +8,8 @@ import { pathsReferToSameFile, toPortableStoragePath } from '../pathUtils';
 
 test('toPortableStoragePath stores workspace files as forward-slash relative paths', () => {
   const storedPath = toPortableStoragePath(
-    'E:\\Lineagelens\\src\\extension.ts',
-    'E:\\Lineagelens'
+    String.raw`E:\Lineagelens\src\extension.ts`,
+    String.raw`E:\Lineagelens`
   );
 
   assert.equal(storedPath, 'src/extension.ts');
@@ -17,8 +17,8 @@ test('toPortableStoragePath stores workspace files as forward-slash relative pat
 
 test('toPortableStoragePath keeps files outside the workspace absolute', () => {
   const storedPath = toPortableStoragePath(
-    'E:\\Shared\\snippet.ts',
-    'E:\\Lineagelens'
+    String.raw`E:\Shared\snippet.ts`,
+    String.raw`E:\Lineagelens`
   );
 
   assert.equal(storedPath, 'E:/Shared/snippet.ts');
@@ -26,7 +26,7 @@ test('toPortableStoragePath keeps files outside the workspace absolute', () => {
 
 test('pathsReferToSameFile matches legacy absolute paths to new relative paths', () => {
   const matches = pathsReferToSameFile(
-    'E:\\Lineagelens\\src\\extension.ts',
+    String.raw`E:\Lineagelens\src\extension.ts`,
     'src/extension.ts'
   );
 
@@ -35,7 +35,7 @@ test('pathsReferToSameFile matches legacy absolute paths to new relative paths',
 
 test('pathsReferToSameFile rejects different files', () => {
   const matches = pathsReferToSameFile(
-    'E:\\Lineagelens\\src\\extension.ts',
+    String.raw`E:\Lineagelens\src\extension.ts`,
     'src/provenance.ts'
   );
 
@@ -45,7 +45,7 @@ test('pathsReferToSameFile rejects different files', () => {
 test('resolveLocalStorageFilePath returns undefined for globalState', () => {
   const filePath = resolveLocalStorageFilePath({
     location: 'globalState',
-    workspaceRoot: 'E:\\Lineagelens',
+    workspaceRoot: String.raw`E:\Lineagelens`,
     defaultWorkspaceRelativePath: '.vscode/ai-provenance/records.json'
   });
 
@@ -55,33 +55,33 @@ test('resolveLocalStorageFilePath returns undefined for globalState', () => {
 test('resolveLocalStorageFilePath resolves default workspace file', () => {
   const filePath = resolveLocalStorageFilePath({
     location: 'workspaceFile',
-    workspaceRoot: 'E:\\Lineagelens',
+    workspaceRoot: String.raw`E:\Lineagelens`,
     defaultWorkspaceRelativePath: '.vscode/ai-provenance/records.json'
   });
 
-  assert.equal(filePath, 'E:\\Lineagelens\\.vscode\\ai-provenance\\records.json');
+  assert.equal(filePath, String.raw`E:\Lineagelens\.vscode\ai-provenance\records.json`);
 });
 
 test('resolveLocalStorageFilePath resolves custom workspace placeholder path', () => {
   const filePath = resolveLocalStorageFilePath({
     location: 'customFile',
-    workspaceRoot: 'E:\\Lineagelens',
+    workspaceRoot: String.raw`E:\Lineagelens`,
     customFilePath: '${workspaceFolder}\\provenance\\records.json',
     defaultWorkspaceRelativePath: '.vscode/ai-provenance/records.json'
   });
 
-  assert.equal(filePath, 'E:\\Lineagelens\\provenance\\records.json');
+  assert.equal(filePath, String.raw`E:\Lineagelens\provenance\records.json`);
 });
 
 test('resolveLocalStorageFilePath resolves relative custom path under workspace', () => {
   const filePath = resolveLocalStorageFilePath({
     location: 'customFile',
-    workspaceRoot: 'E:\\Lineagelens',
+    workspaceRoot: String.raw`E:\Lineagelens`,
     customFilePath: 'audit/records.json',
     defaultWorkspaceRelativePath: '.vscode/ai-provenance/records.json'
   });
 
-  assert.equal(filePath, 'E:\\Lineagelens\\audit\\records.json');
+  assert.equal(filePath, String.raw`E:\Lineagelens\audit\records.json`);
 });
 
 test('normalizeLocalStorageLocation supports customFile and defaults safely', () => {

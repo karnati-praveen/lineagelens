@@ -64,7 +64,6 @@ class InMemoryRateLimiter:
             bucket.popleft()
 
     async def acheck(self, *, key: str, limit: int, window_seconds: int) -> RateLimitDecision:
-        """Async wrapper — delegates to the synchronous check() for in-process use."""
         return self.check(key=key, limit=limit, window_seconds=window_seconds)
 
     def _compact_if_necessary(self, *, now: float, window_seconds: int) -> None:

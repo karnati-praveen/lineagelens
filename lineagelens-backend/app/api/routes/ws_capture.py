@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import logging
 from datetime import UTC, datetime
@@ -222,6 +224,9 @@ async def _process_one_ws_message(
     return True
 
 
+_WS_REVOCATION_CHECK_INTERVAL = 50  # re-verify token against DB every N messages
+
+
 async def _run_ws_message_loop(
     websocket: WebSocket,
     auth: Any,
@@ -230,6 +235,7 @@ async def _run_ws_message_loop(
     neo4j_service: Neo4jLineageService | None,
     rate_limiter: Any,
 ) -> None:
+    message_count = 0
     while True:
         if settings.rate_limit_enabled:
             message_decision = await rate_limiter.acheck(
@@ -243,11 +249,20 @@ async def _run_ws_message_loop(
                 break
 
         raw_message = await websocket.receive_text()
+        message_count += 1
 
         if len(raw_message.encode("utf-8")) > settings.ws_max_message_bytes:
             logger.warning("WebSocket payload too large: workspace=%s subject=%s", auth.workspace_id, auth.subject)
             await send_error(websocket, error_message="WebSocket message too large.", status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, details={"maxBytes": settings.ws_max_message_bytes})
             break
+
+        if message_count % _WS_REVOCATION_CHECK_INTERVAL == 0:
+            try:
+                await _verify_ws_token_against_db(auth, session_factory)
+            except HTTPException as exc:
+                logger.warning("WebSocket token revoked mid-session: subject=%s detail=%s", auth.subject, exc.detail)
+                await send_error(websocket, error_message=exc.detail, status_code=exc.status_code)
+                break
 
         if not await _process_one_ws_message(websocket, raw_message, auth, settings, session_factory, neo4j_service):
             break

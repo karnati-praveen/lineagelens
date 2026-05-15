@@ -13,11 +13,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./alembic.ini
+COPY scripts ./scripts
 
-RUN chown -R app:app /app
+RUN chmod +x ./scripts/start.sh && chown -R app:app /app
 
 USER app
 
 EXPOSE 8787
 
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8787"]
+CMD ["./scripts/start.sh"]

@@ -901,72 +901,8 @@ export class ProvenanceSidebarViewProvider implements vscode.WebviewViewProvider
 }
 
 export function extractUuidFromText(text: string): string | undefined {
-  const match = text.match(UUID_PATTERN);
+  const match = UUID_PATTERN.exec(text);
   return match ? match[0].toLowerCase() : undefined;
-}
-
-function joinUrl(baseUrl: string, relativePath: string): string {
-  const trimmedBase = baseUrl.replace(/\/$/, '');
-  return trimmedBase + relativePath;
-}
-
-function extractRecordObject(rawBody: string): Record<string, unknown> {
-  if (rawBody.trim().length === 0) {
-    throw new Error('Empty provenance record response body.');
-  }
-
-  const parsed = parseJson(rawBody);
-
-  if (isRecord(parsed)) {
-    if (isRecord(parsed.record)) {
-      return parsed.record;
-    }
-
-    if (isRecord(parsed.data)) {
-      return parsed.data;
-    }
-
-    return parsed;
-  }
-
-  throw new Error('Provenance response did not contain a JSON object record.');
-}
-
-function extractExplanationText(rawBody: string): string {
-  if (rawBody.trim().length === 0) {
-    return '';
-  }
-
-  const parsed = parseJson(rawBody);
-
-  if (typeof parsed === 'string') {
-    return parsed;
-  }
-
-  if (isRecord(parsed)) {
-    const explanationCandidate =
-      parsed.explanation ?? parsed.explain ?? parsed.summary ?? parsed.result ?? parsed.text;
-
-    if (typeof explanationCandidate === 'string') {
-      return explanationCandidate;
-    }
-
-    return JSON.stringify(parsed, null, 2);
-  }
-
-  return rawBody;
-}
-
-function parseJson(rawBody: string): unknown {
-  try {
-    return JSON.parse(rawBody) as unknown;
-  } catch {
-    return rawBody;
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 
 function toErrorMessage(error: unknown): string {

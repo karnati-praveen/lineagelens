@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import type { ProvenanceSearchResultItem, ProvenanceStorageService } from './storage/StorageService';
 
+const DEFAULT_LINE_THRESHOLD = 4;
+
 type TraceRecord = {
   uuid: string;
   filePath: string | null;
@@ -33,7 +35,7 @@ function extractDeveloper(record: Record<string, unknown> | undefined): string |
 }
 
 function toTraceRecord(item: ProvenanceSearchResultItem): TraceRecord {
-  const fullRecord = item.record as Record<string, unknown> | undefined;
+  const fullRecord = item.record;
   const cursorLine = fullRecord
     ? ((fullRecord['cursorLine'] as number | null) ??
        (fullRecord['insertion'] as Record<string, unknown> | undefined)?.['cursorPosition'] != null
@@ -125,7 +127,7 @@ function buildPanelHtml(
 </head><body>
 <h2>Trace: ${escHtml(filePath.split(/[\\/]/).pop() ?? filePath)} line ${lineDisplay}</h2>
 <p>No AI provenance record found for this line.</p>
-<p style="color:var(--vscode-descriptionForeground);font-size:12px;">LineageLens records insertions of ${4}+ net added lines. If this line was part of a smaller change or typed manually, no record exists.</p>
+<p style="color:var(--vscode-descriptionForeground);font-size:12px;">LineageLens records insertions of ${DEFAULT_LINE_THRESHOLD}+ net added lines. If this line was part of a smaller change or typed manually, no record exists.</p>
 </body></html>`;
   }
 
@@ -316,7 +318,7 @@ export class TraceLinePanelManager {
 
       panel.webview.html = buildPanelHtml(panel.webview, match, filePath, line, sessionRecords);
 
-      panel.webview.onDidReceiveMessage(async (msg: unknown) => {
+      const messageListener = panel.webview.onDidReceiveMessage(async (msg: unknown) => {
         const m = msg as Record<string, unknown>;
         if (m['type'] === 'jumpToLine') {
           const fp = m['filePath'] as string | undefined;
@@ -334,6 +336,7 @@ export class TraceLinePanelManager {
           }
         }
       });
+      panel.onDidDispose(() => messageListener.dispose());
     } catch (err) {
       log('TraceLinePanel: search failed — ' + String(err));
       panel.webview.html = buildPanelHtml(panel.webview, null, filePath, line, []);

@@ -7,6 +7,7 @@ import uuid as uuid_pkg
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
+from app.core.security import AuthContext
 from app.schemas.provenance import SearchRequest
 from app.services.ingest_normalizer import NormalizedIngestPayload, normalize_ingest_payload
 from app.services.provenance_service import ingest_provenance_event, search_provenance_records
@@ -62,6 +63,9 @@ class FakeSession:
 
     async def commit(self) -> None:
         self.commit_calls += 1
+        await asyncio.sleep(0)
+
+    async def rollback(self) -> None:
         await asyncio.sleep(0)
 
     async def refresh(self, record: object) -> None:
@@ -171,7 +175,7 @@ def test_ingest_provenance_event_is_idempotent_for_duplicate_request_uuid(monkey
         ingest_provenance_event(
             session=cast(AsyncSession, session),
             payload=payload,
-            auth=SimpleNamespace(workspace_id=workspace_id),  # type: ignore[arg-type]
+            auth=AuthContext(subject="test", workspace_id=workspace_id, scopes=set(), token_type="bearer", token_payload={}),
             settings=build_settings(VECTOR_SEARCH_ENABLED=False, BACKEND_MODE='basic'),
             neo4j_service=None,
         )

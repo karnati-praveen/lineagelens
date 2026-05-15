@@ -9,7 +9,6 @@ from typing import Any
 
 from sqlalchemy import and_, cast, desc, func, select
 from sqlalchemy import Integer as SAInteger
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ProvenanceRecord, UserAccount
@@ -258,7 +257,8 @@ def build_compliance_controls(
     average_correlation_confidence: float,
 ) -> list[dict[str, Any]]:
     high_risk_ratio = (high_risk_records / total_records) if total_records else 0.0
-    overall_risk_status = "pass" if avg_risk_score < 35 else ("warning" if avg_risk_score < 60 else "fail")
+    elevated_risk_status = "warning" if avg_risk_score < 60 else "fail"
+    overall_risk_status = "pass" if avg_risk_score < 35 else elevated_risk_status
 
     return [
         control(
@@ -312,6 +312,7 @@ def build_hotspots(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "recordCount": 0,
             "highRiskCount": 0,
             "riskScoreTotal": 0,
+            "netLinesAdded": 0,
             "latestTimestampIso": None,
         }
     )
@@ -322,6 +323,10 @@ def build_hotspots(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         grouped[file_path]["riskScoreTotal"] += item["risk"]["score"]
         if item["risk"]["score"] >= HIGH_RISK_THRESHOLD:
             grouped[file_path]["highRiskCount"] += 1
+        grouped[file_path]["netLinesAdded"] += max(
+            0,
+            int(pick_first(item["record"], [["insertion", "netAddedLines"], ["netAddedLines"]]) or 0),
+        )
 
         timestamp = str(item["record"].get("timestampIso") or "")
         if not grouped[file_path]["latestTimestampIso"] or timestamp > grouped[file_path]["latestTimestampIso"]:
@@ -335,6 +340,7 @@ def build_hotspots(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "recordCount": value["recordCount"],
                 "highRiskCount": value["highRiskCount"],
                 "avgRiskScore": round(value["riskScoreTotal"] / max(1, value["recordCount"]), 2),
+                "netLinesAdded": value["netLinesAdded"],
                 "latestTimestampIso": value["latestTimestampIso"],
             }
         )
@@ -353,6 +359,7 @@ def build_model_analytics(summaries: list[dict[str, Any]]) -> list[dict[str, Any
             "promptCaptured": 0,
             "riskScoreTotal": 0,
             "highRiskCount": 0,
+            "netLinesAdded": 0,
         }
     )
 
@@ -364,6 +371,10 @@ def build_model_analytics(summaries: list[dict[str, Any]]) -> list[dict[str, Any
             grouped[model]["promptCaptured"] += 1
         if item["risk"]["score"] >= HIGH_RISK_THRESHOLD:
             grouped[model]["highRiskCount"] += 1
+        grouped[model]["netLinesAdded"] += max(
+            0,
+            int(pick_first(item["record"], [["insertion", "netAddedLines"], ["netAddedLines"]]) or 0),
+        )
 
     rows = []
     for model, value in grouped.items():
@@ -378,6 +389,7 @@ def build_model_analytics(summaries: list[dict[str, Any]]) -> list[dict[str, Any
                     value["riskScoreTotal"] / max(1, value["recordCount"]), 2
                 ),
                 "highRiskCount": value["highRiskCount"],
+                "netLinesAdded": value["netLinesAdded"],
             }
         )
 
@@ -424,6 +436,11 @@ def build_risk_trends(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
+def _hour_bucket(timestamp: datetime) -> datetime:
+    """Round a timestamp down to the hour to use as a session bucket key."""
+    return timestamp.replace(minute=0, second=0, microsecond=0)
+
+
 def _upsert_agent_session(
     item: dict[str, Any],
     agent_context: dict[str, Any],
@@ -434,16 +451,22 @@ def _upsert_agent_session(
     native_key = get_native_session_key(agent_context)
     signature = native_key or str(agent_context.get("sessionSignature") or "unknown")
     timestamp = parse_timestamp(item["record"].get("timestampIso"))
+
+    # Incorporate the hour bucket into the lookup key so sessions from
+    # different hours never merge even when they share the same signature.
+    hour_bucket = _hour_bucket(timestamp)
+    bucketed_signature = f"{signature}|{hour_bucket.isoformat()}"
+
     current = latest_by_native_id.get(native_key) if native_key else None
     if current is None:
-        current = latest_by_signature.get(signature)
+        current = latest_by_signature.get(bucketed_signature)
 
     if not current or (timestamp - current["endedAt"]).total_seconds() > AGENT_SESSION_GAP_SECONDS:
         current = _start_agent_session(native_key, agent_context, item, timestamp)
         sessions.append(current)
         if native_key:
             latest_by_native_id[native_key] = current
-        latest_by_signature[signature] = current
+        latest_by_signature[bucketed_signature] = current
     else:
         current["records"].append((item["record"], item["risk"]["score"]))
         current["endedAt"] = timestamp
@@ -739,7 +762,7 @@ def _partial_context_stub(
             "userAgent": find_header_value(correlation.get("requestHeaders"), "user-agent"),
             "workspaceHint": None,
             "operationType": "unknown",
-            "confidence": 0.0,
+            "confidence": 0.25,
             "evidence": [],
             "adapterName": "proxy-partial",
             "matchSource": "heuristic",
@@ -751,6 +774,46 @@ def _partial_context_stub(
             "detectedAtIso": str(record.get("timestampIso") or ""),
         },
         record,
+    )
+
+
+def _build_correlation_raw_blob(
+    target_host: str | None,
+    user_agent: str,
+    model_name: str,
+    correlation: dict[str, Any],
+) -> str:
+    return "\n".join(
+        [
+            target_host or "",
+            user_agent,
+            model_name,
+            safe_serialize(correlation.get("parameters")),
+            safe_serialize(correlation.get("fullPromptMessages")),
+        ]
+    ).lower()
+
+
+def _resolve_correlation_confidence(tool_name: str | None, provider: str | None) -> float:
+    if tool_name:
+        return 0.55
+    if provider:
+        return 0.42
+    return 0.3
+
+
+def _resolve_correlation_inserted_text(record: dict[str, Any], correlation: dict[str, Any]) -> str:
+    return str(
+        pick_first(
+            record,
+            [
+                ["insertion", "extractedInsertedCodeBlock"],
+                ["insertedText"],
+                ["inserted_code"],
+            ],
+        )
+        or correlation.get("rawModelResponse")
+        or ""
     )
 
 
@@ -767,15 +830,7 @@ def _heuristic_context_from_correlation(
         or find_header_value(headers, "x-client-name")
         or ""
     )
-    raw_blob = "\n".join(
-        [
-            target_host or "",
-            user_agent,
-            model_name,
-            safe_serialize(correlation.get("parameters")),
-            safe_serialize(correlation.get("fullPromptMessages")),
-        ]
-    ).lower()
+    raw_blob = _build_correlation_raw_blob(target_host, user_agent, model_name, correlation)
 
     tool_name, session_kind = _detect_tool_from_blob(raw_blob)
     provider = infer_provider(target_host, model_name, raw_blob)
@@ -786,28 +841,11 @@ def _heuristic_context_from_correlation(
         return None
 
     operation_type = classify_operation_type(
-        inserted_text=str(
-            pick_first(
-                record,
-                [
-                    ["insertion", "extractedInsertedCodeBlock"],
-                    ["insertedText"],
-                    ["inserted_code"],
-                ],
-            )
-            or correlation.get("rawModelResponse")
-            or ""
-        ),
+        inserted_text=_resolve_correlation_inserted_text(record, correlation),
         prompt_blob=raw_blob,
         model_name=model_name,
     )
-
-    if tool_name:
-        raw_confidence = 0.55
-    elif provider:
-        raw_confidence = 0.42
-    else:
-        raw_confidence = 0.3
+    raw_confidence = _resolve_correlation_confidence(tool_name, provider)
 
     return normalize_agent_context(
         {
@@ -933,7 +971,7 @@ def classify_operation_type(inserted_text: str, prompt_blob: str, model_name: st
 
 
 def count_distinct_file_paths(text: str) -> int:
-    matches = re.findall(r"""(?:[A-Za-z]:)?(?:/|\\)[^\s'"`]+?\.[a-z0-9]+""", text, flags=re.IGNORECASE)
+    matches = re.findall(r"""(?:[A-Z]:)?[/\\][^\s'"`]+?\.[a-z0-9]+""", text, flags=re.IGNORECASE)
     return len({match.lower() for match in matches})
 
 

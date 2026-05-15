@@ -6,7 +6,6 @@ import {
   AgentAdapterRegistry,
   createAiderAdapter,
   createClaudeCodeAdapter,
-  createCursorAdapter,
   createDefaultAgentAdapterRegistry
 } from '../agentAdapters';
 import type { PromptCorrelationResult } from '../correlation';
@@ -158,13 +157,13 @@ function buildCapturedCorrelation(
     modelName: overrides.modelName ?? 'gpt-4o-mini',
     parameters: {
       temperature: 0.2,
-      ...(overrides.parameters ?? {})
+      ...overrides.parameters
     },
     targetHost: overrides.targetHost ?? 'api.openai.com',
     requestHeaders: {
       'user-agent': overrides.userAgent ?? 'test-agent/1.0',
       'x-request-id': overrides.requestUuid ?? '11111111-1111-4111-8111-111111111111',
-      ...(overrides.requestHeaders ?? {})
+      ...overrides.requestHeaders
     },
     systemPrompt: overrides.systemPrompt ?? 'You are a coding assistant.',
     rawModelResponse: overrides.rawModelResponse ?? 'Generated response',

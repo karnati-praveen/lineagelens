@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Override backend replicas for production
+patches:
+  - patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 3
+    target:
+      kind: Deployment
+      name: lineagelens-backend
+  - patch: |
+      - op: replace
+        path: /data/BACKEND_MODE
+        value: "enterprise"
+      - op: replace
+        path: /data/NEO4J_ENABLED
+        value: "true"
+      - op: replace
+        path: /data/VECTOR_SEARCH_ENABLED
+        value: "true"
+    target:
+      kind: ConfigMap
+      name: lineagelens-config
+
+images:
+  - name: lineagelens/backend
+    newTag: "latest"
+  - name: lineagelens/proxy
+    newTag: "latest"

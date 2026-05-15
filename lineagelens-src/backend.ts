@@ -52,6 +52,10 @@ export class BackendIngestClient implements vscode.Disposable {
   private connectingPromise: Promise<WebSocket> | undefined;
   private readonly pendingConfirmations = new Map<string, PendingConfirmation>();
   private readonly sessionTraceId: string = generateTraceId();
+  private _healthChecked = false;
+  private _backendHealthy = false;
+  private _offlineQueue: Array<{ payload: unknown; timestamp: number }> = [];
+  private readonly OFFLINE_QUEUE_MAX = 100;
 
   public constructor(
     private readonly authSession: BackendAuthSession,
@@ -60,6 +64,14 @@ export class BackendIngestClient implements vscode.Disposable {
 
   public async initializeAuthentication(resource?: vscode.Uri): Promise<void> {
     await this.authSession.initializeAuthentication(resource);
+    // Fire-and-forget health check on startup so the first ingest doesn't block.
+    void this.checkBackendHealth(resource).then((healthy) => {
+      if (!healthy) {
+        vscode.window.showWarningMessage(
+          'LineageLens: backend is unreachable at startup. Events will be queued until it recovers.'
+        );
+      }
+    });
   }
 
   public async loginToBackend(resource?: vscode.Uri): Promise<void> {
@@ -70,21 +82,58 @@ export class BackendIngestClient implements vscode.Disposable {
     record: ProvenanceRecord,
     resource?: vscode.Uri
   ): Promise<BackendIngestResult> {
+    if (!this._healthChecked) {
+      const healthy = await this.checkBackendHealth(resource);
+      if (!healthy) {
+        const config = getBackendIngestConfig(resource);
+        const workspaceId = await this.authSession.getWorkspaceId(resource, false);
+        const ingestPayload = toBackendIngestPayload(record, workspaceId);
+        this.enqueueOffline(ingestPayload);
+        vscode.window.showWarningMessage(
+          'LineageLens: backend is unreachable. Event queued for later delivery.'
+        );
+        throw new Error('Backend health check failed; event queued offline.');
+      }
+    }
+
     const config = getBackendIngestConfig(resource);
     const workspaceId = await this.authSession.getWorkspaceId(resource, true);
 
     const ingestPayload = toBackendIngestPayload(record, workspaceId);
 
-    const websocketResult = await this.tryWebSocketIngestWithRetry(
-      ingestPayload,
-      resource,
-      config
-    );
-    if (websocketResult) {
-      return websocketResult;
+    // Attempt to flush any previously queued events before sending the new one.
+    if (this._offlineQueue.length > 0) {
+      await this.flushOfflineQueue(resource);
     }
 
-    return await this.tryHttpIngestWithRetry(ingestPayload, resource, config);
+    try {
+      const websocketResult = await this.tryWebSocketIngestWithRetry(
+        ingestPayload,
+        resource,
+        config
+      );
+      if (websocketResult) {
+        return websocketResult;
+      }
+
+      return await this.tryHttpIngestWithRetry(ingestPayload, resource, config);
+    } catch (error: unknown) {
+      const message = toErrorMessage(error);
+      const isNetworkError =
+        message.includes('ECONNREFUSED') ||
+        message.includes('ENOTFOUND') ||
+        message.includes('ETIMEDOUT') ||
+        message.includes('timed out') ||
+        message.includes('network');
+
+      if (isNetworkError) {
+        this._backendHealthy = false;
+        this.enqueueOffline(ingestPayload);
+        throw new Error('Network error during ingest; event queued offline. ' + message);
+      }
+
+      throw error;
+    }
   }
 
   public async handleConfigurationChanged(): Promise<void> {
@@ -97,6 +146,67 @@ export class BackendIngestClient implements vscode.Disposable {
 
   public async shutdown(): Promise<void> {
     await this.closeWebSocket();
+  }
+
+  public async checkBackendHealth(resource?: vscode.Uri): Promise<boolean> {
+    const config = getBackendIngestConfig(resource);
+    const healthUrl = joinUrl(config.baseUrl, '/health');
+    try {
+      const result = await requestJson('GET', healthUrl, {});
+      this._backendHealthy = result.statusCode >= 200 && result.statusCode < 300;
+      this._healthChecked = true;
+      if (!this._backendHealthy) {
+        this.log('Backend health check failed with status ' + String(result.statusCode) + '.');
+      }
+      return this._backendHealthy;
+    } catch (error: unknown) {
+      this._backendHealthy = false;
+      this._healthChecked = true;
+      this.log('Backend health check error: ' + toErrorMessage(error));
+      return false;
+    }
+  }
+
+  private enqueueOffline(payload: unknown): void {
+    if (this._offlineQueue.length >= this.OFFLINE_QUEUE_MAX) {
+      this._offlineQueue.shift();
+    }
+    this._offlineQueue.push({ payload, timestamp: Date.now() });
+    vscode.window.setStatusBarMessage(
+      'LineageLens: ' + String(this._offlineQueue.length) + ' event(s) queued (backend offline)',
+      8000
+    );
+    this.log(
+      'Offline queue: ' + String(this._offlineQueue.length) + ' event(s) pending (backend unreachable).'
+    );
+  }
+
+  public async flushOfflineQueue(resource?: vscode.Uri): Promise<void> {
+    if (this._offlineQueue.length === 0) {
+      return;
+    }
+    const queue = [...this._offlineQueue];
+    this._offlineQueue = [];
+    for (const item of queue) {
+      try {
+        const config = getBackendIngestConfig(resource);
+        await this.tryHttpIngestWithRetry(
+          item.payload as Record<string, unknown>,
+          resource,
+          config
+        );
+      } catch {
+        this._offlineQueue.unshift(item);
+        break;
+      }
+    }
+    if (this._offlineQueue.length === 0) {
+      this.log('Offline queue flushed successfully.');
+    } else {
+      this.log(
+        'Offline queue partially flushed; ' + String(this._offlineQueue.length) + ' event(s) remain.'
+      );
+    }
   }
 
   private async tryWebSocketIngestWithRetry(
@@ -536,7 +646,7 @@ async function requestJson(
   payload?: unknown
 ): Promise<JsonRequestResult> {
   const target = new URL(endpointUrl);
-  const body = typeof payload === 'undefined' ? undefined : JSON.stringify(payload);
+  const body = payload === undefined ? undefined : JSON.stringify(payload);
 
   const requestHeaders: Record<string, string> = {
     ...headers
@@ -686,7 +796,7 @@ function toStringValue(value: unknown): string | undefined {
     return trimmed.length > 0 ? trimmed : undefined;
   }
 
-  if (value === null || typeof value === 'undefined') {
+  if (value === null || value === undefined) {
     return undefined;
   }
 
@@ -741,5 +851,5 @@ function generateTraceId(): string {
   const hex = Array.from({ length: 16 }, () =>
     Math.floor(Math.random() * 256).toString(16).padStart(2, '0')
   ).join('');
-  return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16);
+  return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
 }

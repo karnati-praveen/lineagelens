@@ -37,6 +37,11 @@ function parseEnv(filePath) {
 function writeEnv(filePath, vars) {
   const lines = Object.entries(vars).map(([k, v]) => `${k}=${v}`);
   fs.writeFileSync(filePath, lines.join('\n') + '\n', 'utf8');
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch {
+    // On Windows, chmod is a no-op but shouldn't throw
+  }
 }
 
 function prompt(question) {
@@ -44,33 +49,88 @@ function prompt(question) {
   return new Promise(resolve => rl.question(question, ans => { rl.close(); resolve(ans.trim()); }));
 }
 
-async function ensureEnv(mode) {
+/**
+ * Ensure env file exists and is populated for the given mode.
+ * @param {string} mode - 'plus' | 'max'
+ * @param {{ nonInteractive?: boolean }} opts
+ */
+async function ensureEnv(mode, opts = {}) {
+  const nonInteractive = !!(opts.nonInteractive);
   const file = envFilePath(mode);
-  if (fs.existsSync(file)) return file;
+  const isNew = !fs.existsSync(file);
 
-  console.log(`\nNo config found for ${mode} mode. Let's set it up (secrets are auto-generated).\n`);
+  if (isNew && !nonInteractive) {
+    console.log(`\nNo config found for ${mode} mode. Let's set it up (secrets are auto-generated).\n`);
+  }
+
+  // Load existing values (empty object if file doesn't exist)
+  const existing = parseEnv(file);
+
+  // Helper: return existing value or generate/use fallback
+  function keep(key, fallback) {
+    return existing[key] !== undefined ? existing[key] : fallback;
+  }
 
   const vars = {
-    POSTGRES_PASSWORD: randomSecret(16),
-    JWT_SECRET_KEY: randomSecret(32),
-    JWT_REFRESH_SECRET_KEY: randomSecret(32),
-    EXPLAIN_LLM_API_KEY: '',
-    PROXY_INGEST_TOKEN: '',
-    PROXY_UPSTREAM_URL: 'https://api.anthropic.com',
-    PROXY_WORKSPACE_ID: 'proxy-capture',
+    POSTGRES_PASSWORD: keep('POSTGRES_PASSWORD', randomSecret(16)),
+    JWT_SECRET_KEY: keep('JWT_SECRET_KEY', randomSecret(32)),
+    JWT_REFRESH_SECRET_KEY: keep('JWT_REFRESH_SECRET_KEY', randomSecret(32)),
+    EXPLAIN_LLM_API_KEY: keep('EXPLAIN_LLM_API_KEY', ''),
+    PROXY_INGEST_TOKEN: keep('PROXY_INGEST_TOKEN', ''),
+    PROXY_UPSTREAM_URL: keep('PROXY_UPSTREAM_URL', 'https://api.anthropic.com'),
+    PROXY_WORKSPACE_ID: keep('PROXY_WORKSPACE_ID', 'proxy-capture'),
+    BACKEND_LOG_LEVEL: keep('BACKEND_LOG_LEVEL', ''),
+    REDIS_URL: keep('REDIS_URL', ''),
   };
 
   if (mode === 'max') {
-    vars.NEO4J_USERNAME = 'neo4j';
-    vars.NEO4J_PASSWORD = randomSecret(16);
+    vars.NEO4J_AUTH = keep('NEO4J_AUTH', '');
+    vars.NEO4J_BOLT_URL = keep('NEO4J_BOLT_URL', '');
   }
 
-  const llmKey = await prompt('OpenAI API key for AI explanations (optional, press Enter to skip): ');
-  if (llmKey) vars.EXPLAIN_LLM_API_KEY = llmKey;
+  if (nonInteractive) {
+    // Auto-fill all empty optional fields with defaults
+    if (!vars.BACKEND_LOG_LEVEL) vars.BACKEND_LOG_LEVEL = 'INFO';
+    if (mode === 'max') {
+      if (!vars.NEO4J_AUTH) vars.NEO4J_AUTH = 'neo4j/changeme';
+      if (!vars.NEO4J_BOLT_URL) vars.NEO4J_BOLT_URL = 'bolt://neo4j:7687';
+    }
+  } else {
+    // Only prompt for values that are not already set
+    if (!vars.EXPLAIN_LLM_API_KEY) {
+      const llmKey = await prompt('OpenAI API key for AI explanations (optional, press Enter to skip): ');
+      if (llmKey) vars.EXPLAIN_LLM_API_KEY = llmKey;
+    }
+
+    if (!vars.REDIS_URL) {
+      const redisUrl = await prompt('Redis URL for shared rate limiting (optional — press Enter to skip): ');
+      if (redisUrl) vars.REDIS_URL = redisUrl;
+    }
+
+    if (mode === 'max') {
+      if (!vars.NEO4J_AUTH) {
+        const neo4jAuth = await prompt('Neo4j auth (format: neo4j/password, default: neo4j/changeme): ');
+        vars.NEO4J_AUTH = neo4jAuth || 'neo4j/changeme';
+      }
+      if (!vars.NEO4J_BOLT_URL) {
+        const neo4jBolt = await prompt('Neo4j Bolt URL (default: bolt://neo4j:7687): ');
+        vars.NEO4J_BOLT_URL = neo4jBolt || 'bolt://neo4j:7687';
+      }
+    }
+
+    if (!vars.BACKEND_LOG_LEVEL) {
+      const logLevel = await prompt('Backend log level (default: INFO): ');
+      vars.BACKEND_LOG_LEVEL = logLevel || 'INFO';
+    }
+  }
 
   writeEnv(file, vars);
-  console.log(`\nConfig saved to ${file}`);
-  console.log('Secrets were auto-generated. Edit that file any time to change them.\n');
+
+  if (isNew && !nonInteractive) {
+    console.log(`\nConfig saved to ${file}`);
+    console.log('Secrets were auto-generated. Edit that file any time to change them.\n');
+  }
+
   return file;
 }
 

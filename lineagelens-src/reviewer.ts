@@ -7,6 +7,7 @@ import type { ProvenanceRecord } from './provenance';
 import type { ProvenanceStorageService } from './storage/StorageService';
 
 const CONFIG_SECTION = 'aiInsertionDetector';
+const REVIEWER_CONFIG_SECTION = 'lineagelens';
 const REVIEWER_API_KEY_SECRET = 'aiInsertionDetector.reviewer.apiKey';
 const DEFAULT_REVIEWER_PROVIDER = 'heuristic';
 const DEFAULT_REVIEWER_API_URL = 'https://api.openai.com/v1/chat/completions';
@@ -14,7 +15,22 @@ const DEFAULT_REVIEWER_MODEL = 'gpt-4o-mini';
 const DEFAULT_REVIEWER_TIMEOUT_MS = 30_000;
 const MAX_REVIEW_RECORDS = 12;
 
-type ReviewerProvider = 'heuristic' | 'openai-compatible';
+const REVIEWER_ENDPOINTS: Record<string, { apiUrl: string; defaultModel: string }> = {
+  openai: {
+    apiUrl: 'https://api.openai.com/v1/chat/completions',
+    defaultModel: 'gpt-4o-mini'
+  },
+  anthropic: {
+    apiUrl: 'https://api.anthropic.com/v1/messages',
+    defaultModel: 'claude-haiku-4-5-20251001'
+  },
+  ollama: {
+    apiUrl: 'http://localhost:11434/api/chat',
+    defaultModel: 'llama3.2'
+  }
+};
+
+type ReviewerProvider = 'heuristic' | 'openai-compatible' | 'openai' | 'anthropic' | 'ollama';
 
 type ReviewerConfig = {
   provider: ReviewerProvider;
@@ -56,7 +72,7 @@ export class ProvenanceReviewerService {
   public async configureApiKey(): Promise<boolean> {
     const apiKey = await vscode.window.showInputBox({
       title: 'AI Provenance Reviewer API Key',
-      prompt: 'Paste the API key for the reviewer agent (OpenAI-compatible bearer token).',
+      prompt: 'Paste the API key for the reviewer agent (OpenAI, Anthropic, or OpenAI-compatible bearer token).',
       ignoreFocusOut: true,
       password: true,
       validateInput: (value) => {
@@ -120,11 +136,19 @@ export class ProvenanceReviewerService {
       .filter((record) => Boolean(record?.uuid));
 
     const config = this.getReviewerConfig(targetResource);
-    if (config.provider === 'openai-compatible') {
-      const apiKey = await this.ensureReviewerApiKey();
-      if (apiKey) {
+    const isLlmProvider =
+      config.provider === 'openai-compatible' ||
+      config.provider === 'openai' ||
+      config.provider === 'anthropic' ||
+      config.provider === 'ollama';
+
+    if (isLlmProvider) {
+      // Ollama does not require an API key; other providers do.
+      const needsApiKey = config.provider !== 'ollama';
+      const apiKey = needsApiKey ? await this.ensureReviewerApiKey() : '';
+      if (!needsApiKey || apiKey) {
         try {
-          return await this.requestLlmReview(records, filePath, config, apiKey);
+          return await this.requestLlmReview(records, filePath, config, apiKey ?? '');
         } catch (error: unknown) {
           this.log('Reviewer LLM path failed, falling back to heuristics: ' + toErrorMessage(error));
         }
@@ -149,24 +173,129 @@ export class ProvenanceReviewerService {
   }
 
   private getReviewerConfig(resource?: vscode.Uri): ReviewerConfig {
-    const config = vscode.workspace.getConfiguration(CONFIG_SECTION, resource);
+    // Read from the legacy aiInsertionDetector section for backward compatibility,
+    // then overlay with the newer lineagelens section if present.
+    const legacyConfig = vscode.workspace.getConfiguration(CONFIG_SECTION, resource);
+    const newConfig = vscode.workspace.getConfiguration(REVIEWER_CONFIG_SECTION, resource);
+
     const providerRaw =
-      config.get<string>('reviewer.provider', DEFAULT_REVIEWER_PROVIDER)?.trim().toLowerCase() ??
+      newConfig.get<string>('reviewer.provider', '') ||
+      legacyConfig.get<string>('reviewer.provider', DEFAULT_REVIEWER_PROVIDER) ||
       DEFAULT_REVIEWER_PROVIDER;
+    const provider = providerRaw.trim().toLowerCase() as ReviewerProvider;
+
+    const ep = REVIEWER_ENDPOINTS[provider as keyof typeof REVIEWER_ENDPOINTS];
+
+    // Resolve API URL: new config > legacy config > provider default > hardcoded default.
+    const apiUrl =
+      (provider === 'ollama'
+        ? newConfig.get<string>('reviewer.ollamaUrl', '') || ep?.apiUrl
+        : ep?.apiUrl) ??
+      legacyConfig.get<string>('reviewer.apiUrl', DEFAULT_REVIEWER_API_URL) ??
+      DEFAULT_REVIEWER_API_URL;
+
+    const model =
+      newConfig.get<string>('reviewer.model', '') ||
+      legacyConfig.get<string>('reviewer.model', (ep?.defaultModel ?? DEFAULT_REVIEWER_MODEL)) ||
+      (ep?.defaultModel ?? DEFAULT_REVIEWER_MODEL);
+
+    const isLlmProvider =
+      provider === 'openai-compatible' ||
+      provider === 'openai' ||
+      provider === 'anthropic' ||
+      provider === 'ollama';
 
     return {
-      provider: providerRaw === 'openai-compatible' ? 'openai-compatible' : 'heuristic',
-      apiUrl:
-        config.get<string>('reviewer.apiUrl', DEFAULT_REVIEWER_API_URL) ??
-        DEFAULT_REVIEWER_API_URL,
-      model:
-        config.get<string>('reviewer.model', DEFAULT_REVIEWER_MODEL) ?? DEFAULT_REVIEWER_MODEL,
+      provider: isLlmProvider ? provider : 'heuristic',
+      apiUrl,
+      model,
       timeoutMs: Math.max(
         5_000,
-        config.get<number>('reviewer.timeoutMs', DEFAULT_REVIEWER_TIMEOUT_MS) ??
+        newConfig.get<number>('reviewer.timeoutMs', 0) ||
+          legacyConfig.get<number>('reviewer.timeoutMs', DEFAULT_REVIEWER_TIMEOUT_MS) ||
           DEFAULT_REVIEWER_TIMEOUT_MS
       )
     };
+  }
+
+  private buildReviewPromptMessages(
+    filePath: string,
+    compactContext: unknown[]
+  ): Array<{ role: string; content: string }> {
+    return [
+      {
+        role: 'user',
+        content:
+          'You are an AI code reviewer focused only on AI-generated code provenance. Return strict JSON with keys: summary, findings. findings must be an array of objects with severity, title, detail, suggestion, provenanceUuids.\n\n' +
+          'Review the AI-generated code for the current file. Only flag material risks and avoid generic advice.\n\n' +
+          JSON.stringify({ filePath, records: compactContext }, null, 2)
+      }
+    ];
+  }
+
+  private buildLlmRequestBody(
+    provider: ReviewerProvider,
+    model: string,
+    messages: Array<{ role: string; content: string }>
+  ): Record<string, unknown> {
+    if (provider === 'anthropic') {
+      return {
+        model,
+        max_tokens: 1024,
+        messages
+      };
+    }
+
+    if (provider === 'ollama') {
+      return {
+        model,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are an AI code reviewer focused only on AI-generated code provenance. Return strict JSON with keys: summary, findings. findings must be an array of objects with severity, title, detail, suggestion, provenanceUuids.'
+          },
+          ...messages
+        ],
+        stream: false
+      };
+    }
+
+    // OpenAI-compatible (openai / openai-compatible)
+    return {
+      model,
+      temperature: 0.1,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are an AI code reviewer focused only on AI-generated code provenance. Return strict JSON with keys: summary, findings. findings must be an array of objects with severity, title, detail, suggestion, provenanceUuids.'
+        },
+        ...messages
+      ]
+    };
+  }
+
+  private buildLlmRequestHeaders(
+    provider: ReviewerProvider,
+    apiKey: string
+  ): Record<string, string> {
+    const base: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json'
+    };
+
+    if (provider === 'anthropic') {
+      base['x-api-key'] = apiKey;
+      base['anthropic-version'] = '2023-06-01';
+      return base;
+    }
+
+    if (provider !== 'ollama' && apiKey) {
+      base['Authorization'] = 'Bearer ' + apiKey;
+    }
+
+    return base;
   }
 
   private async requestLlmReview(
@@ -191,38 +320,15 @@ export class ProvenanceReviewerService {
       };
     });
 
+    const promptMessages = this.buildReviewPromptMessages(filePath, compactContext);
+    const requestBody = this.buildLlmRequestBody(config.provider, config.model, promptMessages);
+    const requestHeaders = this.buildLlmRequestHeaders(config.provider, apiKey);
+
     const response = await requestJson(
       'POST',
       config.apiUrl,
-      {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        Authorization: 'Bearer ' + apiKey
-      },
-      {
-        model: config.model,
-        temperature: 0.1,
-        messages: [
-          {
-            role: 'system',
-            content:
-              'You are an AI code reviewer focused only on AI-generated code provenance. Return strict JSON with keys: summary, findings. findings must be an array of objects with severity, title, detail, suggestion, provenanceUuids.'
-          },
-          {
-            role: 'user',
-            content:
-              'Review the AI-generated code for the current file. Only flag material risks and avoid generic advice.\n\n' +
-              JSON.stringify(
-                {
-                  filePath,
-                  records: compactContext
-                },
-                null,
-                2
-              )
-          }
-        ]
-      },
+      requestHeaders,
+      requestBody,
       config.timeoutMs
     );
 
@@ -230,7 +336,7 @@ export class ProvenanceReviewerService {
       throw new Error('Reviewer API returned status ' + String(response.statusCode) + '.');
     }
 
-    const content = extractChatCompletionText(response.body);
+    const content = extractLlmResponseContent(response.body, config.provider);
     if (!content) {
       throw new Error('Reviewer API returned no content.');
     }
@@ -248,7 +354,7 @@ export class ProvenanceReviewerService {
         detail: toNonEmptyString(entry.detail) ?? 'No detail provided.',
         suggestion: toNonEmptyString(entry.suggestion) ?? 'Review this generated block manually.',
         provenanceUuids: Array.isArray(entry.provenanceUuids)
-          ? entry.provenanceUuids.map((value) => String(value))
+          ? entry.provenanceUuids.map(String)
           : []
       }))
       .slice(0, 12);
@@ -396,11 +502,42 @@ async function requestJson(
 }
 
 function extractChatCompletionText(rawBody: string): string | null {
+  return extractLlmResponseContent(rawBody, 'openai-compatible');
+}
+
+function extractLlmResponseContent(rawBody: string, provider: ReviewerProvider): string | null {
   const parsed = tryParseJsonObject(rawBody);
   if (!parsed) {
     return null;
   }
 
+  // Anthropic Messages API: { content: [{ type: 'text', text: '...' }] }
+  if (provider === 'anthropic') {
+    const content = parsed.content;
+    if (Array.isArray(content)) {
+      const chunks = content
+        .map((block) => {
+          if (isRecord(block) && block.type === 'text' && typeof block.text === 'string') {
+            return block.text;
+          }
+          return '';
+        })
+        .filter((value) => value.trim().length > 0);
+      return chunks.length > 0 ? chunks.join('\n') : null;
+    }
+    return null;
+  }
+
+  // Ollama chat API: { message: { role: 'assistant', content: '...' } }
+  if (provider === 'ollama') {
+    const message = parsed.message;
+    if (isRecord(message) && typeof message.content === 'string') {
+      return message.content.trim() || null;
+    }
+    // Fall through to OpenAI-compatible parsing as a fallback (some Ollama builds mirror it).
+  }
+
+  // OpenAI-compatible: { choices: [{ message: { content: '...' } }] }
   const choices = parsed.choices;
   if (!Array.isArray(choices) || choices.length === 0 || !isRecord(choices[0])) {
     return null;
@@ -437,7 +574,7 @@ function extractChatCompletionText(rawBody: string): string | null {
   return null;
 }
 
-function tryParseJsonObject(value: string): Record<string, any> | null {
+function tryParseJsonObject(value: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(value) as unknown;
     return isRecord(parsed) ? parsed : null;
@@ -479,7 +616,7 @@ function normalizeModelName(value: unknown): string {
     return value.trim();
   }
 
-  if (value === null || typeof value === 'undefined') {
+  if (value === null || value === undefined) {
     return '';
   }
 
@@ -523,7 +660,7 @@ function toNonEmptyString(value: unknown): string | undefined {
   return undefined;
 }
 
-function isRecord(value: unknown): value is Record<string, any> {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 

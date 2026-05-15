@@ -133,7 +133,7 @@ function detectLanguageInfo(filePath: string): { profile: LanguageProfile; langu
   const extension = path.extname(filePath).toLowerCase();
   const activeDocument = vscode.window.activeTextEditor?.document;
   const languageHint =
-    activeDocument && activeDocument.uri.fsPath === filePath ? activeDocument.languageId : extension;
+    activeDocument?.uri.fsPath === filePath ? activeDocument.languageId : extension;
 
   if (
     extension === '.py' ||
@@ -376,7 +376,7 @@ function processPoetryDependenciesLine(
   dependencies: PyprojectDep[],
   dependencyVersions: Map<string, string>
 ): void {
-  const poetryMatch = trimmed.match(/^([A-Za-z0-9_.-]+)\s*=\s*(.+)$/);
+  const poetryMatch = /^([A-Za-z0-9_.-]+)\s*=\s*(.+)$/.exec(trimmed);
   if (!poetryMatch) {
     return;
   }
@@ -403,7 +403,7 @@ function summarizePyProjectToml(
 
   for (const line of lines) {
     const trimmed = line.trim();
-    const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
+    const sectionMatch = /^\[([^\]]+)\]$/.exec(trimmed);
     if (sectionMatch) {
       currentSection = sectionMatch[1].trim();
       state.inProjectDependenciesArray = false;
@@ -439,12 +439,12 @@ function splitDependencyArrayItems(input: string): string[] {
 }
 
 function parsePoetrySpecifier(value: string): string | null {
-  const quoted = value.match(/^['"]([^'"]+)['"]$/);
+  const quoted = /^['"]([^'"]+)['"]$/.exec(value);
   if (quoted) {
     return quoted[1].trim() || null;
   }
 
-  const objectVersion = value.match(/version\s*=\s*['"]([^'"]+)['"]/);
+  const objectVersion = /version\s*=\s*['"]([^'"]+)['"]/.exec(value);
   if (objectVersion) {
     return objectVersion[1].trim() || null;
   }
@@ -470,7 +470,7 @@ function parseDependencyExpression(
   }
 
   const withoutExtras = normalizedExpression.replaceAll(/\[[^\]]+\]/g, '');
-  const match = withoutExtras.match(/^([A-Za-z0-9_.-]+)\s*(.*)$/);
+  const match = /^([A-Za-z0-9_.-]+)\s*(.*)$/.exec(withoutExtras);
   if (!match) {
     return undefined;
   }
@@ -584,7 +584,7 @@ async function collectImportsFromFile(
 
 function resolveAnchorLine(filePath: string, totalLines: number): number {
   const activeEditor = vscode.window.activeTextEditor;
-  if (!activeEditor || activeEditor.document.uri.fsPath !== filePath) {
+  if (activeEditor?.document.uri.fsPath !== filePath) {
     return Math.min(totalLines, 1 + Math.floor(totalLines / 2));
   }
 
@@ -620,7 +620,7 @@ function parseNodeImports(source: string, startLine: number): ParsedImport[] {
     const statement = lines[index];
     const lineNumber = startLine + index;
 
-    const fromMatch = statement.match(fromPattern);
+    const fromMatch = fromPattern.exec(statement);
     if (fromMatch) {
       imports.push({
         importPath: fromMatch[1],
@@ -630,7 +630,7 @@ function parseNodeImports(source: string, startLine: number): ParsedImport[] {
       });
     }
 
-    const sideEffectMatch = statement.match(sideEffectPattern);
+    const sideEffectMatch = sideEffectPattern.exec(statement);
     if (sideEffectMatch) {
       imports.push({
         importPath: sideEffectMatch[1],
@@ -640,7 +640,7 @@ function parseNodeImports(source: string, startLine: number): ParsedImport[] {
       });
     }
 
-    const requireMatch = statement.match(requirePattern);
+    const requireMatch = requirePattern.exec(statement);
     if (requireMatch) {
       imports.push({
         importPath: requireMatch[1],
@@ -650,7 +650,7 @@ function parseNodeImports(source: string, startLine: number): ParsedImport[] {
       });
     }
 
-    const dynamicImportMatch = statement.match(dynamicImportPattern);
+    const dynamicImportMatch = dynamicImportPattern.exec(statement);
     if (dynamicImportMatch) {
       imports.push({
         importPath: dynamicImportMatch[1],
@@ -676,7 +676,7 @@ function parsePythonImports(source: string, startLine: number): ParsedImport[] {
       continue;
     }
 
-    const importMatch = statement.match(/^import\s+(.+)$/);
+    const importMatch = /^import\s+(.+)$/.exec(statement);
     if (importMatch) {
       const modules = importMatch[1].split(',').map((part) => part.trim());
       for (const moduleEntry of modules) {
@@ -696,7 +696,7 @@ function parsePythonImports(source: string, startLine: number): ParsedImport[] {
       continue;
     }
 
-    const fromImportMatch = statement.match(/^from\s+([A-Za-z0-9_.]+)\s+import\s+/);
+    const fromImportMatch = /^from\s+([A-Za-z0-9_.]+)\s+import\s+/.exec(statement);
     if (fromImportMatch) {
       const modulePath = fromImportMatch[1].trim();
       imports.push({

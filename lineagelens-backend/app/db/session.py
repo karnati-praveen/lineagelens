@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -7,8 +10,21 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 
+logger = logging.getLogger(__name__)
+
+
+def _is_sqlite(url: str) -> bool:
+    return url.startswith("sqlite")
+
 
 def create_engine_from_settings(settings: Settings) -> AsyncEngine:
+    if _is_sqlite(settings.database_url):
+        from sqlalchemy.pool import StaticPool
+        return create_async_engine(
+            settings.database_url,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
     return create_async_engine(
         settings.database_url,
         pool_pre_ping=True,
@@ -42,6 +58,22 @@ async def get_db_session(request: Request) -> AsyncGenerator[AsyncSession, None]
 
 
 async def initialize_database(engine: AsyncEngine) -> None:
+    url_str = str(engine.url)
+
+    if _is_sqlite(url_str):
+        # SQLite lite mode: auto-create all tables, no migrations needed
+        from app.db.base import Base
+        import os
+        # Ensure the data directory exists for file-based SQLite
+        db_path = url_str.replace("sqlite+aiosqlite:///", "").replace("sqlite:///", "")
+        if db_path and not db_path.startswith(":"):
+            os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("SQLite database initialised (create_all).")
+        return
+
+    # Postgres: verify migrations have been applied
     async with engine.begin() as connection:
         await connection.execute(text("SELECT 1"))
 
@@ -75,8 +107,8 @@ async def initialize_database(engine: AsyncEngine) -> None:
         )
         if role_check.scalar_one_or_none() is None:
             raise RuntimeError(
-                "Database schema is out of date: 'role' column is missing from "
-                "user_accounts. Run 'alembic upgrade head' to apply all pending migrations."
+                "Database schema is out of date: 'role' column missing. "
+                "Run 'alembic upgrade head'."
             )
 
         token_version_check = await connection.execute(
@@ -89,6 +121,29 @@ async def initialize_database(engine: AsyncEngine) -> None:
         )
         if token_version_check.scalar_one_or_none() is None:
             raise RuntimeError(
-                "Database schema is out of date: 'token_version' column is missing from "
-                "user_accounts. Run 'alembic upgrade head' to apply all pending migrations."
+                "Database schema is out of date: 'token_version' column missing. "
+                "Run 'alembic upgrade head'."
+            )
+
+        jti_check = await connection.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema = 'public' "
+                "AND table_name = 'user_accounts' "
+                "AND column_name = 'refresh_token_jti'"
+            )
+        )
+        if jti_check.scalar_one_or_none() is None:
+            raise RuntimeError(
+                "Database schema is out of date: 'refresh_token_jti' column missing. "
+                "Run 'alembic upgrade head'."
+            )
+
+        vector_ext = await connection.execute(
+            text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
+        )
+        if vector_ext.scalar_one_or_none() is None:
+            logger.warning(
+                "pgvector extension is not installed. Vector search will not work. "
+                "Install with: CREATE EXTENSION vector;"
             )
