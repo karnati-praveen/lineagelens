@@ -1,0 +1,35 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lineagelens
+  namespace: lineagelens
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    # Uncomment for TLS via cert-manager:
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  # Uncomment for TLS:
+  # tls:
+  #   - hosts:
+  #       - lineagelens.yourdomain.com
+  #     secretName: lineagelens-tls
+  rules:
+    - host: lineagelens.yourdomain.com   # ← replace with your domain
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: lineagelens-backend
+                port:
+                  number: 8787
+          - path: /proxy
+            pathType: Prefix
+            backend:
+              service:
+                name: lineagelens-proxy
+                port:
+                  number: 8788

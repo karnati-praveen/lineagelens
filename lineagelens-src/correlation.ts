@@ -399,16 +399,15 @@ function computeCorrelationConfidence(input: {
     confidence = Math.min(1, Math.max(confidence, confidence + 0.1 + normalizedSimilarityBoost * 0.2));
   }
 
-  const captureMultiplier =
-    input.captureStatus === 'full'
-      ? 1
-      : input.captureStatus === 'hook'
-        ? 0.9
+  const captureMultiplierByStatus =
+    input.captureStatus === 'hook'
+      ? 0.9
       : input.captureStatus === 'metadata_only'
         ? 0.78
         : input.captureStatus === 'tunnel_only'
           ? 0.62
           : 0.35;
+  const captureMultiplier = input.captureStatus === 'full' ? 1 : captureMultiplierByStatus;
 
   return Number((confidence * captureMultiplier).toFixed(4));
 }
@@ -468,6 +467,24 @@ export function correlateInsertionWithHookEvents(
     captureReason: 'claude-code-hook'
   };
 
+  const hookEvent = best as StoredHookEvent & Record<string, unknown>;
+  const fullPromptMessages =
+    (hookEvent.fullPromptMessages as unknown) ??
+    (hookEvent.messages as unknown) ??
+    (typeof hookEvent.prompt === 'string'
+      ? [{ role: 'user', content: hookEvent.prompt as string }]
+      : null);
+
+  const systemPrompt =
+    (hookEvent.systemPrompt as unknown) ??
+    (hookEvent.system_prompt as unknown) ??
+    null;
+
+  const modelName =
+    (hookEvent.model as unknown) ??
+    (hookEvent.modelName as unknown) ??
+    null;
+
   return {
     promptStatus: 'captured',
     captureStatus: 'hook',
@@ -483,12 +500,12 @@ export function correlateInsertionWithHookEvents(
     contentSimilarityScore: null,
     proxyResponseTimestampIso: best.capturedAtIso,
     proxyRequestTimestampIso: best.capturedAtIso,
-    fullPromptMessages: null,
-    modelName: null,
+    fullPromptMessages,
+    modelName,
     parameters: undefined,
     targetHost: 'cli',
     requestHeaders: null,
-    systemPrompt: null,
+    systemPrompt,
     rawModelResponse: content,
     rawModelResponseBase64: '',
     captureEvidence
@@ -670,7 +687,7 @@ function stringifyUnknown(value: unknown): string {
     return String(value);
   }
 
-  if (value === null || typeof value === 'undefined') {
+  if (value === null || value === undefined) {
     return '';
   }
 
@@ -741,7 +758,7 @@ function sanitizeCorrelationRequestHeaders(
       continue;
     }
 
-    sanitized[key] = Array.isArray(value) ? value.map((item) => String(item)) : String(value);
+    sanitized[key] = Array.isArray(value) ? value.map(String) : String(value);
   }
 
   return Object.keys(sanitized).length > 0 ? sanitized : null;
@@ -764,7 +781,7 @@ function tokenAppearsInText(text: string, token: string): boolean {
 }
 
 function escapeRegExp(value: string): string {
-  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 function buildCaptureEvidence(candidate: CorrelationCandidate): CaptureEvidence {

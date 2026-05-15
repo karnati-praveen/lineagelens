@@ -34,6 +34,11 @@ cli/node_modules/
 # Remotion video project
 lineagelens-ad/
 
+# Marketing and automation docs (local only)
+lineagelens-docs/
+lineagelens-marketing/
+lineagelens-n8n/
+
 # Local environment files
 .env
 .env.*

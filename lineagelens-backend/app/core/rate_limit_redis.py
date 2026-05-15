@@ -1,8 +1,35 @@
 from __future__ import annotations
 
+import secrets
 import time
 
 from app.core.rate_limit import RateLimitDecision
+
+# Atomically: prune expired entries → check count → conditionally add + set expiry.
+# Eliminates the race between the count read and the zadd in a two-pipeline approach.
+_SLIDING_WINDOW_LUA = """
+local key = KEYS[1]
+local window_start = tonumber(ARGV[1])
+local now = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local expiry = tonumber(ARGV[4])
+local member = ARGV[5]
+
+redis.call('zremrangebyscore', key, '-inf', window_start)
+local count = redis.call('zcard', key)
+
+if count >= limit then
+    local oldest = redis.call('zrange', key, 0, 0, 'WITHSCORES')
+    if #oldest >= 2 then
+        return {count, 0, oldest[2]}
+    end
+    return {count, 0, tostring(now)}
+end
+
+redis.call('zadd', key, now, member)
+redis.call('expire', key, expiry)
+return {count + 1, 1, '0'}
+"""
 
 
 class RedisRateLimiter:
@@ -17,6 +44,7 @@ class RedisRateLimiter:
         import redis.asyncio as aioredis
 
         self._client = aioredis.from_url(redis_url, decode_responses=True)
+        self._script = self._client.register_script(_SLIDING_WINDOW_LUA)
 
     async def acheck(self, *, key: str, limit: int, window_seconds: int) -> RateLimitDecision:
         now = time.time()
@@ -24,21 +52,21 @@ class RedisRateLimiter:
         safe_window = max(1, window_seconds)
         window_start = now - safe_window
         prefixed = f"rl:{key}"
+        member = f"{now}:{secrets.token_hex(8)}"
 
-        # Atomic: prune expired entries, then read current count.
-        async with self._client.pipeline(transaction=False) as pipe:
-            pipe.zremrangebyscore(prefixed, "-inf", window_start)
-            pipe.zcard(prefixed)
-            results = await pipe.execute()
+        result = await self._script(
+            keys=[prefixed],
+            args=[window_start, now, safe_limit, safe_window + 1, member],
+        )
 
-        count = int(results[1])
+        count = int(result[0])
+        allowed = bool(result[1])
 
-        if count >= safe_limit:
-            oldest_entries = await self._client.zrange(prefixed, 0, 0, withscores=True)
-            if oldest_entries:
-                oldest_time = float(oldest_entries[0][1])
+        if not allowed:
+            try:
+                oldest_time = float(result[2])
                 retry_after = max(1, int((oldest_time + safe_window) - now))
-            else:
+            except (ValueError, TypeError):
                 retry_after = safe_window
             return RateLimitDecision(
                 allowed=False,
@@ -47,13 +75,7 @@ class RedisRateLimiter:
                 limit=safe_limit,
             )
 
-        # Record this request and set key expiry.
-        async with self._client.pipeline(transaction=False) as pipe:
-            pipe.zadd(prefixed, {str(now): now})
-            pipe.expire(prefixed, safe_window + 1)
-            await pipe.execute()
-
-        remaining = max(0, safe_limit - count - 1)
+        remaining = max(0, safe_limit - count)
         return RateLimitDecision(
             allowed=True,
             retry_after_seconds=0,

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import re
 from pathlib import Path
 
@@ -136,7 +138,7 @@ def fallback_structural_tokens(code: str) -> list[str]:
             tokens.append("while_statement")
         elif stripped.startswith("return"):
             tokens.append("return_statement")
-        elif stripped.startswith("import ") or stripped.startswith("from "):
+        elif stripped.startswith(("import ", "from ")):
             tokens.append("import_statement")
         else:
             tokens.append("statement")

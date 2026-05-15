@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "lineagelens.fullname" . }}-backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lineagelens.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.backend.type }}
+  selector:
+    app: {{ include "lineagelens.fullname" . }}-backend
+  ports:
+    - name: http
+      port: {{ .Values.service.backend.port }}
+      targetPort: 8787
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "lineagelens.fullname" . }}-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lineagelens.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.proxy.type }}
+  selector:
+    app: {{ include "lineagelens.fullname" . }}-proxy
+  ports:
+    - name: http
+      port: {{ .Values.service.proxy.port }}
+      targetPort: 8788

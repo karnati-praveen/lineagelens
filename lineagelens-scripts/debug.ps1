@@ -4,7 +4,7 @@ param()
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$deployDir = Join-Path $repoRoot 'deploy'
+$deployDir = Join-Path $repoRoot 'lineagelens-deploy'
 $envFile = Join-Path $deployDir '.env'
 $backendUrl = 'http://localhost:8787'
 $failedSteps = New-Object System.Collections.Generic.List[string]
@@ -45,7 +45,7 @@ function Invoke-Compose {
     if ($script:useComposeV2) {
         & docker compose --project-name $projectName -f $composeFile --env-file $envFile @Arguments
     } else {
-        & docker-compose --project-name $projectName -f $composeFile --env-file $envFile @Arguments
+        & 'docker-compose' --project-name $projectName -f $composeFile --env-file $envFile @Arguments
     }
 }
 
@@ -54,7 +54,7 @@ function Invoke-NativeCommand {
 
     & $Command
     $exitCode = $LASTEXITCODE
-    if ($exitCode -ne $null -and $exitCode -ne 0) {
+    if ($null -ne $exitCode -and $exitCode -ne 0) {
         throw "Command exited with $exitCode"
     }
 }
@@ -76,7 +76,7 @@ function Invoke-Check {
         [scriptblock]$Action
     )
 
-    Write-Host ""
+    Write-Output ""
     Write-Host "==> $Label" -ForegroundColor Cyan
     try {
         & $Action
@@ -122,7 +122,7 @@ function Test-Health {
 function Show-RecentLogs {
     param([string]$ServiceName)
 
-    Write-Host ""
+    Write-Output ""
     Write-Host "  recent logs for ${ServiceName}:" -ForegroundColor DarkYellow
     try {
         Invoke-Compose logs --tail 20 $ServiceName
@@ -131,7 +131,7 @@ function Show-RecentLogs {
     }
 }
 
-Write-Host ""
+Write-Output ""
 Write-Host "LineageLens $bundleMode bundle debug" -ForegroundColor White
 
 Invoke-Check 'bundle files' {
@@ -236,7 +236,7 @@ if ($failedSteps.Count -gt 0) {
     Show-RecentLogs -ServiceName 'backend'
 }
 
-Write-Host ""
+Write-Output ""
 Write-Host 'Summary' -ForegroundColor Cyan
 if ($failedSteps.Count -eq 0) {
     Write-Host 'All checks passed.' -ForegroundColor Green
@@ -245,6 +245,6 @@ if ($failedSteps.Count -eq 0) {
 
 Write-Host 'Failed checks:' -ForegroundColor Red
 foreach ($step in $failedSteps) {
-    Write-Host "  - $step"
+    Write-Output "  - $step"
 }
 exit 1

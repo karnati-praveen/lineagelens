@@ -10,7 +10,7 @@ export function toText(value: unknown): string {
     return String(value);
   }
 
-  if (value === null || typeof value === 'undefined') {
+  if (value === null || value === undefined) {
     return '';
   }
 
@@ -164,7 +164,7 @@ export function classifyOperationType(input: {
 
 function countDistinctFiles(text: string): number {
   const matches =
-    text.match(/(?:\.\.?[/\\]|(?:[A-Za-z]:)?[/\\]|(?:[a-z0-9_.-]+[/\\])+)[^\s'"`]+?\.[a-z0-9]+/gi) ?? [];
+    text.match(/(?:\.\.?[/\\]|(?:[A-Za-z]:)?[/\\]|[a-z0-9_.-]+(?:[/\\][a-z0-9_.-]+)*[/\\])[^\s'"`]+?\.[a-z0-9]+/gi) ?? [];
   return new Set(matches.map((value) => value.toLowerCase())).size;
 }
 

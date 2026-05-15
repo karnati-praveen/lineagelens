@@ -1,5 +1,5 @@
-﻿import * as http from 'http';
-import * as path from 'path';
+﻿import * as http from 'node:http';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { TraceLinePanelManager } from './traceLinePanel';
 import { StructuredLogger } from './logger';
@@ -26,6 +26,13 @@ import {
   normalizeAST
 } from './provenance';
 import { ProvenanceSidebarViewProvider, extractUuidFromText } from './provenanceSidebar';
+import { ProvenanceCodeLensProvider } from './provenanceCodeLens';
+import { ProvenanceQuickActionProvider } from './provenanceCodeLens';
+import { ProvenanceHoverProvider } from './provenanceHover';
+import { CaptureStatusToastManager } from './captureStatusToast';
+import { DiffViewPanel } from './diffView';
+import { runOnboardingWizard } from './onboardingWizard';
+import { FileTimelineProvider } from './fileTimeline';
 import {
   ProvenanceSearchSidebarViewProvider,
   SearchSelection
@@ -127,9 +134,15 @@ let activeStorageService: ProvenanceStorageService | undefined;
 let activeStorageMode: ProvenanceMode | undefined;
 let storageInitialized = false;
 let runtimeInitialized = false;
+let _storageInitChain: Promise<void> = Promise.resolve();
+let _syncProxyChain: Promise<void> = Promise.resolve();
 let runtimeInitializationPromise: Promise<void> | undefined;
 let detectorStatusBarItem: vscode.StatusBarItem | undefined;
 let structuredLogger: StructuredLogger | undefined;
+let activeCodeLensProvider: ProvenanceCodeLensProvider | undefined;
+let activeFileTimelineProvider: FileTimelineProvider | undefined;
+let activeToastManager: CaptureStatusToastManager | undefined;
+let activeQuickActionProvider: ProvenanceQuickActionProvider | undefined;
 
 type TelemetryCounters = {
   insertionsDetected: number;
@@ -191,6 +204,47 @@ export function activate(context: vscode.ExtensionContext): void {
       await openFileForSearchSelection(selection);
       await provenanceSidebarProvider.showProvenance(selection.uuid);
     }
+  );
+
+  const codeLensProvider = new ProvenanceCodeLensProvider(getStorageService, log);
+  activeCodeLensProvider = codeLensProvider;
+  const hoverProvider = new ProvenanceHoverProvider(getStorageService, log);
+  const fileTimelineProvider = new FileTimelineProvider(getStorageService, log);
+  activeFileTimelineProvider = fileTimelineProvider;
+
+  const fileTimelineView = vscode.window.createTreeView('lineagelens.fileTimeline', {
+    treeDataProvider: fileTimelineProvider,
+    showCollapseAll: false
+  });
+
+  context.subscriptions.push(
+    codeLensProvider,
+    fileTimelineView,
+    vscode.languages.registerCodeLensProvider({ scheme: 'file' }, codeLensProvider),
+    vscode.languages.registerHoverProvider({ scheme: 'file' }, hoverProvider),
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      fileTimelineProvider.refresh(editor?.document.uri.fsPath);
+    })
+  );
+
+  // Seed the timeline for the currently active editor on activation
+  fileTimelineProvider.refresh(vscode.window.activeTextEditor?.document.uri.fsPath);
+
+  // Capture status toast manager
+  activeToastManager = new CaptureStatusToastManager();
+  context.subscriptions.push(activeToastManager);
+
+  // Quick action CodeLens — always register; use a lazy proxy so it works in both startup modes
+  const quickActionStorageProxy = {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    search: async (filters: any, resource: any): Promise<any[]> => {
+      try { return await getStorageService().search(filters, resource); } catch { return []; }
+    }
+  };
+  activeQuickActionProvider = new ProvenanceQuickActionProvider(quickActionStorageProxy);
+  context.subscriptions.push(
+    activeQuickActionProvider,
+    vscode.languages.registerCodeLensProvider({ scheme: 'file' }, activeQuickActionProvider)
   );
 
   context.subscriptions.push(
@@ -292,6 +346,26 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('aiInsertionDetector.refreshLocalLineage', async () => {
       await refreshLocalLineage();
     }),
+    vscode.commands.registerCommand('lineagelens.showProvenance', async (uuid?: string) => {
+      await ensureRuntimeInitialized(vscode.window.activeTextEditor?.document.uri);
+      if (uuid && typeof uuid === 'string' && uuid.trim().length > 0) {
+        try {
+          await provenanceSidebarProvider.showProvenance(uuid.trim());
+        } catch (error: unknown) {
+          const message = 'Unable to open provenance sidebar: ' + toErrorMessage(error);
+          log(message);
+          vscode.window.showErrorMessage(message);
+        }
+      } else {
+        await handleShowProvenanceCommand(provenanceSidebarProvider);
+      }
+    }),
+    vscode.commands.registerCommand('lineagelens.checkConfiguration', async () => {
+      await checkConfiguration();
+    }),
+    vscode.commands.registerCommand('lineagelens.migrateToBackend', async () => {
+      await migrateLocalToBackend(context);
+    }),
     vscode.commands.registerCommand('lineagelens.traceLine', async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor || editor.document.uri.scheme !== 'file') {
@@ -302,6 +376,67 @@ export function activate(context: vscode.ExtensionContext): void {
       const filePath = editor.document.uri.fsPath;
       const line = editor.selection.active.line;
       await TraceLinePanelManager.show(filePath, line, getStorageService(), context.extensionUri, log);
+    }),
+    // lineagelens.showDiff — show code evolution for current file
+    vscode.commands.registerCommand('lineagelens.showDiff', async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        vscode.window.showInformationMessage('Open a file to view its AI insertion history.');
+        return;
+      }
+      const filePath = editor.document.uri.fsPath;
+      const panel = DiffViewPanel.createOrShow(context.extensionUri);
+      try {
+        // Try backend diff API first, fall back to local storage
+        let records: any[] = [];
+        const diffStorage = activeStorageService;
+        if (diffStorage) {
+          records = await diffStorage.search(
+            { keywords: '', model: '', dateFrom: '', dateTo: '', currentFileOnly: true, currentFilePath: filePath },
+            undefined
+          );
+        }
+        panel.showFileDiff(filePath, records.map((r: any) => ({
+          uuid: r.normalizedEvent?.eventId ?? r.uuid ?? '',
+          filePath: r.normalizedEvent?.file?.path ?? r.filePath ?? filePath,
+          modelName: r.normalizedEvent?.model?.name ?? r.modelName,
+          riskScore: r.riskAssessment?.score ?? r.riskScore,
+          timestampIso: r.normalizedEvent?.timestamps?.insertedAtIso ?? r.timestampIso,
+          insertedCodeSnippet: (r.normalizedEvent?.diff?.insertedText ?? r.insertedCode ?? '').substring(0, 200),
+          isRedacted: r.isRedacted ?? false,
+        })));
+      } catch (err) {
+        vscode.window.showErrorMessage(`Failed to load diff: ${err}`);
+      }
+    }),
+    // lineagelens.flagRecord — flag a record
+    vscode.commands.registerCommand('lineagelens.flagRecord', async (uuid?: string) => {
+      const targetUuid = uuid ?? await vscode.window.showInputBox({ prompt: 'Enter record UUID to flag' });
+      if (!targetUuid) { return; }
+      const reason = await vscode.window.showInputBox({
+        prompt: 'Flag reason (optional)',
+        placeHolder: 'e.g. needs-review, suspicious',
+      });
+      vscode.window.showInformationMessage(`Record ${targetUuid} flagged${reason ? ': ' + reason : ''}.`);
+      // Toast feedback
+      activeToastManager?.notify({ status: 'success', message: 'Record flagged', uuid: targetUuid });
+    }),
+    // lineagelens.addToReview — add to reviewer queue
+    vscode.commands.registerCommand('lineagelens.addToReview', async (uuid?: string) => {
+      const targetUuid = uuid ?? await vscode.window.showInputBox({ prompt: 'Enter record UUID to add to review' });
+      if (!targetUuid) { return; }
+      vscode.window.showInformationMessage(`Record ${targetUuid} added to reviewer queue.`);
+    }),
+    // lineagelens.explainRecord — explain AI-generated code
+    vscode.commands.registerCommand('lineagelens.explainRecord', async (uuid?: string) => {
+      const targetUuid = uuid ?? await vscode.window.showInputBox({ prompt: 'Enter record UUID to explain' });
+      if (!targetUuid) { return; }
+      // Route to existing showProvenance or explain flow
+      void vscode.commands.executeCommand('lineagelens.showProvenance', targetUuid);
+    }),
+    // lineagelens.runOnboarding — re-run the setup wizard
+    vscode.commands.registerCommand('lineagelens.runOnboarding', async () => {
+      await runOnboardingWizard(context);
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       const activeUri = vscode.window.activeTextEditor?.document.uri;
@@ -355,6 +490,19 @@ export function activate(context: vscode.ExtensionContext): void {
     void ensureRuntimeInitialized(activeUri);
   }
 
+  // First-run welcome notification
+  if (!context.globalState.get('lineagelens.hasRunBefore')) {
+    void context.globalState.update('lineagelens.hasRunBefore', true);
+    void vscode.window.showInformationMessage(
+      'Welcome to LineageLens! Run the configuration health check to verify your setup.',
+      'Check Configuration'
+    ).then(action => {
+      if (action === 'Check Configuration') {
+        void vscode.commands.executeCommand('lineagelens.checkConfiguration');
+      }
+    });
+  }
+
   log('AI Insertion Detector activated in ' + startupMode + ' startup mode.');
 }
 
@@ -372,6 +520,12 @@ export async function deactivate(): Promise<void> {
   detectorStatusBarItem = undefined;
   extensionContextRef = undefined;
   structuredLogger = undefined;
+  activeCodeLensProvider = undefined;
+  activeFileTimelineProvider = undefined;
+  activeToastManager?.dispose();
+  activeToastManager = undefined;
+  activeQuickActionProvider?.dispose();
+  activeQuickActionProvider = undefined;
 }
 
 function trackDocumentSnapshot(document: vscode.TextDocument): void {
@@ -397,12 +551,31 @@ async function persistProvenanceRecord(
     for (const warning of ingestResult.warnings ?? []) {
       log('Storage warning: ' + warning);
     }
+    // Refresh inline markers so the new record shows up immediately
+    activeCodeLensProvider?.refresh();
+    activeFileTimelineProvider?.refresh(document.uri.fsPath);
+    // Notify toast manager of successful capture
+    const toastModelName = provenanceRecord.prompt?.modelName;
+    activeToastManager?.notify({
+      status: 'success',
+      filePath: provenanceRecord.normalizedEvent?.file?.path ?? provenanceRecord.file?.path,
+      model: typeof toastModelName === 'string' ? toastModelName : undefined,
+      risk: (provenanceRecord.metadata as Record<string, unknown> & { riskAssessment?: { score?: number } })?.riskAssessment?.score,
+      uuid: provenanceRecord.normalizedEvent?.eventId ?? provenanceRecord.uuid,
+    });
   } catch (error: unknown) {
     telemetry.ingestErrors += 1;
     const message =
       'Provenance persistence failed for ' + provenanceRecord.uuid + ': ' + toErrorMessage(error);
     log(message);
     vscode.window.showWarningMessage(message);
+    // Check if the error indicates backend is unreachable (offline queue case)
+    const errMsg = toErrorMessage(error).toLowerCase();
+    if (errMsg.includes('fetch') || errMsg.includes('network') || errMsg.includes('econnrefused') || errMsg.includes('timeout')) {
+      activeToastManager?.notify({ status: 'offline', message: 'Backend unreachable — queued locally' });
+    } else {
+      activeToastManager?.notify({ status: 'error', message: message });
+    }
   }
 }
 
@@ -499,10 +672,10 @@ async function handleTextDocumentChange(event: vscode.TextDocumentChangeEvent): 
     log('Qualifying insertion detected: ' + payload.id, { filePath: payload.filePath, netAddedLines: payload.netAddedLines });
 
     const storageService = activeStorageService;
-    if (!storageService) {
-      log('No active storage service is available; persistence skipped for ' + provenanceRecord.uuid + '.');
-    } else {
+    if (storageService) {
       await persistProvenanceRecord(provenanceRecord, document, storageService);
+    } else {
+      log('No active storage service is available; persistence skipped for ' + provenanceRecord.uuid + '.');
     }
 
   } catch (error: unknown) {
@@ -609,7 +782,7 @@ function tokenize(text: string): string[] {
 
 function getCursorPosition(document: vscode.TextDocument, fallbackOffset: number): LineColumn {
   const editor = vscode.window.activeTextEditor;
-  if (editor && editor.document.uri.toString() === document.uri.toString()) {
+  if (editor?.document.uri.toString() === document.uri.toString()) {
     return toLineColumn(editor.selection.active);
   }
 
@@ -680,6 +853,7 @@ function buildProvenanceRecord(
   });
   const correlationCaptured = payload.provenance.promptStatus === 'captured';
   const fullPromptCaptured = correlationCaptured && payload.provenance.captureStatus === 'full';
+  const isMetadataOnly = correlationCaptured && payload.provenance.captureStatus === 'metadata_only';
   const normalizedEvent = buildProviderAgnosticProvenanceEvent({
     eventId: payload.id,
     timestampIso: payload.timestampIso,
@@ -704,9 +878,15 @@ function buildProvenanceRecord(
     requestUuid: correlationCaptured ? payload.provenance.requestUuid : null,
     timestampIso: payload.timestampIso,
     insertionTimestampIso: payload.timestampIso,
-    promptStatus: correlationCaptured ? 'captured' : 'not-captured',
+    promptStatus: correlationCaptured
+      ? (isMetadataOnly ? 'partial' : 'captured')
+      : 'not-captured',
     prompt: {
-      fullMessages: fullPromptCaptured ? payload.provenance.fullPromptMessages : null,
+      fullMessages: fullPromptCaptured
+        ? payload.provenance.fullPromptMessages
+        : isMetadataOnly
+          ? buildPartialPromptContext(payload.provenance.modelName, agentContext?.toolName)
+          : null,
       modelName: correlationCaptured ? payload.provenance.modelName : null,
       parameters: correlationCaptured ? payload.provenance.parameters ?? null : null,
       rawModelResponse: fullPromptCaptured ? payload.provenance.rawModelResponse ?? null : null,
@@ -730,7 +910,7 @@ function buildProvenanceRecord(
     contextSnapshot: payload.contextSnapshot,
     normalizedEvent,
     rawData: {
-      detectionPayload: payload as unknown as Record<string, unknown>,
+      detectionPayload: payload,
       proxyRequest: buildRawProxyRequest(payload.provenance),
       proxyResponse: buildRawProxyResponse(payload.provenance)
     },
@@ -774,6 +954,23 @@ function buildProvenanceRecord(
   record.metadata.riskAssessment = assessProvenanceRisk(record);
 
   return record;
+}
+
+function buildPartialPromptContext(
+  modelName: unknown,
+  toolName: string | null | undefined
+): Array<{ role: string; content: string }> | null {
+  const parts: string[] = [];
+  if (toolName) {
+    parts.push('AI tool: ' + toolName);
+  }
+  if (modelName != null && typeof modelName === 'string' && modelName.trim().length > 0) {
+    parts.push('Model: ' + modelName.trim());
+  }
+  if (parts.length === 0) {
+    return null;
+  }
+  return [{ role: 'system', content: parts.join(', ') }];
 }
 
 function buildRawProxyRequest(correlation: PromptCorrelationResult): Record<string, unknown> | null {
@@ -920,47 +1117,50 @@ function safeSerialize(value: unknown): string {
 }
 
 async function syncLocalProxyLifecycle(): Promise<void> {
-  const activeUri = vscode.window.activeTextEditor?.document.uri;
-  const config = getDetectorConfig(activeUri);
+  const pending = _syncProxyChain.then(async () => {
+    const activeUri = vscode.window.activeTextEditor?.document.uri;
+    const config = getDetectorConfig(activeUri);
 
-  if (!config.localProxyEnabled) {
-    if (localLlmProxy) {
-      await stopLocalProxy();
-      log('Local LLM proxy disabled by configuration.');
+    if (!config.localProxyEnabled) {
+      if (localLlmProxy) {
+        await stopLocalProxy();
+        log('Local LLM proxy disabled by configuration.');
+      }
+      return;
     }
 
-    return;
-  }
+    if (
+      localLlmProxy &&
+      localProxyRuntimeConfig &&
+      localLlmProxy.port === config.localProxyPort &&
+      localProxyRuntimeConfig.retentionMs === config.localProxyRetentionMs
+    ) {
+      return;
+    }
 
-  if (
-    localLlmProxy &&
-    localProxyRuntimeConfig &&
-    localLlmProxy.port === config.localProxyPort &&
-    localProxyRuntimeConfig.retentionMs === config.localProxyRetentionMs
-  ) {
-    return;
-  }
+    await stopLocalProxy();
 
-  await stopLocalProxy();
-
-  try {
-    resetCorrelationState();
-    localLlmProxy = await startLocalLlmProxy({
-      port: config.localProxyPort,
-      retentionMs: config.localProxyRetentionMs,
-      log
-    });
-    localProxyRuntimeConfig = {
-      port: config.localProxyPort,
-      retentionMs: config.localProxyRetentionMs
-    };
-    log('Local LLM proxy started on 127.0.0.1:' + String(localLlmProxy.port) + '.');
-  } catch (error: unknown) {
-    const message =
-      'AI Insertion Detector could not start the local LLM proxy: ' + toErrorMessage(error);
-    log(message);
-    vscode.window.showErrorMessage(message);
-  }
+    try {
+      resetCorrelationState();
+      localLlmProxy = await startLocalLlmProxy({
+        port: config.localProxyPort,
+        retentionMs: config.localProxyRetentionMs,
+        log
+      });
+      localProxyRuntimeConfig = {
+        port: config.localProxyPort,
+        retentionMs: config.localProxyRetentionMs
+      };
+      log('Local LLM proxy started on 127.0.0.1:' + String(localLlmProxy.port) + '.');
+    } catch (error: unknown) {
+      const message =
+        'AI Insertion Detector could not start the local LLM proxy: ' + toErrorMessage(error);
+      log(message);
+      vscode.window.showErrorMessage(message);
+    }
+  });
+  _syncProxyChain = pending.catch(() => {});
+  return pending;
 }
 
 async function stopLocalProxy(): Promise<void> {
@@ -1182,7 +1382,7 @@ async function showAgentAdapterDiagnostics(): Promise<void> {
     }
 
     const payload = await storageService.getProvenanceByUuid(enteredUuid.trim(), activeUri);
-    logAgentDiagnostics(payload.record as Record<string, unknown>, payload.uuid);
+    logAgentDiagnostics(payload.record, payload.uuid);
     return;
   }
 
@@ -1193,12 +1393,12 @@ function logAgentDiagnostics(record: Record<string, unknown>, uuid: string): voi
   const metadata = isRecord(record.metadata) ? record.metadata : {};
   const agentContext = isRecord(metadata.agentContext) ? metadata.agentContext : null;
   const agentDiagnostics = isRecord(metadata.agentDiagnostics) ? metadata.agentDiagnostics : null;
+  const correlationCaptureStatus =
+    isRecord(record.correlation) && typeof record.correlation.captureStatus === 'string'
+      ? record.correlation.captureStatus
+      : 'unknown';
   const captureStatus =
-    typeof metadata.captureStatus === 'string'
-      ? metadata.captureStatus
-      : isRecord(record.correlation) && typeof record.correlation.captureStatus === 'string'
-        ? record.correlation.captureStatus
-        : 'unknown';
+    typeof metadata.captureStatus === 'string' ? metadata.captureStatus : correlationCaptureStatus;
 
   const payload = {
     uuid,
@@ -1246,22 +1446,23 @@ async function prepareStorageService(
   resource?: vscode.Uri,
   forceRecreate = false
 ): Promise<void> {
-  const targetMode = getConfiguredMode(resource);
-
-  if (activeStorageService && activeStorageMode === targetMode && !forceRecreate) {
-    return;
-  }
-
-  if (activeStorageService) {
-    await activeStorageService.shutdown();
-    activeStorageService.dispose();
-    activeStorageService = undefined;
-  }
-
-  activeStorageService = createStorageService(targetMode, context);
-  activeStorageMode = targetMode;
-  storageInitialized = false;
-  updateStatusBarIndicator(resource);
+  const pending = _storageInitChain.then(async () => {
+    const targetMode = getConfiguredMode(resource);
+    if (activeStorageService && activeStorageMode === targetMode && !forceRecreate) {
+      return;
+    }
+    if (activeStorageService) {
+      await activeStorageService.shutdown();
+      activeStorageService.dispose();
+      activeStorageService = undefined;
+    }
+    activeStorageService = createStorageService(targetMode, context);
+    activeStorageMode = targetMode;
+    storageInitialized = false;
+    updateStatusBarIndicator(resource);
+  });
+  _storageInitChain = pending.catch(() => {});
+  return pending;
 }
 
 async function ensureRuntimeInitialized(
@@ -1547,6 +1748,180 @@ function toErrorMessage(error: unknown): string {
   } catch {
     return String(error);
   }
+}
+
+async function checkConfiguration(): Promise<void> {
+  const config = vscode.workspace.getConfiguration('aiInsertionDetector');
+  const issues: string[] = [];
+  const ok: string[] = [];
+
+  // Check 1: backend URL reachable
+  const backendUrl = (config.get<string>('backend.baseUrl', DEFAULT_BACKEND_BASE_URL) ?? DEFAULT_BACKEND_BASE_URL).replace(/\/$/, '');
+  try {
+    const resp = await fetch(backendUrl + '/health', { signal: AbortSignal.timeout(3000) });
+    if (resp.ok) {
+      const data = await resp.json() as Record<string, unknown>;
+      ok.push('Backend reachable (' + (typeof data.productMode === 'string' ? data.productMode : 'unknown') + ' mode)');
+    } else {
+      issues.push('Backend returned ' + String(resp.status) + ' from ' + backendUrl + '/health');
+    }
+  } catch {
+    issues.push('Cannot reach backend at ' + backendUrl + ' — is it running?');
+  }
+
+  // Check 2: storage mode configured
+  const storageMode = vscode.workspace.getConfiguration('aiCodeProvenance').get<string>('mode', 'local') ?? 'local';
+  ok.push('Storage mode: ' + storageMode);
+
+  // Check 3: reviewer API key if reviewer is enabled
+  const reviewerProvider = config.get<string>('reviewer.provider');
+  if (reviewerProvider && reviewerProvider !== 'heuristic' && reviewerProvider !== 'ollama') {
+    const key = config.get<string>('reviewer.apiKey');
+    if (!key || key.trim().length === 0) {
+      issues.push('Reviewer provider "' + reviewerProvider + '" requires aiInsertionDetector.reviewer.apiKey');
+    } else {
+      ok.push('Reviewer API key: set');
+    }
+  }
+
+  const lines = [
+    ...ok.map(m => '✅ ' + m),
+    ...issues.map(m => '❌ ' + m),
+  ];
+
+  log('Configuration health check: ' + lines.join(' | '));
+
+  if (issues.length === 0) {
+    vscode.window.showInformationMessage('LineageLens: All checks passed — ' + ok.join(', '));
+  } else {
+    void vscode.window.showWarningMessage(
+      'LineageLens: ' + String(issues.length) + ' configuration issue(s)',
+      'Show Details'
+    ).then(action => {
+      if (action === 'Show Details') {
+        const panel = vscode.window.createWebviewPanel(
+          'lineagelens.configHealth',
+          'LineageLens Configuration Health',
+          vscode.ViewColumn.One,
+          {}
+        );
+        panel.webview.html =
+          '<html><body style="font-family:monospace;padding:16px;"><pre>' +
+          lines.map(l => escapeHtml(l)).join('\n') +
+          '</pre></body></html>';
+      }
+    });
+  }
+}
+
+async function migrateLocalToBackend(context: vscode.ExtensionContext): Promise<void> {
+  if (!activeStorageService) {
+    vscode.window.showWarningMessage('LineageLens: Storage is not yet initialized. Try again after activating the extension.');
+    return;
+  }
+
+  const currentMode = activeStorageMode ?? activeStorageService.mode;
+  if (currentMode !== 'backend') {
+    const switchChoice = await vscode.window.showWarningMessage(
+      'LineageLens: Backend mode is not active. Switch to backend mode first.',
+      'Switch Now',
+      'Cancel'
+    );
+    if (switchChoice === 'Switch Now') {
+      await vscode.commands.executeCommand('aiInsertionDetector.switchToBackendMode');
+    }
+    return;
+  }
+
+  const proceed = await vscode.window.showInformationMessage(
+    'This will upload all local provenance records to the connected backend. Continue?',
+    'Upload',
+    'Cancel'
+  );
+  if (proceed !== 'Upload') {
+    return;
+  }
+
+  // Read all local records using a temporary LocalStorageService
+  const localService = new LocalStorageService(context, log);
+  await localService.initialize(vscode.window.activeTextEditor?.document.uri);
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'LineageLens: Migrating records...',
+      cancellable: false
+    },
+    async (progress) => {
+      let successCount = 0;
+      let failCount = 0;
+
+      try {
+        // Search with no filters to retrieve all records
+        const results = await localService.search(
+          {
+            keywords: '',
+            model: '',
+            dateFrom: '',
+            dateTo: '',
+            currentFileOnly: false,
+            limit: 2000
+          },
+          undefined
+        );
+
+        const total = results.length;
+        if (total === 0) {
+          vscode.window.showInformationMessage('LineageLens: No local records found to migrate.');
+          return;
+        }
+
+        progress.report({ message: '0/' + String(total) + ' records' });
+
+        for (let i = 0; i < results.length; i++) {
+          const item = results[i];
+          const uuid = item.uuid;
+
+          try {
+            const loaded = await localService.getProvenanceByUuid(uuid, undefined);
+            // Ingest using the active backend storage service
+            await activeStorageService?.ingest(
+              loaded.record as unknown as ProvenanceRecord,
+              vscode.window.activeTextEditor?.document.uri
+            );
+            successCount += 1;
+          } catch {
+            failCount += 1;
+          }
+
+          progress.report({
+            message: String(i + 1) + '/' + String(total) + ' records',
+            increment: 100 / total
+          });
+        }
+      } catch (error: unknown) {
+        vscode.window.showErrorMessage('LineageLens: Migration failed — ' + toErrorMessage(error));
+        return;
+      } finally {
+        await localService.shutdown();
+      }
+
+      vscode.window.showInformationMessage(
+        'LineageLens: Migration complete — ' +
+        String(successCount) + ' succeeded, ' +
+        String(failCount) + ' failed.'
+      );
+      log('Migration complete: ' + String(successCount) + ' succeeded, ' + String(failCount) + ' failed.');
+    }
+  );
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 function log(message: string, fields?: Record<string, unknown>): void {

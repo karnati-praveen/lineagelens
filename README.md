@@ -93,7 +93,7 @@ lineagelens stop --mode plus     # Stop backend
 
 Install once (requires Node ≥ 18):
 ```bash
-npm install -g .
+npm install -g lineagelens-cli
 ```
 
 | Command | Description |

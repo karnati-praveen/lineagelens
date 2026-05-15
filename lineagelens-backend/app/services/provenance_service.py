@@ -1,5 +1,8 @@
+from __future__ import annotations
+
+import asyncio
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 import json
 import logging
 import re
@@ -12,12 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.security import AuthContext
-from app.db.models import ProvenanceRecord
+from app.db.models import ProvenanceRecord, ProvenanceTag
 from app.schemas.provenance import SearchRequest, decode_cursor, encode_cursor
 from app.services.ast_normalizer import normalize_ast_tokens
 from app.services.embedding_service import generate_embedding
 from app.services.ingest_normalizer import NormalizedIngestPayload
 from app.services.neo4j_service import Neo4jLineageService
+from app.services.risk_service import compute_risk_score
 
 
 logger = logging.getLogger(__name__)
@@ -32,11 +36,11 @@ class IngestOutcome:
 
 def infer_language_hint(file_path: str) -> str:
     lowered = (file_path or "").lower()
-    if lowered.endswith(".py") or lowered.endswith(".pyi"):
+    if lowered.endswith((".py", ".pyi")):
         return "python"
-    if lowered.endswith(".tsx") or lowered.endswith(".jsx"):
+    if lowered.endswith((".tsx", ".jsx")):
         return "tsx"
-    if lowered.endswith(".ts") or lowered.endswith(".mts") or lowered.endswith(".cts"):
+    if lowered.endswith((".ts", ".mts", ".cts")):
         return "typescript"
     return "javascript"
 
@@ -69,6 +73,7 @@ async def ingest_provenance_event(
     auth: AuthContext,
     settings: Settings,
     neo4j_service: Neo4jLineageService | None,
+    app_state: object | None = None,
 ) -> IngestOutcome:
     warnings = list(payload.warnings)
 
@@ -103,6 +108,13 @@ async def ingest_provenance_event(
     except (ValueError, AttributeError):
         stored_user_id = None
 
+    risk_score_value, _risk_reasons = compute_risk_score(
+        inserted_code=payload.inserted_text,
+        prompt_messages=payload.prompt_messages,
+        model_name=payload.model_name,
+        file_path=payload.file_path,
+    )
+
     record = ProvenanceRecord(
         uuid=payload.record_uuid,
         workspace_id=payload.workspace_id or auth.workspace_id,
@@ -124,6 +136,7 @@ async def ingest_provenance_event(
         ast_snapshot=ast_snapshot,
         embedding_vector=embedding_vector,
         embedding_model=settings.embedding_model_name,
+        risk_score=risk_score_value,
         provenance_payload=payload.provenance_payload,
     )
 
@@ -148,6 +161,22 @@ async def ingest_provenance_event(
         )
 
         await session.refresh(record)
+
+        if app_state is not None and record.risk_score is not None:
+            try:
+                from app.api.routes.webhooks import trigger_webhooks  # local import to avoid circular
+                asyncio.create_task(
+                    trigger_webhooks(
+                        app_state,
+                        workspace_id=record.workspace_id,
+                        record_uuid=str(record.uuid),
+                        risk_score=record.risk_score,
+                        file_path=record.file_path,
+                    )
+                )
+            except Exception as webhook_error:
+                logger.debug("Webhook trigger skipped: %s", webhook_error)
+
     except IntegrityError:
         await session.rollback()
 
@@ -265,93 +294,129 @@ async def get_provenance_by_uuid(
     return result.scalar_one_or_none()
 
 
-async def search_provenance_records(
+async def _vector_search(
     session: AsyncSession,
-    search: SearchRequest,
-    workspace_id: str,
+    query_text: str,
+    filters: list[object],
+    offset: int,
+    limit: int,
     settings: Settings,
 ) -> tuple[list[tuple[ProvenanceRecord, float | None]], list[str], int | None, str | None]:
-    query_text = (search.query or search.keywords or "").strip()
+    query_embedding = await generate_embedding(query_text, settings.pgvector_dimension, settings)
 
-    limit = search.top_k or search.limit or settings.search_default_limit
-    limit = min(200, max(1, int(limit)))
-    offset = max(0, int(search.offset or 0))
-
-    filters = build_workspace_record_filters(search, workspace_id)
-
-    if query_text and settings.vector_search_enabled:
-        query_embedding = await generate_embedding(query_text, settings.pgvector_dimension, settings)
-        distance_expr = ProvenanceRecord.embedding_vector.cosine_distance(query_embedding).label(
-            "distance"
+    # Guard: skip vector path if embedding is None or all-zeros
+    if query_embedding is None or all(v == 0.0 for v in query_embedding):
+        logger.warning(
+            "Vector search skipped: query embedding is null or zero-vector; falling back to keyword search"
         )
+        return await _keyword_search(session, query_text, filters, offset, limit)
 
-        statement = (
-            select(ProvenanceRecord, distance_expr)
-            .where(and_(*filters))
-            .where(ProvenanceRecord.embedding_vector.is_not(None))
-            .order_by(distance_expr.asc())
-            .offset(offset)
-            .limit(limit)
-        )
+    distance_expr = ProvenanceRecord.embedding_vector.cosine_distance(query_embedding).label(
+        "distance"
+    )
 
-        result = await session.execute(statement)
-        rows = result.all()
-        return [(row[0], to_similarity(row[1])) for row in rows], [], None, None
+    statement = (
+        select(ProvenanceRecord, distance_expr)
+        .where(and_(*filters))
+        .where(ProvenanceRecord.embedding_vector.is_not(None))
+        .order_by(distance_expr.asc())
+        .offset(offset)
+        .limit(limit)
+    )
 
-    if query_text:
-        keyword_scan_limit = min((offset + limit) * 10, 2000)
-        statement = (
-            select(ProvenanceRecord)
-            .where(and_(*filters))
-            .order_by(desc(ProvenanceRecord.timestamp_iso))
-            .limit(keyword_scan_limit)
-        )
+    result = await session.execute(statement)
+    rows = result.all()
+    return [(row[0], to_similarity(row[1])) for row in rows], [], None, None
 
-        result = await session.execute(statement)
-        records = result.scalars().all()
 
-        tokens = tokenize_query(query_text)
-        rows_with_scores: list[tuple[ProvenanceRecord, float | None]] = []
-        for record in records:
-            score = score_keyword_match(record, tokens)
-            if score <= 0:
-                continue
-            rows_with_scores.append((record, score))
+async def _keyword_search(
+    session: AsyncSession,
+    query_text: str,
+    filters: list[object],
+    offset: int,
+    limit: int,
+) -> tuple[list[tuple[ProvenanceRecord, float | None]], list[str], int | None, str | None]:
+    keyword_scan_limit = min((offset + limit) * 10, 2000)
+    statement = (
+        select(ProvenanceRecord)
+        .where(and_(*filters))
+        .order_by(desc(ProvenanceRecord.timestamp_iso))
+        .limit(keyword_scan_limit)
+    )
 
-        rows_with_scores.sort(
-            key=lambda item: (
-                item[1] if isinstance(item[1], (int, float)) else 0.0,
-                item[0].timestamp_iso,
-            ),
-            reverse=True,
-        )
+    result = await session.execute(statement)
+    records = result.scalars().all()
 
-        warnings = ["Vector search is disabled; using keyword fallback search."]
-        return rows_with_scores[offset : offset + limit], warnings, len(rows_with_scores), None
+    tokens = tokenize_query(query_text)
+    rows_with_scores: list[tuple[ProvenanceRecord, float | None]] = [
+        (record, score)
+        for record in records
+        for score in (score_keyword_match(record, tokens),)
+        if score > 0
+    ]
 
-    # Plain listing path: support both cursor-based and offset pagination.
+    rows_with_scores.sort(
+        key=lambda item: (
+            item[1] if isinstance(item[1], (int, float)) else 0.0,
+            item[0].timestamp_iso,
+        ),
+        reverse=True,
+    )
+
+    warnings = ["Vector search is disabled; using keyword fallback search."]
+    return rows_with_scores[offset : offset + limit], warnings, len(rows_with_scores), None
+
+
+def _apply_cursor_filter(
+    cursor: str | None,
+    filters: list[object],
+    offset: int,
+) -> tuple[list[object], int]:
+    """Return (cursor_filters, adjusted_offset).
+
+    Decodes the pagination cursor and appends the appropriate SQL filter so the
+    query returns only records that come after the cursor position.  If the
+    cursor is absent or invalid the original filters and offset are returned
+    unchanged.
+    """
     cursor_filters = list(filters)
-    if search.cursor:
-        decoded = decode_cursor(search.cursor)
-        if decoded is not None:
-            cursor_ts_str, cursor_uuid_str = decoded
-            try:
-                cursor_ts = datetime.fromisoformat(cursor_ts_str.replace("Z", "+00:00"))
-                cursor_uuid = uuid_pkg.UUID(cursor_uuid_str)
-                # Records strictly older than the cursor timestamp, or same timestamp
-                # with a UUID that sorts after the cursor UUID (stable tie-breaking).
-                cursor_filters.append(
-                    or_(
-                        ProvenanceRecord.timestamp_iso < cursor_ts,
-                        and_(
-                            ProvenanceRecord.timestamp_iso == cursor_ts,
-                            ProvenanceRecord.uuid > cursor_uuid,
-                        ),
-                    )
-                )
-                offset = 0  # cursor supersedes offset
-            except (ValueError, AttributeError):
-                pass  # invalid cursor — fall back to offset
+    if not cursor:
+        return cursor_filters, offset
+
+    decoded = decode_cursor(cursor)
+    if decoded is None:
+        return cursor_filters, offset
+
+    cursor_ts_str, cursor_uuid_str = decoded
+    try:
+        cursor_ts = datetime.fromisoformat(cursor_ts_str.replace("Z", "+00:00"))
+        cursor_uuid = uuid_pkg.UUID(cursor_uuid_str)
+        # Records strictly older than the cursor timestamp, or same timestamp
+        # with a UUID that sorts after the cursor UUID (stable tie-breaking).
+        cursor_filters.append(
+            or_(
+                ProvenanceRecord.timestamp_iso < cursor_ts,
+                and_(
+                    ProvenanceRecord.timestamp_iso == cursor_ts,
+                    ProvenanceRecord.uuid > cursor_uuid,
+                ),
+            )
+        )
+        offset = 0  # cursor supersedes offset
+    except (ValueError, AttributeError):
+        pass  # invalid cursor — fall back to offset
+
+    return cursor_filters, offset
+
+
+async def _listing_search(
+    session: AsyncSession,
+    search: SearchRequest,
+    filters: list[object],
+    offset: int,
+    limit: int,
+) -> tuple[list[tuple[ProvenanceRecord, float | None]], list[str], int | None, str | None]:
+    cursor_filters, offset = _apply_cursor_filter(search.cursor, filters, offset)
 
     count_statement = select(func.count()).select_from(ProvenanceRecord).where(and_(*filters))
     count_result = await session.execute(count_statement)
@@ -376,10 +441,33 @@ async def search_provenance_records(
     return [(record, None) for record in records], [], total, next_cursor
 
 
+async def search_provenance_records(
+    session: AsyncSession,
+    search: SearchRequest,
+    workspace_id: str,
+    settings: Settings,
+) -> tuple[list[tuple[ProvenanceRecord, float | None]], list[str], int | None, str | None]:
+    query_text = (search.query or search.keywords or "").strip()
+
+    limit = search.top_k or search.limit or settings.search_default_limit
+    limit = min(200, max(1, int(limit)))
+    offset = max(0, int(search.offset or 0))
+
+    filters = build_workspace_record_filters(search, workspace_id)
+
+    if query_text and settings.vector_search_enabled:
+        return await _vector_search(session, query_text, filters, offset, limit, settings)
+
+    if query_text:
+        return await _keyword_search(session, query_text, filters, offset, limit)
+
+    return await _listing_search(session, search, filters, offset, limit)
+
+
 def serialize_provenance_record(
     record: ProvenanceRecord,
     score: float | None = None,
-) -> dict:
+) -> dict[str, Any]:
     payload = dict(record.provenance_payload or {})
 
     payload.setdefault("id", str(record.uuid))
@@ -389,6 +477,12 @@ def serialize_provenance_record(
     payload.setdefault("filePath", record.file_path)
     payload.setdefault("fileUri", record.file_uri)
     payload.setdefault("insertedText", record.inserted_code)
+    payload.setdefault("insertedCode", record.inserted_code)
+    payload.setdefault("modelName", record.model_name)
+    payload.setdefault("riskScore", record.risk_score)
+    payload.setdefault("tokenCount", record.token_count)
+    payload.setdefault("costUsd", record.cost_usd)
+    payload.setdefault("isRedacted", record.is_redacted)
     payload.setdefault("contextSnapshot", record.context_snapshot)
     payload.setdefault("astSnapshot", record.ast_snapshot)
     payload.setdefault("embeddings", record.embeddings)
@@ -461,10 +555,19 @@ def to_nullable_string(value: object) -> str | None:
     return text if text else None
 
 
+_RISK_LEVEL_RANGES: dict[str, tuple[int, int]] = {
+    "critical": (85, 100),
+    "high": (65, 84),
+    "medium": (35, 64),
+    "low": (0, 34),
+}
+
+
 def build_workspace_record_filters(search: SearchRequest, workspace_id: str) -> list[object]:
     filters: list[object] = [ProvenanceRecord.workspace_id == workspace_id]
 
-    model_filter = (search.model or "").strip().lower()
+    # model name filter (supports both 'model' and 'model_name' fields)
+    model_filter = (getattr(search, "model_name", None) or search.model or "").strip().lower()
     if model_filter:
         filters.append(
             func.lower(func.coalesce(ProvenanceRecord.model_name, "")).like(f"%{model_filter}%")
@@ -491,6 +594,82 @@ def build_workspace_record_filters(search: SearchRequest, workspace_id: str) -> 
 
     if search.date_to:
         filters.append(ProvenanceRecord.timestamp_iso <= search.date_to)
+
+    # risk_level mapped to score ranges
+    risk_level = getattr(search, "risk_level", None)
+    if risk_level:
+        level_lower = risk_level.strip().lower()
+        if level_lower in _RISK_LEVEL_RANGES:
+            lo, hi = _RISK_LEVEL_RANGES[level_lower]
+            filters.append(ProvenanceRecord.risk_score >= lo)
+            filters.append(ProvenanceRecord.risk_score <= hi)
+
+    risk_min = getattr(search, "risk_min", None)
+    if risk_min is not None:
+        filters.append(ProvenanceRecord.risk_score >= risk_min)
+
+    risk_max = getattr(search, "risk_max", None)
+    if risk_max is not None:
+        filters.append(ProvenanceRecord.risk_score <= risk_max)
+
+    # file extension filter
+    file_extension = getattr(search, "file_extension", None)
+    if file_extension:
+        ext = file_extension.strip().lower()
+        if not ext.startswith("."):
+            ext = f".{ext}"
+        filters.append(
+            func.lower(ProvenanceRecord.file_path).like(f"%{ext}")
+        )
+
+    # capture_status — stored in context_snapshot->captureStatus or provenance_payload
+    capture_status = getattr(search, "capture_status", None)
+    if capture_status:
+        filters.append(
+            ProvenanceRecord.provenance_payload["captureStatus"].astext == capture_status
+        )
+
+    # agent_tool filter — from contextSnapshot->agentTool
+    agent_tool = getattr(search, "agent_tool", None)
+    if agent_tool:
+        filters.append(
+            ProvenanceRecord.context_snapshot["agentTool"].astext == agent_tool
+        )
+
+    # has_prompt
+    has_prompt = getattr(search, "has_prompt", None)
+    if has_prompt is True:
+        filters.append(ProvenanceRecord.prompt_messages.is_not(None))
+    elif has_prompt is False:
+        filters.append(ProvenanceRecord.prompt_messages.is_(None))
+
+    # is_redacted filter
+    is_redacted = getattr(search, "is_redacted", None)
+    if is_redacted is True:
+        filters.append(ProvenanceRecord.is_redacted.is_(True))
+    elif is_redacted is False:
+        filters.append(ProvenanceRecord.is_redacted.is_(False))
+
+    # tags filter — records that have ALL specified tags
+    tags = getattr(search, "tags", None)
+    if tags:
+        from sqlalchemy import Text, cast
+
+        clean_tags = [t.strip().lower() for t in tags if t.strip()]
+        for tag_val in clean_tags:
+            tag_subq = (
+                select(ProvenanceTag.record_uuid)
+                .where(
+                    and_(
+                        ProvenanceTag.workspace_id == workspace_id,
+                        ProvenanceTag.tag == tag_val,
+                    )
+                )
+                .scalar_subquery()
+            )
+            # ProvenanceTag.record_uuid is stored as String(64) (the UUID stringified),
+            # so cast ProvenanceRecord.uuid to text for the IN comparison.
+            filters.append(cast(ProvenanceRecord.uuid, Text).in_(tag_subq))
 
     return filters
 

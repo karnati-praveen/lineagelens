@@ -105,6 +105,43 @@
       {
         "command": "lineagelens.traceLine",
         "title": "Trace this line with LineageLens"
+      },
+      {
+        "command": "lineagelens.showProvenance",
+        "title": "LineageLens: Show Provenance"
+      },
+      {
+        "command": "lineagelens.checkConfiguration",
+        "title": "LineageLens: Check Configuration"
+      },
+      {
+        "command": "lineagelens.migrateToBackend",
+        "title": "LineageLens: Migrate Local Records to Backend"
+      },
+      {
+        "command": "lineagelens.showDiff",
+        "title": "LineageLens: Show Code Evolution Diff",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.flagRecord",
+        "title": "LineageLens: Flag Record",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.addToReview",
+        "title": "LineageLens: Add to Review Queue",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.explainRecord",
+        "title": "LineageLens: Explain Record",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.runOnboarding",
+        "title": "LineageLens: Run Setup Wizard",
+        "category": "LineageLens"
       }
     ],
     "keybindings": [
@@ -141,6 +178,11 @@
         {
           "id": "aiInsertionDetector.insightsDashboard",
           "name": "AI Governance Dashboard",
+          "icon": "lineagelens-media/icon.png"
+        },
+        {
+          "id": "lineagelens.fileTimeline",
+          "name": "File AI Timeline",
           "icon": "lineagelens-media/icon.png"
         }
       ]
@@ -187,6 +229,30 @@
         },
         {
           "command": "lineagelens.traceLine"
+        },
+        {
+          "command": "lineagelens.showProvenance"
+        },
+        {
+          "command": "lineagelens.checkConfiguration"
+        },
+        {
+          "command": "lineagelens.migrateToBackend"
+        },
+        {
+          "command": "lineagelens.showDiff"
+        },
+        {
+          "command": "lineagelens.flagRecord"
+        },
+        {
+          "command": "lineagelens.addToReview"
+        },
+        {
+          "command": "lineagelens.explainRecord"
+        },
+        {
+          "command": "lineagelens.runOnboarding"
         }
       ]
     },
@@ -368,20 +434,23 @@
           "type": "string",
           "enum": [
             "heuristic",
-            "openai-compatible"
+            "openai-compatible",
+            "openai",
+            "anthropic",
+            "ollama"
           ],
           "default": "heuristic",
-          "description": "Current-file reviewer mode: deterministic heuristic review or OpenAI-compatible LLM review."
+          "description": "Current-file reviewer provider. Use 'openai' for OpenAI, 'anthropic' for Anthropic Claude, 'ollama' for local Ollama, 'openai-compatible' for any OpenAI-compatible endpoint, or 'heuristic' for the built-in rule-based review."
         },
         "aiInsertionDetector.reviewer.apiUrl": {
           "type": "string",
           "default": "https://api.openai.com/v1/chat/completions",
-          "description": "OpenAI-compatible chat completions endpoint used by the current-file reviewer when reviewer.provider is openai-compatible."
+          "description": "Override the chat completions endpoint used by the reviewer. Leave empty to use the default for the selected provider."
         },
         "aiInsertionDetector.reviewer.model": {
           "type": "string",
           "default": "gpt-4o-mini",
-          "description": "Model name used by the current-file reviewer."
+          "description": "Model name used by the reviewer. Defaults: openai=gpt-4o-mini, anthropic=claude-haiku-4-5-20251001, ollama=llama3.2."
         },
         "aiInsertionDetector.reviewer.timeoutMs": {
           "type": "number",
@@ -389,6 +458,35 @@
           "minimum": 5000,
           "maximum": 120000,
           "description": "Timeout in milliseconds for reviewer API requests."
+        },
+        "lineagelens.reviewer.provider": {
+          "type": "string",
+          "enum": [
+            "heuristic",
+            "openai-compatible",
+            "openai",
+            "anthropic",
+            "ollama"
+          ],
+          "default": "heuristic",
+          "description": "Reviewer provider (lineagelens namespace). Overrides aiInsertionDetector.reviewer.provider when set."
+        },
+        "lineagelens.reviewer.model": {
+          "type": "string",
+          "default": "",
+          "description": "Model override for the reviewer (lineagelens namespace). Leave empty to use provider default."
+        },
+        "lineagelens.reviewer.ollamaUrl": {
+          "type": "string",
+          "default": "http://localhost:11434/api/chat",
+          "description": "Ollama API endpoint for the reviewer when lineagelens.reviewer.provider is 'ollama'."
+        },
+        "lineagelens.reviewer.timeoutMs": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 120000,
+          "description": "Timeout override (ms) for reviewer requests in the lineagelens namespace. Set to 0 to use aiInsertionDetector.reviewer.timeoutMs."
         }
       }
     }
@@ -426,10 +524,15 @@
     "publish:darwin-arm64": "npx @vscode/vsce publish --target darwin-arm64"
   },
   "dependencies": {
+    "http-proxy": "^1.18.1",
+    "neo4j-driver": "^6.0.1",
+    "simple-git": "^3.28.0",
     "tree-sitter": "^0.21.1",
     "tree-sitter-javascript": "^0.21.4",
     "tree-sitter-python": "^0.21.0",
-    "tree-sitter-typescript": "^0.21.2"
+    "tree-sitter-typescript": "^0.21.2",
+    "uuid": "^9.0.1",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/http-proxy": "^1.17.15",
@@ -438,12 +541,7 @@
     "@types/ws": "^8.5.13",
     "@types/vscode": "^1.90.0",
     "esbuild": "^0.25.3",
-    "http-proxy": "^1.18.1",
-    "neo4j-driver": "^6.0.1",
-    "simple-git": "^3.28.0",
     "tsx": "^4.19.4",
-    "typescript": "^5.6.2",
-    "uuid": "^9.0.1",
-    "ws": "^8.18.0"
+    "typescript": "^5.6.2"
   }
 }

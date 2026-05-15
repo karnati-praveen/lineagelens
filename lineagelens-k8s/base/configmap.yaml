@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lineagelens-config
+  namespace: lineagelens
+data:
+  BACKEND_MODE: "team"
+  NEO4J_ENABLED: "false"
+  VECTOR_SEARCH_ENABLED: "false"
+  APP_ENV: "production"
+  LOG_FORMAT: "json"
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_MAX_REQUESTS: "200"
+  RATE_LIMIT_WINDOW_SECONDS: "60"

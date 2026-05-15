@@ -28,6 +28,6 @@ foreach ($s in $scripts) {
 
 Write-Host ""
 Write-Host "Release $newVersion complete."
-Write-Host "  lineagelens-releases/base/lineagelens-base-$newVersion.zip"
+Write-Host "  lineagelens-releases/base/lineagelens-base-$newVersion.vsix  (VS Code extension)"
 Write-Host "  lineagelens-releases/plus/lineagelens-plus-$newVersion.zip"
 Write-Host "  lineagelens-releases/max/lineagelens-max-$newVersion.zip"

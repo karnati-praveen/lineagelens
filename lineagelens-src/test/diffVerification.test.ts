@@ -87,12 +87,12 @@ function buildCapturedCorrelation(
         { role: 'user', content: 'Edit this function.' }
       ],
     modelName: overrides.modelName ?? 'gpt-4o-mini',
-    parameters: { temperature: 0.2, ...(overrides.parameters ?? {}) },
+    parameters: { temperature: 0.2, ...overrides.parameters },
     targetHost: overrides.targetHost ?? 'api.openai.com',
     requestHeaders: {
       'user-agent': overrides.userAgent ?? 'test-agent/1.0',
       'x-request-id': overrides.requestUuid ?? '11111111-1111-4111-8111-111111111111',
-      ...(overrides.requestHeaders ?? {})
+      ...overrides.requestHeaders
     },
     systemPrompt: overrides.systemPrompt ?? 'You are a coding assistant.',
     rawModelResponse: overrides.rawModelResponse ?? 'Generated response',
@@ -125,7 +125,7 @@ const BEHAVIORAL_SNAPSHOT: BehavioralExpectation[] = [
       adapterName: 'cursor',
       toolName: 'Cursor',
       confidenceMin: 0.8,
-      confidenceMax: 1.0,
+      confidenceMax: 1,
       operationType: 'refactor',
       sessionKind: 'agentic',
       matchSource: 'adapter',
@@ -153,7 +153,7 @@ const BEHAVIORAL_SNAPSHOT: BehavioralExpectation[] = [
       adapterName: 'claude-code',
       toolName: 'Claude Code',
       confidenceMin: 0.9,
-      confidenceMax: 1.0,
+      confidenceMax: 1,
       operationType: 'test-fix',
       sessionKind: 'cli',
       matchSource: 'adapter',
@@ -176,7 +176,7 @@ const BEHAVIORAL_SNAPSHOT: BehavioralExpectation[] = [
       adapterName: 'copilot',
       toolName: 'GitHub Copilot',
       confidenceMin: 0.9,
-      confidenceMax: 1.0,
+      confidenceMax: 1,
       operationType: 'edit',
       sessionKind: 'assistant',
       matchSource: 'adapter',
@@ -198,7 +198,7 @@ const BEHAVIORAL_SNAPSHOT: BehavioralExpectation[] = [
       adapterName: 'aider',
       toolName: 'Aider',
       confidenceMin: 0.7,
-      confidenceMax: 1.0,
+      confidenceMax: 1,
       operationType: 'multi-file-run',
       sessionKind: 'agentic',
       matchSource: 'adapter',
@@ -220,7 +220,7 @@ const BEHAVIORAL_SNAPSHOT: BehavioralExpectation[] = [
       adapterName: 'codeium',
       toolName: 'Codeium',
       confidenceMin: 0.85,
-      confidenceMax: 1.0,
+      confidenceMax: 1,
       operationType: 'edit',
       sessionKind: 'agentic',
       matchSource: 'adapter',
@@ -243,7 +243,7 @@ const BEHAVIORAL_SNAPSHOT: BehavioralExpectation[] = [
       adapterName: 'continue',
       toolName: 'Continue',
       confidenceMin: 0.85,
-      confidenceMax: 1.0,
+      confidenceMax: 1,
       operationType: 'refactor',
       sessionKind: 'agentic',
       matchSource: 'adapter',
@@ -267,7 +267,7 @@ const BEHAVIORAL_SNAPSHOT: BehavioralExpectation[] = [
       adapterName: 'cody',
       toolName: 'Sourcegraph Cody',
       confidenceMin: 0.85,
-      confidenceMax: 1.0,
+      confidenceMax: 1,
       operationType: 'explain',
       sessionKind: 'agentic',
       matchSource: 'adapter',
@@ -291,7 +291,7 @@ const BEHAVIORAL_SNAPSHOT: BehavioralExpectation[] = [
       adapterName: 'amazon-q',
       toolName: 'Amazon Q Developer',
       confidenceMin: 0.9,
-      confidenceMax: 1.0,
+      confidenceMax: 1,
       operationType: 'edit',
       sessionKind: 'assistant',
       matchSource: 'adapter',
@@ -314,7 +314,7 @@ const BEHAVIORAL_SNAPSHOT: BehavioralExpectation[] = [
       adapterName: 'gemini-cli',
       toolName: 'Gemini CLI',
       confidenceMin: 0.9,
-      confidenceMax: 1.0,
+      confidenceMax: 1,
       operationType: 'edit',
       sessionKind: 'cli',
       matchSource: 'adapter',
@@ -336,7 +336,7 @@ const BEHAVIORAL_SNAPSHOT: BehavioralExpectation[] = [
       adapterName: 'codex-cli',
       toolName: 'OpenAI Codex CLI',
       confidenceMin: 0.85,
-      confidenceMax: 1.0,
+      confidenceMax: 1,
       operationType: 'edit',
       sessionKind: 'cli',
       matchSource: 'adapter',
@@ -414,13 +414,12 @@ test('diff-based verification: all behavioral snapshots match', () => {
   for (const entry of BEHAVIORAL_SNAPSHOT) {
     const actual = registry.detect(buildInput(entry.input));
 
-    if (!actual) {
+    if (actual) {
+      const diffs = diffResult(entry.scenario, actual, entry.expected);
+      allDiffs.push(...diffs);
+    } else {
       allDiffs.push(`[${entry.scenario}] registry returned null — expected adapter "${entry.expected.adapterName}"`);
-      continue;
     }
-
-    const diffs = diffResult(entry.scenario, actual, entry.expected);
-    allDiffs.push(...diffs);
   }
 
   if (allDiffs.length > 0) {
@@ -440,7 +439,7 @@ test('diff-based verification: no adapter returns confidence > 1.0 for any snaps
     if (!actual) continue;
 
     assert.ok(
-      actual.confidence <= 1.0,
+      actual.confidence <= 1,
       `[${entry.scenario}] confidence ${actual.confidence} exceeds 1.0 — clampConfidence is broken`
     );
     assert.ok(

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "lineagelens.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lineagelens.labels" . | nindent 4 }}
+data:
+  BACKEND_MODE: {{ .Values.config.backendMode | quote }}
+  NEO4J_ENABLED: {{ .Values.config.neo4jEnabled | quote }}
+  VECTOR_SEARCH_ENABLED: {{ .Values.config.vectorSearchEnabled | quote }}
+  APP_ENV: {{ .Values.config.appEnv | quote }}
+  LOG_FORMAT: {{ .Values.config.logFormat | quote }}
+  RATE_LIMIT_ENABLED: {{ .Values.config.rateLimitEnabled | quote }}
+  RATE_LIMIT_MAX_REQUESTS: {{ .Values.config.rateLimitMaxRequests | quote }}
+  RATE_LIMIT_WINDOW_SECONDS: {{ .Values.config.rateLimitWindowSeconds | quote }}

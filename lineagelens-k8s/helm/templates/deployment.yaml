@@ -1,0 +1,103 @@
+{{- define "lineagelens.fullname" -}}
+{{- printf "%s" .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "lineagelens.labels" -}}
+helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+app.kubernetes.io/name: lineagelens
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lineagelens.fullname" . }}-backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lineagelens.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ include "lineagelens.fullname" . }}-backend
+  template:
+    metadata:
+      labels:
+        app: {{ include "lineagelens.fullname" . }}-backend
+        {{- include "lineagelens.labels" . | nindent 8 }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: backend
+          image: "{{ .Values.image.backend.repository }}:{{ .Values.image.backend.tag }}"
+          imagePullPolicy: {{ .Values.image.backend.pullPolicy }}
+          ports:
+            - containerPort: 8787
+              name: http
+          envFrom:
+            - configMapRef:
+                name: {{ include "lineagelens.fullname" . }}-config
+            - secretRef:
+                name: {{ include "lineagelens.fullname" . }}-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8787
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8787
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources.backend | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lineagelens.fullname" . }}-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lineagelens.labels" . | nindent 4 }}
+    app.kubernetes.io/component: proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "lineagelens.fullname" . }}-proxy
+  template:
+    metadata:
+      labels:
+        app: {{ include "lineagelens.fullname" . }}-proxy
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: proxy
+          image: "{{ .Values.image.proxy.repository }}:{{ .Values.image.proxy.tag }}"
+          imagePullPolicy: {{ .Values.image.proxy.pullPolicy }}
+          ports:
+            - containerPort: 8788
+              name: http
+          env:
+            - name: LINEAGELENS_BACKEND_URL
+              value: "http://{{ include "lineagelens.fullname" . }}-backend:8787"
+          envFrom:
+            - secretRef:
+                name: {{ include "lineagelens.fullname" . }}-secrets
+          resources:
+            {{- toYaml .Values.resources.proxy | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

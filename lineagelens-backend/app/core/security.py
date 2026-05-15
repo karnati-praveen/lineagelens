@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64
 import hashlib
 import hmac
@@ -334,11 +336,80 @@ def _match_protocol_to_token(protocol: str, index: int, protocols: list[str]) ->
     return None
 
 
+def require_role(*roles: str):
+    """Dependency factory that accepts a list of allowed roles and raises 403 if user role is not in the list.
+
+    Valid roles: "admin", "member", "reviewer", "viewer"
+    "admin" implicitly satisfies any role requirement.
+
+    Usage:
+        @router.delete("/...", dependencies=[Depends(require_role("admin"))])
+        async def handler(auth: AuthContext = Depends(require_role("admin", "reviewer"))): ...
+    """
+    allowed = set(roles)
+
+    async def _check(
+        auth: AuthContext = Depends(get_current_auth_context),
+        session: AsyncSession = Depends(get_db_session),
+    ) -> AuthContext:
+        try:
+            user_id = PyUUID(auth.subject)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.")
+
+        from sqlalchemy import select as sa_select
+        from app.db.models import UserAccount  # local import to avoid circular dependency
+
+        result = await session.execute(
+            sa_select(UserAccount.role, UserAccount.is_active).where(UserAccount.id == user_id)
+        )
+        row = result.one_or_none()
+        if row is None or not row.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Account not found or inactive.",
+            )
+        # admin can always proceed
+        if row.role == "admin":
+            return auth
+        if row.role not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Required role(s): {', '.join(sorted(allowed))}. Your role: {row.role}.",
+            )
+        return auth
+
+    return _check
+
+
+async def require_admin(
+    auth: AuthContext = Depends(get_current_auth_context),
+    session: AsyncSession = Depends(get_db_session),
+) -> AuthContext:
+    """Dependency that raises 403 unless the authenticated user has admin role."""
+    try:
+        user_id = PyUUID(auth.subject)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.")
+
+    from sqlalchemy import select as sa_select
+    from app.db.models import UserAccount  # local import to avoid circular dependency
+    result = await session.execute(
+        sa_select(UserAccount.role, UserAccount.is_active).where(UserAccount.id == user_id)
+    )
+    row = result.one_or_none()
+    if row is None or not row.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account not found or inactive.")
+    if row.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required.")
+    return auth
+
+
 def ensure_workspace_scope(auth: AuthContext, workspace_id: str | None) -> None:
-    if workspace_id and workspace_id != auth.workspace_id:
+    if workspace_id is not None and workspace_id != auth.workspace_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Workspace scope mismatch.",
+            detail="Workspace mismatch: cannot access a different workspace.",
         )
 
 

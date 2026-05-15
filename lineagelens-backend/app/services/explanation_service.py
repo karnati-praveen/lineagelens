@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -161,17 +163,25 @@ async def _try_generate_with_llm(record: dict[str, Any], settings: Settings) -> 
         ],
     }
 
-    try:
-        return await asyncio.to_thread(
-            _call_llm_sync,
-            settings.explain_llm_api_url,
-            api_key,
-            request_body,
-            settings.explain_llm_timeout_seconds,
-        )
-    except Exception as error:
-        logger.warning("LLM explanation generation failed, falling back to heuristic: %s", error)
-        return None
+    result: str | None = None
+    for attempt in range(3):
+        try:
+            result = await asyncio.to_thread(
+                _call_llm_sync,
+                settings.explain_llm_api_url,
+                api_key,
+                request_body,
+                settings.explain_llm_timeout_seconds,
+            )
+            break
+        except Exception as exc:
+            if attempt == 2:
+                logger.warning("LLM explain failed after 3 attempts, using heuristic: %s", exc)
+                result = None
+                break
+            await asyncio.sleep(2 ** attempt)  # 1s, 2s
+
+    return result
 
 
 def _call_llm_sync(
@@ -286,9 +296,33 @@ def _heuristic_explanation(record: dict[str, Any]) -> str:
         )
 
     if lineage:
-        summary_parts.append(
-            "Lineage history indicates this block may have evolved from earlier generated versions rather than being entirely new."
-        )
+        # Count prior versions and surface the earliest insertion date if available
+        lineage_versions: list[Any] = lineage if isinstance(lineage, list) else []
+        prior_count = max(0, len(lineage_versions) - 1)
+        earliest_date: str | None = None
+        if lineage_versions:
+            first_entry = lineage_versions[0]
+            if isinstance(first_entry, dict):
+                earliest_date = str(
+                    first_entry.get("createdAt")
+                    or first_entry.get("timestamp")
+                    or first_entry.get("insertionTimestampIso")
+                    or ""
+                ) or None
+
+        if prior_count > 0 and earliest_date:
+            summary_parts.append(
+                f"This code has {prior_count} prior AI-generated version(s) in the lineage chain. "
+                f"It evolved from an earlier insertion on {earliest_date[:10]}."
+            )
+        elif prior_count > 0:
+            summary_parts.append(
+                f"This code has {prior_count} prior AI-generated version(s) in the lineage chain."
+            )
+        else:
+            summary_parts.append(
+                "Lineage history indicates this block may have evolved from earlier generated versions rather than being entirely new."
+            )
 
     if not summary_parts:
         summary_parts.append(

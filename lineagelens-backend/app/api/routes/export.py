@@ -1,22 +1,30 @@
+from __future__ import annotations
+
+import asyncio
 import csv
 import io
+import logging
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID as PyUUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import AuthContext, get_current_auth_context
+from app.core.audit import log_audit_event
+from app.core.security import AuthContext, ensure_workspace_scope, get_current_auth_context
 from app.db.models import ProvenanceRecord, UserAccount
 from app.db.session import get_db_session
+from app.services.export_service import ExportJob, cleanup_old_jobs, new_job, run_export_job
 from app.services.provenance_service import build_workspace_record_filters, serialize_provenance_record
 from app.schemas.provenance import SearchRequest
 
 
 router = APIRouter(tags=["export"])
+logger = logging.getLogger(__name__)
 
 MAX_EXPORT_ROWS = 10_000
 
@@ -100,9 +108,14 @@ async def export_audit_report(
     date_to: Annotated[str | None, Query(alias="dateTo")] = None,
     developer: Annotated[str | None, Query()] = None,
     file_path: Annotated[str | None, Query(alias="filePath")] = None,
-) -> StreamingResponse:
+    format: Annotated[str, Query()] = "csv",
+) -> StreamingResponse | JSONResponse:
+    try:
+        caller_uuid = PyUUID(auth.subject)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.")
     role_result = await session.execute(
-        select(UserAccount.role).where(UserAccount.id == PyUUID(auth.subject))
+        select(UserAccount.role).where(UserAccount.id == caller_uuid)
     )
     current_role = role_result.scalar_one_or_none()
     if current_role != "admin":
@@ -132,6 +145,35 @@ async def export_audit_report(
     if developer:
         records = _filter_records_by_developer(records, developer)
 
+    record_count = len(records)
+    fmt = format.strip().lower()
+
+    logger.info(
+        "AUDIT_EXPORT workspace=%s user=%s date_from=%s date_to=%s record_count=%d format=%s",
+        auth.workspace_id,
+        str(auth.subject),
+        date_from,
+        date_to,
+        record_count,
+        fmt,
+    )
+
+    audit_action = "export.json" if fmt == "json" else "export.audit"
+    await log_audit_event(
+        session,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        action=audit_action,
+        details={"record_count": record_count, "format": fmt, "date_from": date_from, "date_to": date_to},
+    )
+    await session.flush()
+
+    if fmt == "json":
+        return JSONResponse(
+            content={"results": records, "count": record_count},
+            headers={"X-Record-Count": str(record_count)},
+        )
+
     output = io.StringIO()
     writer = csv.writer(output, quoting=csv.QUOTE_ALL)
     writer.writerow([
@@ -150,6 +192,134 @@ async def export_audit_report(
         media_type="text/csv",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
-            "X-Record-Count": str(len(records)),
+            "X-Record-Count": str(record_count),
         },
+    )
+
+
+class AsyncExportRequest(BaseModel):
+    workspace_id: str = Field(..., alias="workspaceId")
+    format: str = Field(default="json")  # json, csv, parquet
+    date_from: str | None = Field(default=None, alias="dateFrom")
+    date_to: str | None = Field(default=None, alias="dateTo")
+    model_name: str | None = Field(default=None, alias="modelName")
+    limit: int = Field(default=1000, ge=1, le=10000)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+@router.post("/export/async", status_code=status.HTTP_202_ACCEPTED)
+async def start_async_export(
+    payload: AsyncExportRequest,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+) -> dict:
+    """Start a background export job. Returns job_id for polling."""
+    ensure_workspace_scope(auth, payload.workspace_id)
+
+    fmt = payload.format.strip().lower()
+    if fmt not in {"json", "csv", "parquet"}:
+        raise HTTPException(status_code=400, detail="format must be 'json', 'csv', or 'parquet'.")
+
+    # Fetch records now (before background task)
+    from datetime import timezone
+
+    filters = [ProvenanceRecord.workspace_id == auth.workspace_id]
+    if payload.date_from:
+        try:
+            filters.append(
+                ProvenanceRecord.timestamp_iso
+                >= datetime.fromisoformat(payload.date_from).replace(tzinfo=timezone.utc)
+            )
+        except ValueError:
+            pass
+    if payload.date_to:
+        try:
+            filters.append(
+                ProvenanceRecord.timestamp_iso
+                <= datetime.fromisoformat(payload.date_to).replace(tzinfo=timezone.utc)
+            )
+        except ValueError:
+            pass
+    if payload.model_name:
+        filters.append(ProvenanceRecord.model_name == payload.model_name)
+
+    result = await session.execute(
+        select(ProvenanceRecord)
+        .where(and_(*filters))
+        .order_by(ProvenanceRecord.timestamp_iso.desc())
+        .limit(payload.limit)
+    )
+    records = [serialize_provenance_record(r) for r in result.scalars().all()]
+
+    # Get or create jobs store on app.state
+    jobs_store: dict = getattr(request.app.state, "export_jobs", None)
+    if jobs_store is None:
+        request.app.state.export_jobs = {}
+        jobs_store = request.app.state.export_jobs
+
+    # Cleanup old jobs opportunistically
+    cleanup_old_jobs(jobs_store)
+
+    job = new_job()
+    jobs_store[job.job_id] = job
+
+    # Fire and forget
+    asyncio.create_task(run_export_job(job, records, fmt, jobs_store))
+
+    return {
+        "jobId": job.job_id,
+        "status": job.status,
+        "format": fmt,
+        "recordCount": len(records),
+    }
+
+
+@router.get("/export/jobs/{job_id}")
+async def get_export_job_status(
+    job_id: str,
+    request: Request,
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+) -> dict:
+    """Poll export job status."""
+    jobs_store: dict = getattr(request.app.state, "export_jobs", {})
+    job = jobs_store.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Export job not found.")
+
+    return {
+        "jobId": job.job_id,
+        "status": job.status,
+        "filename": job.filename,
+        "error": job.error,
+        "createdAt": job.created_at,
+        "completedAt": job.completed_at,
+    }
+
+
+@router.get("/export/jobs/{job_id}/download")
+async def download_export_job(
+    job_id: str,
+    request: Request,
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+):
+    """Download a completed export job result."""
+    from fastapi.responses import Response
+
+    jobs_store: dict = getattr(request.app.state, "export_jobs", {})
+    job = jobs_store.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Export job not found.")
+    if job.status in {"pending", "running"}:
+        raise HTTPException(status_code=202, detail="Export job is still in progress.")
+    if job.status == "failed":
+        raise HTTPException(status_code=500, detail=f"Export job failed: {job.error}")
+    if not job.result_bytes:
+        raise HTTPException(status_code=500, detail="Export job produced no output.")
+
+    return Response(
+        content=job.result_bytes,
+        media_type=job.result_content_type,
+        headers={"Content-Disposition": f'attachment; filename="{job.filename}"'},
     )

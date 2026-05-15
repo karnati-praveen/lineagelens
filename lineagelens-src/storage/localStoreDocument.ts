@@ -85,16 +85,18 @@ export function sanitizeStoreDocument(value: unknown): LocalStoreDocument {
 export function buildSearchText(record: ProvenanceRecord): string {
   const parts: string[] = [];
 
-  parts.push(record.uuid);
-  parts.push(record.file.path);
-  parts.push(record.file.languageId);
-  parts.push(record.repository.gitBranch ?? '');
-  parts.push(stringify(record.prompt.modelName));
-  parts.push(stringify(record.prompt.fullMessages));
-  parts.push(record.insertion.extractedInsertedCodeBlock);
-  parts.push(record.insertion.surroundingContext.before);
-  parts.push(record.insertion.surroundingContext.after);
-  parts.push(stringify(record.contextSnapshot));
+  parts.push(
+    record.uuid,
+    record.file.path,
+    record.file.languageId,
+    record.repository.gitBranch ?? '',
+    stringify(record.prompt.modelName),
+    stringify(record.prompt.fullMessages),
+    record.insertion.extractedInsertedCodeBlock,
+    record.insertion.surroundingContext.before,
+    record.insertion.surroundingContext.after,
+    stringify(record.contextSnapshot)
+  );
 
   return parts.join('\n').toLowerCase();
 }
@@ -141,7 +143,7 @@ function stringify(value: unknown): string {
     return String(value);
   }
 
-  if (value === null || typeof value === 'undefined') {
+  if (value === null || value === undefined) {
     return 'n/a';
   }
 
@@ -158,7 +160,7 @@ function toNonEmptyString(value: unknown): string | undefined {
     return trimmed.length > 0 ? trimmed : undefined;
   }
 
-  if (value === null || typeof value === 'undefined') {
+  if (value === null || value === undefined) {
     return undefined;
   }
 

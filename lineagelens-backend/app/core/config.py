@@ -1,10 +1,11 @@
+from __future__ import annotations
+
 from functools import lru_cache
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-DEFAULT_PGVECTOR_DIMENSION = 256
 DEFAULT_BACKEND_MODE = "team"
 DISALLOWED_JWT_SECRETS = {
     "",
@@ -30,7 +31,7 @@ DISALLOWED_PRODUCTION_PASSWORDS = {
 
 class Settings(BaseSettings):
     app_env: str = Field(default="development", alias="APP_ENV")
-    app_title: str = Field(default="AI Provenance Backend", alias="APP_TITLE")
+    app_title: str = Field(default="LineageLens", alias="APP_TITLE")
     app_version: str = Field(default="0.1.0", alias="APP_VERSION")
 
     backend_mode: str = Field(default=DEFAULT_BACKEND_MODE, alias="BACKEND_MODE")
@@ -38,12 +39,14 @@ class Settings(BaseSettings):
     vector_search_enabled: bool = Field(default=False, alias="VECTOR_SEARCH_ENABLED")
     lineage_strict_mode: bool = Field(default=False, alias="LINEAGE_STRICT_MODE")
 
+    # Defaults to SQLite (lite mode). Override with postgresql+asyncpg://... for Postgres.
     database_url: str = Field(
-        default="postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/provenance",
+        default="sqlite+aiosqlite:///./data/lineagelens.db",
         alias="DATABASE_URL",
     )
-    pgvector_dimension: int = Field(default=DEFAULT_PGVECTOR_DIMENSION, alias="PGVECTOR_DIMENSION")
+    pgvector_dimension: int = Field(default=256, alias="PGVECTOR_DIMENSION")
 
+    # Connection pool settings (ignored for SQLite)
     db_pool_size: int = Field(default=10, alias="DB_POOL_SIZE")
     db_max_overflow: int = Field(default=20, alias="DB_MAX_OVERFLOW")
     db_pool_timeout_seconds: int = Field(default=30, alias="DB_POOL_TIMEOUT_SECONDS")
@@ -114,6 +117,10 @@ class Settings(BaseSettings):
     )
 
     @property
+    def is_sqlite(self) -> bool:
+        return self.database_url.startswith("sqlite")
+
+    @property
     def cors_origins(self) -> list[str]:
         origins = [entry.strip() for entry in self.backend_cors_origins.split(",") if entry.strip()]
         return list(dict.fromkeys(origins))
@@ -137,18 +144,18 @@ class Settings(BaseSettings):
 
     @property
     def product_mode(self) -> str:
+        if self.is_sqlite:
+            return "lite"
         return {"solo": "base", "enterprise": "max", "full": "max"}.get(self.backend_mode, "plus")
 
     @field_validator("backend_mode")
     @classmethod
     def validate_backend_mode(cls, value: str) -> str:
         mode = value.strip().lower()
-        # "basic" and "full" are legacy aliases kept for backward compatibility
         aliases = {"basic": "team", "full": "enterprise"}
         mode = aliases.get(mode, mode)
         if mode not in {"solo", "team", "enterprise"}:
             raise ValueError("BACKEND_MODE must be 'solo', 'team', or 'enterprise'.")
-
         return mode
 
     @field_validator("jwt_secret_key")
@@ -157,20 +164,9 @@ class Settings(BaseSettings):
         secret = value.strip()
         if secret.lower() in DISALLOWED_JWT_SECRETS:
             raise ValueError("JWT_SECRET_KEY must be set to a strong, non-default value.")
-
         if len(secret) < 32:
             raise ValueError("JWT_SECRET_KEY must be at least 32 characters long.")
-
         return secret
-
-    @field_validator("pgvector_dimension")
-    @classmethod
-    def validate_pgvector_dimension(cls, value: int) -> int:
-        if value != DEFAULT_PGVECTOR_DIMENSION:
-            raise ValueError(
-                f"PGVECTOR_DIMENSION must be {DEFAULT_PGVECTOR_DIMENSION} to match the database schema."
-            )
-        return value
 
     @field_validator("http_max_body_bytes", "ws_max_message_bytes")
     @classmethod

@@ -5,7 +5,7 @@
     "lib": [
       "ES2022"
     ],
-    "outDir": "out",
+    "outDir": "dist",
     "rootDir": "lineagelens-src",
     "sourceMap": true,
     "strict": true,

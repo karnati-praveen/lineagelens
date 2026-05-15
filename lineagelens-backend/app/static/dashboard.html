@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LineageLens Dashboard</title>
+<title>LineageLens Governance Dashboard</title>
 <style>
 :root {
   --bg:#0f1923; --bg2:#162232; --bg3:#1e3048; --accent:#3b82f6; --accent2:#60a5fa;
@@ -66,6 +66,7 @@ button.full{width:100%;justify-content:center;padding:10px}
 .mval.warn{color:var(--warn)}
 .mval.ok{color:var(--ok)}
 .mval.accent{color:var(--accent2)}
+.msublabel{font-size:11px;color:var(--text2);margin-top:4px}
 
 /* ── Compliance grid ── */
 .cgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin-bottom:24px}
@@ -90,10 +91,11 @@ tr:hover td{background:rgba(255,255,255,.02)}
 
 /* ── Risk ── */
 .rsk{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
-.rsk.critical{background:rgba(239,68,68,.25);color:#fca5a5}
-.rsk.high{background:rgba(239,68,68,.18);color:#fca5a5}
-.rsk.medium{background:rgba(245,158,11,.18);color:#fcd34d}
-.rsk.low{background:rgba(34,197,94,.18);color:#86efac}
+/* contrast-fixed: text colors darkened to meet WCAG 4.5:1 (was pastel ~3:1) */
+.rsk.critical{background:rgba(239,68,68,.25);color:#b91c1c}
+.rsk.high{background:rgba(239,68,68,.18);color:#b91c1c}
+.rsk.medium{background:rgba(245,158,11,.18);color:#92400e}
+.rsk.low{background:rgba(34,197,94,.18);color:#166534}
 
 /* ── Filters ── */
 .filters{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;margin-bottom:18px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
@@ -101,11 +103,28 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .ff label{margin-bottom:0}
 .ff input,.ff select{padding:7px 10px;font-size:13px}
 
+/* ── Advanced filter panel ── */
+.adv-filter-panel{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;margin-bottom:18px}
+.adv-filter-panel h4{font-size:13px;font-weight:600;margin-bottom:12px;color:var(--text)}
+.adv-filter-row{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.adv-filter-check{display:flex;align-items:center;gap:6px;padding-bottom:2px}
+.adv-filter-check input{width:auto}
+.adv-filter-actions{display:flex;gap:8px;margin-top:12px}
+
 /* ── Search results ── */
 .ritem{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:10px;cursor:pointer;transition:border-color .15s}
 .ritem:hover{border-color:var(--accent)}
 .rmeta{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;font-size:12px;color:var(--text2)}
 .code-snip{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);padding:4px 8px;border-radius:4px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;margin-top:6px}
+
+/* ── Tags ── */
+.tag-pill{background:#e3f2fd;color:#1565c0;border-radius:12px;padding:2px 8px;font-size:11px;margin-right:4px;display:inline-block}
+.tags-row{margin-top:6px}
+
+/* ── Pagination ── */
+.pagination{display:flex;align-items:center;gap:12px;padding:12px 0;margin-top:8px;flex-wrap:wrap}
+.pagination #pageInfo{font-size:12px;color:var(--text2)}
+.pagination select{width:auto;padding:5px 8px;font-size:12px}
 
 /* ── Record ── */
 .rsec{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);margin-bottom:14px;overflow:hidden}
@@ -124,9 +143,10 @@ pre{background:var(--bg3);border:1px solid var(--border);border-radius:6px;paddi
 
 /* ── Alerts ── */
 .al{padding:11px 14px;border-radius:var(--r);margin-bottom:14px;font-size:13px}
-.al.err{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.35);color:#fca5a5}
-.al.ok{background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.35);color:#86efac}
-.al.info{background:rgba(59,130,246,.15);border:1px solid rgba(59,130,246,.35);color:#93c5fd}
+/* contrast-fixed: alert text colors darkened to meet WCAG 4.5:1 on semi-transparent backgrounds */
+.al.err{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.35);color:#b91c1c}
+.al.ok{background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.35);color:#166534}
+.al.info{background:rgba(59,130,246,.15);border:1px solid rgba(59,130,246,.35);color:#1d4ed8}
 
 /* ── Loading / empty ── */
 .spin{display:inline-block;width:15px;height:15px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite}
@@ -187,16 +207,56 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
 .feed-snip{font-family:'Courier New',monospace;font-size:11px;color:var(--text2);grid-column:2;grid-row:2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .feed-view{padding:3px 10px;font-size:11px;grid-column:3;grid-row:1}
 .feed-controls{display:flex;gap:8px;align-items:center;margin-bottom:14px}
+
+/* ── Data source badge ── */
+.data-source-bar{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+.ds-badge{padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;letter-spacing:.04em}
+.ds-badge.backend{background:rgba(34,197,94,.2);border:1px solid rgba(34,197,94,.5);color:#166534}
+.ds-badge.cached{background:rgba(245,158,11,.2);border:1px solid rgba(245,158,11,.5);color:#92400e}
+.ds-badge.unavailable{background:rgba(239,68,68,.2);border:1px solid rgba(239,68,68,.5);color:#b91c1c}
+.ds-updated{font-size:11px;color:#595959}
+
+/* ── Trend / model-usage sections ── */
+.trend-section{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:20px;margin-bottom:20px}
+.trend-section h2{font-size:14px;font-weight:600;margin-bottom:14px;color:var(--text)}
+
+/* ── New feature styles ── */
+.policy-card{display:flex;align-items:center;gap:12px;padding:8px 12px;border-radius:4px;background:var(--bg3);margin-bottom:6px;flex-wrap:wrap}
+.policy-name{font-weight:600;flex:1;font-size:13px}
+.badge{background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600}
+.badge-block{background:rgba(239,68,68,.2);border-color:var(--danger);color:#b91c1c}
+.badge-flag{background:rgba(245,158,11,.2);border-color:var(--warn);color:#92400e}
+.badge-alert{background:rgba(59,130,246,.2);border-color:var(--accent);color:#1d4ed8}
+.badge-pending{background:rgba(245,158,11,.2);border-color:var(--warn);color:#92400e}
+.badge-approved{background:rgba(34,197,94,.2);border-color:var(--ok);color:#166534}
+.badge-rejected{background:rgba(239,68,68,.2);border-color:var(--danger);color:#b91c1c}
+.badge-deferred{background:rgba(148,163,184,.2);border-color:var(--text2);color:var(--text2)}
+.new-form-row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px}
+.new-form-row label{display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:500;text-transform:none;letter-spacing:0}
+.hint-text{font-size:12px;color:var(--text2);margin-bottom:8px}
+.btn-sm{padding:3px 8px;font-size:11px;border-radius:3px;cursor:pointer;background:var(--bg3);border:1px solid var(--border);color:var(--text);display:inline-flex;align-items:center;gap:4px}
+.btn-sm:hover{opacity:.82}
+.btn-danger{background:rgba(239,68,68,.15);color:#b91c1c;border-color:var(--danger)}
+.text-success{color:var(--ok)}
+.text-muted{color:var(--text2)}
+.data-table{width:100%;border-collapse:collapse;font-size:13px}
+.data-table th,.data-table td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--border)}
+.data-table th{background:var(--bg3);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text2)}
+.data-table tr:hover td{background:rgba(255,255,255,.02)}
+.export-async-section{margin-top:20px;padding:16px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r)}
+.mgrid-section{margin-top:20px;padding:16px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r)}
+.mgrid-section h3{font-size:14px;font-weight:600;margin-bottom:14px;color:var(--text)}
+.placeholder{color:var(--text2);font-size:13px;padding:16px 0}
 </style>
 </head>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" integrity="sha384-oqVuAfXRKap7fdgcCY5uykM6+R9GqQ8K/uxy9rx7HNQlGYl1kPzQho1wx4JwY8wC" crossorigin="anonymous"></script>
 <body>
 
 <!-- LOGIN -->
 <div id="v-login" class="login-wrap">
   <div class="login-card">
     <div class="login-logo"><h1>Lineage<span>Lens</span></h1><p>AI Code Provenance Dashboard</p></div>
-    <div id="al-login"></div>
+    <div id="al-login" role="status" aria-live="polite"></div>
     <div class="field"><label for="l-ws">Workspace ID</label><input id="l-ws" type="text" placeholder="your-workspace" autocomplete="off"></div>
     <div class="field"><label for="l-user">Username</label><input id="l-user" type="text" placeholder="username" autocomplete="username"></div>
     <div class="field"><label for="l-pass">Password</label><input id="l-pass" type="password" placeholder="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
@@ -209,7 +269,7 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
 <div id="v-reg" class="login-wrap" style="display:none">
   <div class="login-card">
     <div class="login-logo"><h1>Lineage<span>Lens</span></h1><p>Create Account</p></div>
-    <div id="al-reg"></div>
+    <div id="al-reg" role="status" aria-live="polite"></div>
     <div class="field"><label for="r-ws">Workspace ID</label><input id="r-ws" type="text" placeholder="your-workspace"></div>
     <div class="field"><label for="r-user">Username</label><input id="r-user" type="text" placeholder="username"></div>
     <div class="field"><label for="r-pass">Password</label><input id="r-pass" type="password" placeholder="min 8 characters" onkeydown="if(event.key==='Enter')doRegister()"></div>
@@ -222,61 +282,152 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
 <div id="v-app" class="app" style="display:none">
   <div class="topbar">
     <div class="brand">Lineage<span>Lens</span></div>
-    <nav class="topbar-nav">
+    <nav class="topbar-nav" aria-label="Main navigation">
       <button class="tab on" data-t="dashboard" onclick="go('dashboard')">Dashboard</button>
       <button class="tab" data-t="timeline" onclick="go('timeline')">Timeline</button>
       <button class="tab" data-t="graph" onclick="go('graph')">Graph</button>
-      <button class="tab" data-t="alerts" onclick="go('alerts')">Live Feed<span id="alert-badge" class="tab-badge"></span></button>
+      <button class="tab" data-t="alerts" onclick="go('alerts')">Live Feed<span id="alert-badge" class="tab-badge" aria-label="New alerts"></span></button>
       <button class="tab" data-t="search" onclick="go('search')">Search</button>
       <button class="tab" data-t="record" onclick="go('record')">Record Viewer</button>
       <button class="tab adm-tab" data-t="export" onclick="go('export')" style="display:none">Export</button>
       <button class="tab adm-tab" data-t="team" onclick="go('team')" style="display:none">Team</button>
+      <button class="tab adm-tab" data-t="developers" onclick="go('developers')" style="display:none">Developers</button>
+      <button class="tab adm-tab" data-t="reviews" onclick="go('reviews')" style="display:none">Reviews</button>
+      <button class="tab adm-tab" data-t="github" onclick="go('github')" style="display:none">GitHub CI</button>
+      <button class="tab" data-t="quality" onclick="go('quality')">Quality</button>
+      <button class="tab adm-tab" data-t="scheduled-reports" onclick="go('scheduled-reports')" style="display:none">Digests</button>
+      <button class="tab adm-tab" data-t="sso" onclick="go('sso')" style="display:none">SSO</button>
+      <button class="tab" data-t="workspace" onclick="go('workspace')">Workspace</button>
     </nav>
     <div class="topbar-right">
-      <div class="mcp-wrap" title="Backend connection status"><div id="mcp-dot" class="mcp-dot"></div><span>MCP</span></div>
+      <div class="mcp-wrap" title="Backend connection status"><div id="mcp-dot" class="mcp-dot" aria-label="MCP connection status"></div><span>MCP</span></div>
       <span id="mode-bdg" class="bdg plus">plus</span>
       <span id="role-bdg" class="bdg"></span>
       <span id="uname" style="color:var(--text)"></span>
-      <button id="theme-btn" class="theme-btn" onclick="toggleTheme()" title="Toggle light/dark">☀️</button>
-      <button class="s" style="padding:5px 12px;font-size:12px" onclick="doLogout()">Sign Out</button>
+      <button id="theme-btn" class="theme-btn" onclick="toggleTheme()" aria-label="Toggle light/dark theme">☀️</button>
+      <button class="s" style="padding:5px 12px;font-size:12px" onclick="doLogout()" aria-label="Sign out">Sign Out</button>
     </div>
   </div>
 
-  <div class="content">
+  <div class="content" role="main">
 
     <!-- DASHBOARD -->
     <div id="t-dashboard" class="view on">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
         <div class="stitle">Governance Overview</div>
         <div style="display:flex;gap:8px;align-items:center">
-          <input id="d-from" type="date" style="padding:6px 10px;font-size:12px;width:145px">
-          <input id="d-to" type="date" style="padding:6px 10px;font-size:12px;width:145px">
-          <button class="s" style="padding:6px 14px;font-size:12px" onclick="loadDash()">Refresh</button>
+          <label for="d-from" style="display:inline;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text2)">From</label>
+          <input id="d-from" type="date" style="padding:6px 10px;font-size:12px;width:145px" aria-label="Dashboard date from">
+          <label for="d-to" style="display:inline;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text2)">To</label>
+          <input id="d-to" type="date" style="padding:6px 10px;font-size:12px;width:145px" aria-label="Dashboard date to">
+          <button class="s" style="padding:6px 14px;font-size:12px" onclick="loadDash()" aria-label="Refresh dashboard">Refresh</button>
         </div>
       </div>
-      <div id="dash-body"><div class="loading"><div class="spin"></div> Loading…</div></div>
+      <!-- Data source badge -->
+      <div class="data-source-bar">
+        <span id="data-source-badge"><span class="ds-badge unavailable">Unavailable</span></span>
+        <span id="ds-last-updated" class="ds-updated"></span>
+      </div>
+      <div id="dash-body" role="status" aria-live="polite"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
+
+      <!-- Risk Trend Chart -->
+      <section class="trend-section" id="risk-trend-section" style="display:none">
+        <h2>Risk Trend (Last 30 Days)</h2>
+        <div style="position:relative;height:280px;">
+          <canvas id="riskTrendChart" aria-label="Risk trend line chart"></canvas>
+        </div>
+        <div id="risk-trend-placeholder" class="empty" style="display:none">Trend data coming soon</div>
+      </section>
+
+      <!-- Model Usage Chart -->
+      <section class="trend-section" id="model-usage-section" style="display:none">
+        <h2>Model Usage (Last 30 Days)</h2>
+        <div style="position:relative;height:260px;">
+          <canvas id="modelUsageChart" aria-label="Model usage horizontal bar chart"></canvas>
+        </div>
+        <div id="model-usage-placeholder" class="empty" style="display:none">Model usage data coming soon</div>
+      </section>
     </div>
 
     <!-- SEARCH -->
     <div id="t-search" class="view">
       <div class="stitle">Provenance Search</div>
+      <!-- Basic filters -->
       <div class="filters">
         <div class="ff"><label for="s-kw">Keywords</label><input id="s-kw" type="text" placeholder="function name, snippet…" onkeydown="if(event.key==='Enter')doSearch()"></div>
-        <div class="ff"><label for="s-model">Model</label><input id="s-model" type="text" placeholder="gpt-4o, claude…"></div>
+        <div class="ff"><label for="s-model">Model</label><input id="s-model" type="text" placeholder="gpt-4o, claude…" list="model-datalist"><datalist id="model-datalist"></datalist></div>
         <div class="ff"><label for="s-file">File path</label><input id="s-file" type="text" placeholder="src/auth.py"></div>
         <div class="ff"><label for="s-from">Date from</label><input id="s-from" type="date"></div>
         <div class="ff"><label for="s-to">Date to</label><input id="s-to" type="date"></div>
-        <button class="p" onclick="doSearch()">Search</button>
+        <button class="p" onclick="doSearch()" aria-label="Run search">Search</button>
       </div>
-      <div id="search-body"></div>
+      <!-- Advanced filter panel -->
+      <div class="adv-filter-panel">
+        <h4>Advanced Filters</h4>
+        <div class="adv-filter-row">
+          <div class="ff" style="min-width:130px">
+            <label for="af-risk">Risk Level</label>
+            <select id="af-risk">
+              <option value="">All</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </div>
+          <div class="ff" style="min-width:160px">
+            <label for="af-model">Model filter</label>
+            <input id="af-model" type="text" placeholder="gpt-4o, claude…" list="model-datalist">
+          </div>
+          <div class="ff">
+            <label for="af-from">Date from</label>
+            <input id="af-from" type="date">
+          </div>
+          <div class="ff">
+            <label for="af-to">Date to</label>
+            <input id="af-to" type="date">
+          </div>
+          <div class="ff" style="min-width:150px">
+            <label for="af-capture">Capture Status</label>
+            <select id="af-capture">
+              <option value="">All</option>
+              <option value="full">Full</option>
+              <option value="partial">Partial</option>
+              <option value="unavailable">Unavailable</option>
+            </select>
+          </div>
+          <div class="adv-filter-check">
+            <input type="checkbox" id="af-has-prompt">
+            <label for="af-has-prompt" style="text-transform:none;letter-spacing:0;font-size:13px;font-weight:400;margin-bottom:0">Has prompt</label>
+          </div>
+        </div>
+        <div class="adv-filter-actions">
+          <button class="p" onclick="applyAdvancedFilters()" aria-label="Apply advanced filters">Apply Filters</button>
+          <button class="s" onclick="clearAdvancedFilters()" aria-label="Clear advanced filters">Clear Filters</button>
+        </div>
+      </div>
+      <div id="search-body" role="status" aria-live="polite"></div>
+      <!-- Pagination -->
+      <div class="pagination" id="search-pagination" style="display:none">
+        <button class="s" id="prevPage" onclick="changePage(-1)" aria-label="Previous page">← Previous</button>
+        <span id="pageInfo">Page 1 of 1 (0 records)</span>
+        <button class="s" id="nextPage" onclick="changePage(1)" aria-label="Next page">Next →</button>
+        <label for="pageSize" style="display:inline;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text2)">Per page</label>
+        <select id="pageSize" onchange="changePageSize()" aria-label="Records per page">
+          <option value="10">10 per page</option>
+          <option value="20" selected>20 per page</option>
+          <option value="50">50 per page</option>
+        </select>
+      </div>
     </div>
 
     <!-- RECORD VIEWER -->
     <div id="t-record" class="view">
       <div class="stitle">Record Viewer</div>
       <div style="display:flex;gap:10px;margin-bottom:20px">
-        <input id="rec-uuid" type="text" placeholder="Paste record UUID…" style="flex:1;max-width:440px">
-        <button class="p" onclick="loadRec()">Load</button>
+        <label for="rec-uuid" style="display:none">Record UUID</label>
+        <input id="rec-uuid" type="text" placeholder="Paste record UUID…" style="flex:1;max-width:440px" aria-label="Record UUID">
+        <button class="p" onclick="loadRec()" aria-label="Load record">Load</button>
       </div>
       <div id="rec-body"></div>
     </div>
@@ -285,18 +436,18 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
     <div id="t-timeline" class="view">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
         <div class="stitle">Timeline &amp; Risk Heatmap</div>
-        <button class="s" style="padding:6px 14px;font-size:12px" onclick="loadTimeline()">Refresh</button>
+        <button class="s" style="padding:6px 14px;font-size:12px" onclick="loadTimeline()" aria-label="Refresh timeline">Refresh</button>
       </div>
-      <div id="tl-body"><div class="loading"><div class="spin"></div> Loading…</div></div>
+      <div id="tl-body" role="status" aria-live="polite"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
     </div>
 
     <!-- GRAPH -->
     <div id="t-graph" class="view">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
         <div class="stitle">File Lineage Graph <span class="sub">node size = insertions · color = risk · click to search</span></div>
-        <button class="s" style="padding:6px 14px;font-size:12px" onclick="loadGraph()">Refresh</button>
+        <button class="s" style="padding:6px 14px;font-size:12px" onclick="loadGraph()" aria-label="Refresh graph">Refresh</button>
       </div>
-      <div id="graph-body"><div class="loading"><div class="spin"></div> Building graph…</div></div>
+      <div id="graph-body" role="status" aria-live="polite"><div class="loading"><div class="spin" aria-hidden="true"></div> Building graph…</div></div>
     </div>
 
     <!-- ALERTS / LIVE FEED -->
@@ -304,11 +455,11 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
         <div class="stitle">Live Capture Feed</div>
         <div class="feed-controls">
-          <span id="feed-status" style="font-size:12px;color:var(--text2)">Polling every 30s</span>
-          <button class="s" style="padding:6px 14px;font-size:12px" onclick="pollAlerts()">Refresh Now</button>
+          <span id="feed-status" style="font-size:12px;color:var(--text2)" role="status" aria-live="polite">Polling every 30s</span>
+          <button class="s" style="padding:6px 14px;font-size:12px" onclick="pollAlerts()" aria-label="Refresh live feed now">Refresh Now</button>
         </div>
       </div>
-      <div id="alert-feed"><div class="loading"><div class="spin"></div> Loading…</div></div>
+      <div id="alert-feed" role="status" aria-live="polite"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
     </div>
 
     <!-- EXPORT -->
@@ -319,9 +470,29 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
         <div class="ff"><label for="e-to">Date to</label><input id="e-to" type="date"></div>
         <div class="ff"><label for="e-dev">Developer</label><input id="e-dev" type="text" placeholder="git username"></div>
         <div class="ff"><label for="e-file">File path</label><input id="e-file" type="text" placeholder="src/auth.py"></div>
-        <button class="p" onclick="doExport()">Download CSV</button>
+        <button class="p" onclick="doExport()" aria-label="Download audit CSV">Download CSV</button>
       </div>
-      <div id="al-export"></div>
+      <div id="al-export" role="status" aria-live="polite"></div>
+
+      <!-- Async export -->
+      <div class="export-async-section" id="async-export-section">
+        <h4 style="margin-bottom:12px">Large Export (Async)</h4>
+        <div class="new-form-row">
+          <label>Format
+            <select id="async-export-format" style="margin-top:4px">
+              <option value="json">JSON</option>
+              <option value="csv">CSV</option>
+              <option value="parquet">Parquet</option>
+            </select>
+          </label>
+          <label>Limit <input type="number" id="async-export-limit" value="1000" min="1" max="10000" style="width:90px;margin-top:4px"></label>
+          <button class="p" onclick="startAsyncExport()" style="align-self:flex-end">Start Export</button>
+        </div>
+        <div id="async-export-status" hidden style="margin-top:10px">
+          <p style="font-size:13px">Job: <code id="async-job-id">—</code> | Status: <strong id="async-job-status">—</strong></p>
+          <button id="async-download-btn" class="p" hidden onclick="downloadAsyncExport()" style="margin-top:8px">Download</button>
+        </div>
+      </div>
     </div>
 
     <!-- TEAM -->
@@ -329,26 +500,279 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
       <div class="stitle">Team</div>
       <div id="invite-box" class="invite-box" style="display:none">
         <h3>Invite Member</h3>
-        <div id="al-invite"></div>
+        <div id="al-invite" role="status" aria-live="polite"></div>
         <div class="form-row">
           <div class="field"><label for="inv-u">Username</label><input id="inv-u" type="text" placeholder="username"></div>
           <div class="field"><label for="inv-p">Password</label><input id="inv-p" type="password" placeholder="min 8 chars"></div>
           <div class="field"><label for="inv-r">Role</label><select id="inv-r"><option value="member">Member</option><option value="admin">Admin</option></select></div>
         </div>
-        <div style="margin-top:12px"><button class="p" onclick="doInvite()">Invite</button></div>
+        <div style="margin-top:12px"><button class="p" onclick="doInvite()" aria-label="Send invite">Invite</button></div>
       </div>
-      <div id="team-body"><div class="loading"><div class="spin"></div> Loading…</div></div>
+      <div id="team-body" role="status" aria-live="polite"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
+
+      <!-- Policy Configuration (admin) -->
+      <div class="mgrid-section" id="policy-config-section" style="display:none">
+        <h3>Policies</h3>
+        <div id="policy-list-body" role="status" aria-live="polite">
+          <p class="placeholder">Loading policies…</p>
+        </div>
+        <button class="p" onclick="showCreatePolicyForm()" style="margin-top:8px">+ New Policy</button>
+        <div id="create-policy-form" hidden>
+          <h4 style="margin:12px 0 8px">New Policy</h4>
+          <div class="new-form-row">
+            <label>Name <input type="text" id="new-policy-name" placeholder="My Policy"></label>
+            <label>Type
+              <select id="new-policy-type">
+                <option value="risk_rule">Risk Rule</option>
+                <option value="allowlist">Allowlist</option>
+                <option value="blocklist">Blocklist</option>
+                <option value="prompt_pattern">Prompt Pattern</option>
+              </select>
+            </label>
+            <label>Action
+              <select id="new-policy-action">
+                <option value="log">Log</option>
+                <option value="flag">Flag</option>
+                <option value="alert">Alert</option>
+                <option value="block">Block</option>
+              </select>
+            </label>
+          </div>
+          <label style="display:block;margin-top:8px">Config (JSON) <textarea id="new-policy-config" rows="3" placeholder='{"threshold": 80, "operator": "gte"}' style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:13px;margin-top:4px"></textarea></label>
+          <div class="new-form-row" style="margin-top:10px">
+            <button class="p" onclick="createPolicy()">Create</button>
+            <button class="s" onclick="document.getElementById('create-policy-form').hidden=true">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Alert Channel Configuration (admin) -->
+      <div class="mgrid-section" id="alert-config-section" style="display:none">
+        <h3>Alert Channels</h3>
+        <div id="alert-config-list" role="status" aria-live="polite">
+          <p class="placeholder">Loading alert configs…</p>
+        </div>
+        <button class="p" onclick="showCreateAlertForm()" style="margin-top:8px">+ New Alert Channel</button>
+        <div id="create-alert-form" hidden>
+          <h4 style="margin:12px 0 8px">New Alert Channel</h4>
+          <div class="new-form-row">
+            <label>Name <input type="text" id="new-alert-name" placeholder="Slack #ai-alerts"></label>
+            <label>Channel
+              <select id="new-alert-channel" onchange="updateAlertChannelHint()">
+                <option value="slack">Slack</option>
+                <option value="teams">Teams</option>
+                <option value="email">Email</option>
+                <option value="webhook">Webhook</option>
+              </select>
+            </label>
+          </div>
+          <div id="alert-channel-hint" class="hint-text" style="margin-top:6px">Paste your Slack incoming webhook URL in the config below.</div>
+          <label style="display:block;margin-top:8px">Config (JSON) <textarea id="new-alert-config" rows="3" placeholder='{"webhook_url": "https://hooks.slack.com/..."}' style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:13px;margin-top:4px"></textarea></label>
+          <label style="display:block;margin-top:8px">Trigger on (comma-separated) <input type="text" id="new-alert-triggers" placeholder="high_risk, critical, policy_violation" style="margin-top:4px"></label>
+          <div class="new-form-row" style="margin-top:10px">
+            <button class="p" onclick="createAlertConfig()">Create</button>
+            <button class="s" onclick="document.getElementById('create-alert-form').hidden=true">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DEVELOPERS -->
+    <div id="t-developers" class="view">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+        <div class="stitle">Developer Activity</div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <label for="dev-date-from" style="display:inline;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text2)">From</label>
+          <input type="date" id="dev-date-from" style="padding:6px 10px;font-size:12px;width:145px" aria-label="Developer activity date from">
+          <label for="dev-date-to" style="display:inline;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text2)">To</label>
+          <input type="date" id="dev-date-to" style="padding:6px 10px;font-size:12px;width:145px" aria-label="Developer activity date to">
+          <button class="p" style="padding:6px 14px;font-size:12px" onclick="loadDeveloperActivity()" aria-label="Refresh developer activity">Refresh</button>
+        </div>
+      </div>
+      <div id="dev-table-body" role="status" aria-live="polite">
+        <div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>
+      </div>
+      <div class="tl-chart-wrap" style="margin-top:20px">
+        <canvas id="devActivityChart" height="180" aria-label="Developer activity chart" role="img"></canvas>
+      </div>
+    </div>
+
+    <!-- REVIEWS -->
+    <div id="t-reviews" class="view">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+        <div class="stitle">Reviewer Queue</div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <select id="review-status-filter" onchange="loadReviews()" aria-label="Filter by status" style="padding:6px 10px;font-size:12px;width:auto">
+            <option value="">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+            <option value="deferred">Deferred</option>
+          </select>
+          <button class="p" style="padding:6px 14px;font-size:12px" onclick="loadReviews()" aria-label="Refresh review queue">Refresh</button>
+        </div>
+      </div>
+      <div id="reviews-body" role="status" aria-live="polite">
+        <div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>
+      </div>
+    </div>
+
+    <!-- GITHUB CI -->
+    <div id="t-github" class="view">
+      <div class="stitle" style="margin-bottom:18px">GitHub CI Integration</div>
+      <div class="card" style="max-width:560px">
+        <h4 style="margin:0 0 14px">Risk Gate Configuration</h4>
+        <label style="display:block;margin-bottom:8px;font-size:13px">Risk Score Threshold (0–100)
+          <input id="gh-threshold" type="number" min="0" max="100" value="70" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:13px;cursor:pointer">
+          <input id="gh-block" type="checkbox" checked>
+          Block PR when risk score exceeds threshold
+        </label>
+        <label style="display:block;margin-bottom:14px;font-size:13px">Allowed Repositories (one per line, leave blank for all)
+          <textarea id="gh-repos" rows="3" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box;resize:vertical"></textarea>
+        </label>
+        <button class="p" onclick="saveGithubConfig()">Save Configuration</button>
+        <div id="gh-msg" style="margin-top:10px;font-size:13px"></div>
+      </div>
+      <div class="card" style="max-width:560px;margin-top:18px">
+        <h4 style="margin:0 0 10px">GitHub Actions Workflow Snippet</h4>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 10px">Add this step to your workflow file and set <code>LINEAGELENS_API_KEY</code> in repository secrets.</p>
+        <pre style="background:var(--bg);padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre-wrap">- name: LineageLens Risk Check
+  uses: actions/github-script@v7
+  with:
+    script: |
+      const { execSync } = require('child_process');
+      const files = execSync('git diff --name-only HEAD~1').toString().trim().split('\n');
+      const apiKey = process.env.LINEAGELENS_API_KEY;
+      const base = process.env.LINEAGELENS_URL;
+      let maxRisk = 0; let failed = false;
+      for (const f of files) {
+        if (!/\.(py|js|ts|tsx|jsx|java|go|rs)$/.test(f)) continue;
+        const code = require('fs').readFileSync(f,'utf8');
+        const r = await fetch(`${base}/github/check`,{method:'POST',headers:{'Content-Type':'application/json','X-API-Key':apiKey},body:JSON.stringify({code,file_path:f})});
+        const j = await r.json();
+        if (j.riskScore > maxRisk) maxRisk = j.riskScore;
+        if (!j.passed) failed = true;
+        core.info(`${f}: ${j.riskScore} ${j.passed?'✅':'❌'}`);
+      }
+      if (failed) core.setFailed(`Risk gate failed (max score ${maxRisk})`);
+  env:
+    LINEAGELENS_API_KEY: ${{ secrets.LINEAGELENS_API_KEY }}
+    LINEAGELENS_URL: ${{ secrets.LINEAGELENS_URL }}</pre>
+      </div>
+    </div>
+
+    <!-- QUALITY METRICS -->
+    <div id="t-quality" class="view">
+      <div class="stitle" style="margin-bottom:18px">Code Quality Metrics</div>
+      <div class="card" style="max-width:520px;margin-bottom:18px">
+        <h4 style="margin:0 0 12px">Analyze a Record</h4>
+        <div style="display:flex;gap:8px">
+          <input id="q-uuid" type="text" placeholder="Provenance record UUID" style="flex:1;padding:7px 10px;font-size:13px">
+          <button class="p" onclick="loadQuality()">Analyze</button>
+        </div>
+        <div id="q-result" style="margin-top:14px"></div>
+      </div>
+      <div class="card" style="max-width:520px">
+        <h4 style="margin:0 0 12px">Batch Analysis</h4>
+        <textarea id="q-batch" rows="4" placeholder="One UUID per line (max 100)" style="width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box;resize:vertical;margin-bottom:8px"></textarea>
+        <button class="p" onclick="loadQualityBatch()">Run Batch</button>
+        <div id="q-batch-result" style="margin-top:14px"></div>
+      </div>
+    </div>
+
+    <!-- SCHEDULED DIGESTS -->
+    <div id="t-scheduled-reports" class="view">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+        <div class="stitle">Scheduled Digests</div>
+        <button class="p" style="padding:6px 14px;font-size:12px" onclick="showCreateDigest()">+ New Digest</button>
+      </div>
+      <div id="digests-create" style="display:none;margin-bottom:18px">
+        <div class="card" style="max-width:480px">
+          <h4 style="margin:0 0 14px">Create Digest</h4>
+          <label style="display:block;margin-bottom:8px;font-size:13px">Name
+            <input id="dig-name" type="text" placeholder="Weekly risk summary" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
+          </label>
+          <label style="display:block;margin-bottom:8px;font-size:13px">Type
+            <select id="dig-type" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px">
+              <option value="usage">Usage</option>
+              <option value="risk_summary">Risk Summary</option>
+              <option value="team_activity">Team Activity</option>
+            </select>
+          </label>
+          <label style="display:block;margin-bottom:8px;font-size:13px">Frequency
+            <select id="dig-freq" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px">
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+          </label>
+          <label style="display:block;margin-bottom:14px;font-size:13px">Recipients (comma-separated emails)
+            <input id="dig-recipients" type="text" placeholder="alice@example.com, bob@example.com" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
+          </label>
+          <div style="display:flex;gap:8px">
+            <button class="p" onclick="createDigest()">Create</button>
+            <button onclick="document.getElementById('digests-create').style.display='none'">Cancel</button>
+          </div>
+          <div id="dig-msg" style="margin-top:10px;font-size:13px"></div>
+        </div>
+      </div>
+      <div id="digests-body" role="status" aria-live="polite">
+        <div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>
+      </div>
+    </div>
+
+    <!-- SSO PROVIDERS -->
+    <div id="t-sso" class="view">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+        <div class="stitle">SSO / OIDC Providers</div>
+        <button class="p" style="padding:6px 14px;font-size:12px" onclick="showCreateSso()">+ Add Provider</button>
+      </div>
+      <div id="sso-create" style="display:none;margin-bottom:18px">
+        <div class="card" style="max-width:480px">
+          <h4 style="margin:0 0 14px">Add OIDC Provider</h4>
+          <label style="display:block;margin-bottom:8px;font-size:13px">Display Name
+            <input id="sso-name" type="text" placeholder="Okta" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
+          </label>
+          <label style="display:block;margin-bottom:8px;font-size:13px">Issuer URL
+            <input id="sso-issuer" type="url" placeholder="https://your-domain.okta.com" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
+          </label>
+          <label style="display:block;margin-bottom:8px;font-size:13px">Client ID
+            <input id="sso-client-id" type="text" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
+          </label>
+          <label style="display:block;margin-bottom:14px;font-size:13px">Client Secret
+            <input id="sso-client-secret" type="password" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
+          </label>
+          <div style="display:flex;gap:8px">
+            <button class="p" onclick="createSsoProvider()">Add Provider</button>
+            <button onclick="document.getElementById('sso-create').style.display='none'">Cancel</button>
+          </div>
+          <div id="sso-msg" style="margin-top:10px;font-size:13px"></div>
+        </div>
+      </div>
+      <div id="sso-body" role="status" aria-live="polite">
+        <div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>
+      </div>
+    </div>
+
+    <!-- WORKSPACE -->
+    <div id="t-workspace" class="view">
+      <div class="stitle" style="margin-bottom:18px">Workspace</div>
+      <div id="workspace-body">
+        <div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>
+      </div>
     </div>
 
   </div>
 </div>
 
 <!-- RECORD DETAIL MODAL -->
-<div id="rec-modal" class="modal-bg" onclick="if(event.target===this)closeModal()">
+<div id="rec-modal" class="modal-bg" role="dialog" aria-modal="true" aria-label="Provenance record detail" tabindex="0" onclick="if(event.target===this)closeModal()" onkeydown="if(event.key==='Escape')closeModal()">
   <div class="modal">
     <div class="modal-hdr">
       <h3>Provenance Record</h3>
-      <button class="modal-close" onclick="closeModal()">×</button>
+      <button class="modal-close" onclick="closeModal()" aria-label="Close record detail">×</button>
     </div>
     <div class="modal-body" id="modal-body"></div>
   </div>
@@ -359,6 +783,12 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
 let _tok = null;
 let _ref = null;
 let _user = null, _mode = 'plus', _rTimer = null;
+
+// ── Pagination state ──────────────────────────────────────────────────────────
+window._currentPage = 0;
+window._pageSize = 20;
+window._totalRecords = 0;
+window._activeFilters = {};
 
 // ── API ──────────────────────────────────────────────────────────────────────
 async function req(method, path, body, noRefresh) {
@@ -458,12 +888,18 @@ async function initApp() {
   if (_user.role === 'admin') {
     document.querySelectorAll('.adm-tab').forEach(t => t.style.display='inline-flex');
     document.getElementById('invite-box').style.display = 'block';
+    document.getElementById('policy-config-section').style.display = 'block';
+    document.getElementById('alert-config-section').style.display = 'block';
   }
   showApp();
   go('dashboard');
+  loadPolicies();
+  loadAlertConfigs();
   checkMcp();
   setInterval(checkMcp, 60000);
   startAlertPoll();
+  // Update "last updated" text every 30s
+  setInterval(updateLastUpdatedText, 30000);
 }
 
 // ── TABS ─────────────────────────────────────────────────────────────────────
@@ -473,29 +909,213 @@ function go(name) {
   if (name==='dashboard') loadDash();
   if (name==='timeline') loadTimeline();
   if (name==='graph') loadGraph();
+  if (name==='developers') loadDeveloperActivity();
+  if (name==='reviews') loadReviews();
   if (name==='alerts') { clearAlertBadge(); loadAlerts(); }
   if (name==='team') loadTeam();
   if (name==='search') document.getElementById('s-kw').focus();
+  if (name==='github') loadGithubConfig();
+  if (name==='scheduled-reports') loadDigests();
+  if (name==='sso') loadSsoProviders();
+  if (name==='workspace') loadWorkspace();
+}
+
+// ── DATA SOURCE BADGE ────────────────────────────────────────────────────────
+function setDataSourceBadge(status) {
+  const el = document.getElementById('data-source-badge');
+  if (!el) return;
+  const labels = { backend: 'Backend', cached: 'Cached', unavailable: 'Unavailable' };
+  const label = labels[status] || 'Unavailable';
+  el.innerHTML = `<span class="ds-badge ${status}">${label}</span>`;
+  if (status === 'backend') {
+    window._lastUpdated = Date.now();
+    updateLastUpdatedText();
+  }
+}
+
+function updateLastUpdatedText() {
+  const el = document.getElementById('ds-last-updated');
+  if (!el || !window._lastUpdated) return;
+  const secs = Math.round((Date.now() - window._lastUpdated) / 1000);
+  if (secs < 60) {
+    el.textContent = `Last updated: ${secs} second${secs === 1 ? '' : 's'} ago`;
+  } else {
+    const mins = Math.round(secs / 60);
+    el.textContent = `Last updated: ${mins} minute${mins === 1 ? '' : 's'} ago`;
+  }
 }
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
+let _riskTrendChart = null;
+let _modelUsageChart = null;
+
 async function loadDash() {
   const el = document.getElementById('dash-body');
-  el.innerHTML = '<div class="loading"><div class="spin"></div> Loading…</div>';
+  el.innerHTML = '<div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>';
   try {
-    const body = {workspace_id: _user?.workspaceId};
+    const body = {workspaceId: _user?.workspaceId};
     const df = g('d-from'), dt = g('d-to');
-    if (df) body.date_from = new Date(df).toISOString();
-    if (dt) body.date_to = new Date(dt+'T23:59:59').toISOString();
+    if (df) body.dateFrom = new Date(df).toISOString();
+    if (dt) body.dateTo = new Date(dt+'T23:59:59').toISOString();
     const d = await req('POST', '/insights/dashboard', body);
     el.innerHTML = buildDash(d);
+    setDataSourceBadge('backend');
+    // Load supplemental analytics in parallel
+    loadRiskTrend();
+    loadModelUsage();
+    loadTokenCost();
   } catch(e) {
     el.innerHTML = `<div class="al err">Dashboard error: ${esc(e.message)}</div>`;
+    setDataSourceBadge('unavailable');
+  }
+}
+
+async function loadRiskTrend() {
+  const section = document.getElementById('risk-trend-section');
+  const placeholder = document.getElementById('risk-trend-placeholder');
+  const canvas = document.getElementById('riskTrendChart');
+  if (!section) return;
+  section.style.display = 'block';
+  placeholder.style.display = 'none';
+  canvas.style.display = 'block';
+  try {
+    const now = new Date();
+    const from = new Date(now); from.setDate(from.getDate() - 30);
+    const body = {
+      workspaceId: _user?.workspaceId,
+      dateFrom: from.toISOString(),
+      dateTo: now.toISOString(),
+      bucket: 'day'
+    };
+    const d = await req('POST', '/analytics/risk-trend', body);
+    // Backend returns { results: [...], bucket } — each item has { period, critical, high, medium, low }
+    const buckets = d.results || d.buckets || d.data || [];
+    if (!buckets.length) { canvas.style.display = 'none'; placeholder.style.display = 'block'; return; }
+    const labels = buckets.map(b => b.period ? new Date(b.period).toLocaleDateString() : (b.date || b.bucket || b.label || ''));
+    const textColor = _dark ? '#94a3b8' : '#4a5568';
+    const gridColor = _dark ? '#2d4a6a' : '#cbd5e0';
+    const ctx = canvas.getContext('2d');
+    if (_riskTrendChart) { _riskTrendChart.destroy(); }
+    _riskTrendChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Critical', data: buckets.map(b => b.critical || 0), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,.1)', borderWidth: 2, pointRadius: 2, tension: 0.3, fill: true },
+          { label: 'High',     data: buckets.map(b => b.high || 0),     borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,.1)', borderWidth: 2, pointRadius: 2, tension: 0.3, fill: true },
+          { label: 'Medium',   data: buckets.map(b => b.medium || 0),   borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,.1)', borderWidth: 2, pointRadius: 2, tension: 0.3, fill: true },
+          { label: 'Low',      data: buckets.map(b => b.low || 0),      borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,.1)',  borderWidth: 2, pointRadius: 2, tension: 0.3, fill: true },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { labels: { color: textColor, font: { size: 12 } } } },
+        scales: {
+          x: { ticks: { color: textColor, maxRotation: 45 }, grid: { color: gridColor } },
+          y: { beginAtZero: true, ticks: { color: textColor }, grid: { color: gridColor } }
+        }
+      }
+    });
+  } catch(e) {
+    // 404 = not yet deployed; any error → placeholder
+    canvas.style.display = 'none';
+    placeholder.style.display = 'block';
+  }
+}
+
+async function loadModelUsage() {
+  const section = document.getElementById('model-usage-section');
+  const placeholder = document.getElementById('model-usage-placeholder');
+  const canvas = document.getElementById('modelUsageChart');
+  if (!section) return;
+  section.style.display = 'block';
+  placeholder.style.display = 'none';
+  canvas.style.display = 'block';
+  try {
+    const now = new Date();
+    const from = new Date(now); from.setDate(from.getDate() - 30);
+    const body = {
+      workspaceId: _user?.workspaceId,
+      dateFrom: from.toISOString(),
+      dateTo: now.toISOString()
+    };
+    const d = await req('POST', '/analytics/model-usage', body);
+    // Backend returns { results: [...] } — each item has { model_name, record_count, avg_risk_score }
+    const rows = d.results || d.models || d.data || [];
+    if (!rows.length) { canvas.style.display = 'none'; placeholder.style.display = 'block'; return; }
+    const labels = rows.map(r => r.model_name || r.model || '');
+    const counts = rows.map(r => r.record_count || r.count || 0);
+    const avgRisks = rows.map(r => r.avg_risk_score != null ? Number(r.avg_risk_score).toFixed(3) : '—');
+    const textColor = _dark ? '#94a3b8' : '#4a5568';
+    const gridColor = _dark ? '#2d4a6a' : '#cbd5e0';
+    const ctx = canvas.getContext('2d');
+    if (_modelUsageChart) { _modelUsageChart.destroy(); }
+    _modelUsageChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Records',
+          data: counts,
+          backgroundColor: 'rgba(59,130,246,.55)',
+          borderColor: '#3b82f6',
+          borderWidth: 1
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: textColor, font: { size: 12 } } },
+          tooltip: {
+            callbacks: {
+              afterLabel: (ctx) => {
+                const ar = avgRisks[ctx.dataIndex];
+                return ar !== '—' ? `Avg risk: ${ar}` : '';
+              }
+            }
+          }
+        },
+        scales: {
+          x: { beginAtZero: true, ticks: { color: textColor }, grid: { color: gridColor } },
+          y: { ticks: { color: textColor }, grid: { color: gridColor } }
+        }
+      }
+    });
+    // Populate model autocomplete datalist
+    const dl = document.getElementById('model-datalist');
+    if (dl) {
+      dl.innerHTML = labels.map(l => `<option value="${esc(l)}">`).join('');
+    }
+  } catch(e) {
+    canvas.style.display = 'none';
+    placeholder.style.display = 'block';
+  }
+}
+
+async function loadTokenCost() {
+  // Token/cost card is injected into dash-body by buildDash; here we POST to analytics endpoint
+  // and update the placeholder values if the cards exist.
+  try {
+    const body = { workspaceId: _user?.workspaceId };
+    const d = await req('POST', '/analytics/token-cost', body);
+    const tokEl = document.getElementById('totalTokens');
+    const costEl = document.getElementById('totalCostUsd');
+    if (tokEl && d.total_tokens != null) {
+      tokEl.textContent = Number(d.total_tokens).toLocaleString();
+    }
+    if (costEl && d.total_cost_usd != null) {
+      costEl.textContent = `$${Number(d.total_cost_usd).toFixed(2)}`;
+    }
+  } catch {
+    // 404 or error — leave placeholder dashes
   }
 }
 
 function buildDash(d) {
-  const gs = d.governanceSummary || {};
+  // Backend returns d.summary (not d.governanceSummary)
+  const gs = d.summary || d.governanceSummary || {};
   const pct = v => {
     if (v == null) return '—';
     const n = typeof v === 'number' && v <= 1 ? v * 100 : Number(v);
@@ -509,25 +1129,34 @@ function buildDash(d) {
     return 'ok';
   };
 
+  // summary fields: totalRecords, promptCaptureRate, avgRiskScore,
+  //   highRiskRecords (count), criticalRecords, uniqueFiles, uniqueModels,
+  //   totalNetAddedLines, uniqueAgentSessions
+  const highRiskCount = gs.highRiskRecords ?? gs.highRiskCount ?? 0;
+  const criticalCount = gs.criticalRecords ?? gs.criticalCount ?? 0;
+
   let h = `<div class="mgrid">
     ${mc('Total Records', num(gs.totalRecords), 'accent')}
-    ${mc('Prompt Capture', pct(gs.promptCaptureRate), gs.promptCaptureRate<.5?'warn':'ok')}
+    ${mc('Prompt Capture', pct(gs.promptCaptureRate), (gs.promptCaptureRate||0)<.5?'warn':'ok')}
     ${mc('Avg Risk', pct(gs.avgRiskScore), rCls(gs.avgRiskScore))}
-    ${mc('High Risk', num(gs.highRiskCount), gs.highRiskCount>0?'danger':'ok')}
-    ${mc('Critical', num(gs.criticalCount), gs.criticalCount>0?'danger':'ok')}
+    ${mc('High Risk', num(highRiskCount), highRiskCount>0?'danger':'ok')}
+    ${mc('Critical', num(criticalCount), criticalCount>0?'danger':'ok')}
     ${mc('Files', num(gs.uniqueFiles), '')}
     ${mc('Models', num(gs.uniqueModels), '')}
-    ${mc('AI Lines Added', num(gs.aiNetLinesAdded), 'accent')}
-    ${mc('Team Members', num(gs.teamMemberCount), '')}
-    ${mc('Agent Sessions', num(gs.agentSessionCount), '')}
+    ${mc('AI Lines Added', num(gs.totalNetAddedLines ?? gs.aiNetLinesAdded), 'accent')}
+    ${mc('Team Members', num(gs.teamMemberCount ?? (d.memberStats?.length)), '')}
+    ${mc('Agent Sessions', num(gs.uniqueAgentSessions ?? gs.agentSessionCount), '')}
+    <div class="mcard"><div class="mlabel">Total Tokens</div><div class="mval accent" id="totalTokens">—</div><div class="msublabel" id="totalCostUsd"></div></div>
   </div>`;
 
   if (d.complianceControls?.length) {
     h += '<div class="cgrid">' + d.complianceControls.map(c => {
       let dc = 'fail';
       if (c.status === 'pass') { dc = 'ok'; }
-      else if (c.status === 'warn') { dc = 'warn'; }
-      return `<div class="ccard"><div class="cname"><span class="dot ${dc}"></span>${esc(c.name)}</div>
+      // Backend uses "warning" (not "warn")
+      else if (c.status === 'warn' || c.status === 'warning') { dc = 'warn'; }
+      // Use c.title (service key) with fallback to c.name
+      return `<div class="ccard"><div class="cname"><span class="dot ${dc}"></span>${esc(c.title || c.name || '')}</div>
         <div class="cval">${esc(String(c.metric??''))}</div>
         <div class="csub">${esc(c.summary||'')}</div></div>`;
     }).join('') + '</div>';
@@ -536,38 +1165,44 @@ function buildDash(d) {
   if (d.highRiskRecords?.length) {
     h += tw('High-Risk Records', `<table><thead><tr><th>File</th><th>Risk</th><th>Model</th><th>Timestamp</th><th>Tool</th><th></th></tr></thead><tbody>` +
       d.highRiskRecords.map(r => {
-        const src=(r.normalizedEvent||{}).source||{};
-        const lvl=((r.riskAssessment||{}).level||'').toLowerCase();
+        // Preview records from _top_high_risk_previews use riskLevel (not riskAssessment.level)
+        const lvl = (r.riskLevel || ((r.riskAssessment||{}).level) || '').toLowerCase();
+        const tool = r.toolName || ((r.normalizedEvent||{}).source||{}).toolName || '';
+        const model = r.model || r.modelName || '';
         return `<tr><td><code>${esc(r.filePath||'')}</code></td>
           <td>${lvl?`<span class="rsk ${lvl}">${esc(lvl)}</span>`:''}</td>
-          <td>${esc(r.modelName||'')}</td><td>${fd(r.timestampIso)}</td>
-          <td>${esc(src.toolName||'')}</td>
+          <td>${esc(model)}</td><td>${fd(r.timestampIso)}</td>
+          <td>${esc(tool)}</td>
           <td><button class="s" style="padding:3px 10px;font-size:11px" onclick="openRec('${esc(r.uuid||'')}')">View</button></td></tr>`;
       }).join('') + '</tbody></table>');
   }
 
-  if (d.fileHotspots?.length) {
-    h += tw('File Hotspots', `<table><thead><tr><th>File</th><th>Records</th><th>%</th><th>High Risk</th><th>Avg Risk</th><th>Last AI Change</th></tr></thead><tbody>` +
-      d.fileHotspots.map(f => `<tr>
-        <td><code>${esc(f.fileName||'')}</code></td><td>${num(f.recordCount)}</td>
-        <td>${pct(f.pctOfTotal)}</td>
-        <td>${f.highRiskCount>0?`<span class="rsk high">${num(f.highRiskCount)}</span>`:num(f.highRiskCount)}</td>
-        <td>${pct(f.avgRisk)}</td><td>${fd(f.lastAiChangeDate)}</td></tr>`).join('') + '</tbody></table>');
+  // Backend returns d.hotspots (not d.fileHotspots)
+  // hotspot items: { filePath, recordCount, highRiskCount, avgRiskScore, netLinesAdded, latestTimestampIso }
+  const hotspots = d.fileHotspots || d.hotspots || [];
+  if (hotspots.length) {
+    h += tw('File Hotspots', `<table><thead><tr><th>File</th><th>Records</th><th>High Risk</th><th>Avg Risk</th><th>Last AI Change</th></tr></thead><tbody>` +
+      hotspots.map(f => `<tr>
+        <td><code>${esc(f.filePath || f.fileName || '')}</code></td><td>${num(f.recordCount)}</td>
+        <td>${(f.highRiskCount||0)>0?`<span class="rsk high">${num(f.highRiskCount)}</span>`:num(f.highRiskCount||0)}</td>
+        <td>${pct(f.avgRiskScore ?? f.avgRisk)}</td><td>${fd(f.latestTimestampIso || f.lastAiChangeDate)}</td></tr>`).join('') + '</tbody></table>');
   }
 
+  // modelAnalytics items: { model, recordCount, promptCaptureRate, avgRiskScore, highRiskCount }
   if (d.modelAnalytics?.length) {
-    h += tw('Model Analytics', `<table><thead><tr><th>Model</th><th>Insertions</th><th>Share</th><th>Prompt Capture</th><th>Avg Risk</th><th>High Risk</th></tr></thead><tbody>` +
+    h += tw('Model Analytics', `<table><thead><tr><th>Model</th><th>Records</th><th>Prompt Capture</th><th>Avg Risk</th><th>High Risk</th></tr></thead><tbody>` +
       d.modelAnalytics.map(m => `<tr>
-        <td>${esc(m.modelName||'')}</td><td>${num(m.insertions)}</td>
-        <td>${pct(m.pctShare)}</td><td>${pct(m.promptCaptureRate)}</td>
-        <td>${pct(m.avgRisk)}</td><td>${num(m.highRiskCount)}</td></tr>`).join('') + '</tbody></table>');
+        <td>${esc(m.model || m.modelName || '')}</td><td>${num(m.recordCount ?? m.insertions)}</td>
+        <td>${pct(m.promptCaptureRate)}</td>
+        <td>${pct(m.avgRiskScore ?? m.avgRisk)}</td><td>${num(m.highRiskCount)}</td></tr>`).join('') + '</tbody></table>');
   }
 
+  // riskTrends items: { bucketLabel, recordCount, highRiskCount, avgRiskScore, promptCaptureRate }
   if (d.riskTrends?.length) {
     h += tw('Risk Trends', `<table><thead><tr><th>Period</th><th>Records</th><th>High Risk</th><th>Avg Risk</th><th>Prompt Capture</th></tr></thead><tbody>` +
       d.riskTrends.map(t => `<tr>
         <td>${esc(t.bucketLabel||'')}</td><td>${num(t.recordCount)}</td>
-        <td>${num(t.highRiskCount)}</td><td>${pct(t.avgRisk)}</td>
+        <td>${num(t.highRiskCount)}</td><td>${pct(t.avgRiskScore ?? t.avgRisk)}</td>
         <td>${pct(t.promptCaptureRate)}</td></tr>`).join('') + '</tbody></table>');
   }
 
@@ -581,10 +1216,67 @@ function tw(title, inner) {
   return `<div class="twrap"><div class="thead-row"><span class="ttitle">${esc(title)}</span></div>${inner}</div>`;
 }
 
+// ── ADVANCED FILTERS ──────────────────────────────────────────────────────────
+function applyAdvancedFilters() {
+  const risk = g('af-risk');
+  const model = g('af-model');
+  const from = g('af-from');
+  const to = g('af-to');
+  const capture = g('af-capture');
+  const hasPrompt = document.getElementById('af-has-prompt').checked;
+  window._activeFilters = {};
+  if (risk) window._activeFilters.risk_level = risk;
+  if (model) window._activeFilters.model_name = model;
+  if (from) window._activeFilters.date_from = new Date(from).toISOString();
+  if (to) window._activeFilters.date_to = new Date(to + 'T23:59:59').toISOString();
+  if (capture) window._activeFilters.capture_status = capture;
+  if (hasPrompt) window._activeFilters.has_prompt = true;
+  window._currentPage = 0;
+  doSearch();
+}
+
+function clearAdvancedFilters() {
+  window._activeFilters = {};
+  document.getElementById('af-risk').value = '';
+  document.getElementById('af-model').value = '';
+  document.getElementById('af-from').value = '';
+  document.getElementById('af-to').value = '';
+  document.getElementById('af-capture').value = '';
+  document.getElementById('af-has-prompt').checked = false;
+  window._currentPage = 0;
+  doSearch();
+}
+
+// ── PAGINATION ────────────────────────────────────────────────────────────────
+function changePage(delta) {
+  const totalPages = Math.max(1, Math.ceil(window._totalRecords / window._pageSize));
+  window._currentPage = Math.max(0, Math.min(window._currentPage + delta, totalPages - 1));
+  doSearch();
+}
+
+function changePageSize() {
+  window._pageSize = parseInt(document.getElementById('pageSize').value, 10) || 20;
+  window._currentPage = 0;
+  doSearch();
+}
+
+function updatePagination(total) {
+  window._totalRecords = total || 0;
+  const totalPages = Math.max(1, Math.ceil(window._totalRecords / window._pageSize));
+  const pg = document.getElementById('search-pagination');
+  const pi = document.getElementById('pageInfo');
+  const prev = document.getElementById('prevPage');
+  const next = document.getElementById('nextPage');
+  if (pg) pg.style.display = window._totalRecords > 0 ? 'flex' : 'none';
+  if (pi) pi.textContent = `Page ${window._currentPage + 1} of ${totalPages} (${window._totalRecords} records)`;
+  if (prev) prev.disabled = window._currentPage === 0;
+  if (next) next.disabled = window._currentPage >= totalPages - 1;
+}
+
 // ── SEARCH ────────────────────────────────────────────────────────────────────
 async function doSearch() {
   const el = document.getElementById('search-body');
-  el.innerHTML = '<div class="loading"><div class="spin"></div> Searching…</div>';
+  el.innerHTML = '<div class="loading"><div class="spin" aria-hidden="true"></div> Searching…</div>';
   try {
     const body = {workspace_id: _user?.workspaceId};
     const kw=g('s-kw'), mo=g('s-model'), fi=g('s-file'), sf=g('s-from'), st=g('s-to');
@@ -593,14 +1285,23 @@ async function doSearch() {
     if (fi) body.file_path = fi;
     if (sf) body.date_from = new Date(sf).toISOString();
     if (st) body.date_to = new Date(st+'T23:59:59').toISOString();
+    // Merge advanced filters
+    Object.assign(body, window._activeFilters);
+    // Pagination
+    body.limit = window._pageSize;
+    body.offset = window._currentPage * window._pageSize;
     const d = await req('POST', '/search', body);
     const rs = d.results || d || [];
+    const total = d.total != null ? d.total : rs.length;
+    updatePagination(total);
     if (!rs.length) { el.innerHTML = '<div class="empty">No results found.</div>'; return; }
     el.innerHTML = rs.map(r => {
       const src=(r.normalizedEvent||{}).source||{};
       const lvl=((r.riskAssessment||{}).level||'').toLowerCase();
-      const score = r.similarityScore!=null ? ` · ${Number(r.similarityScore).toFixed(3)}` : '';
-      return `<div class="ritem" onclick="openRec('${esc(r.uuid||'')}')">
+      const score = r.similarityScore==null ? '' : ` · ${Number(r.similarityScore).toFixed(3)}`;
+      const tags = r.tags || [];
+      const tagHtml = tags.length ? `<div class="tags-row">${tags.map(t => `<span class="tag-pill">${esc(t)}</span>`).join('')}</div>` : '';
+      return `<div class="ritem" role="button" tabindex="0" onclick="openRec('${esc(r.uuid||'')}')" onkeydown="if(event.key==='Enter'||event.key===' ')this.click()">
         <div class="rmeta">
           <span>📄 ${esc(r.filePath||'—')}</span>
           <span>🤖 ${esc(r.modelName||src.adapterName||'—')}</span>
@@ -609,6 +1310,7 @@ async function doSearch() {
           <span>${score}</span>
         </div>
         ${r.insertedCode?`<code class="code-snip">${esc(r.insertedCode.slice(0,200))}</code>`:''}
+        ${tagHtml}
       </div>`;
     }).join('');
   } catch(e) { el.innerHTML = `<div class="al err">${esc(e.message)}</div>`; }
@@ -621,19 +1323,21 @@ function openRec(uuid) {
 
 function openModal(uuid) {
   const mb = document.getElementById('modal-body');
-  mb.innerHTML = '<div class="loading"><div class="spin"></div> Loading…</div>';
+  mb.innerHTML = '<div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>';
   document.getElementById('rec-modal').classList.add('open');
   document.body.style.overflow = 'hidden';
   req('GET', `/provenance/${encodeURIComponent(uuid)}`)
-    .then(r => { mb.innerHTML = buildRec(r); })
+    .then(r => { mb.innerHTML = buildRec(r.record || r); })
     .catch(e => { mb.innerHTML = `<div class="al err">${esc(e.message)}</div>`; });
 }
 
 function closeModal() {
   document.getElementById('rec-modal').classList.remove('open');
   document.body.style.overflow = '';
-  document.getElementById('exp-result').innerHTML = '';
-  document.getElementById('exp-status').textContent = '';
+  const expResult = document.getElementById('exp-result');
+  const expStatus = document.getElementById('exp-status');
+  if (expResult) expResult.innerHTML = '';
+  if (expStatus) expStatus.textContent = '';
 }
 
 function openRecTab(uuid) {
@@ -647,10 +1351,10 @@ async function loadRec() {
   const uuid = g('rec-uuid').trim();
   const el = document.getElementById('rec-body');
   if (!uuid) { el.innerHTML = '<div class="al info">Enter a UUID above to load a record.</div>'; return; }
-  el.innerHTML = '<div class="loading"><div class="spin"></div> Loading record…</div>';
+  el.innerHTML = '<div class="loading"><div class="spin" aria-hidden="true"></div> Loading record…</div>';
   try {
     const r = await req('GET', `/provenance/${encodeURIComponent(uuid)}`);
-    el.innerHTML = buildRec(r);
+    el.innerHTML = buildRec(r.record || r);
   } catch(e) { el.innerHTML = `<div class="al err">${esc(e.message)}</div>`; }
 }
 
@@ -667,6 +1371,12 @@ function buildRec(r) {
     ${kv('Net Lines', diff.netAddedLines??r.netAddedLines)} ${kv('Prompt Status', cap.promptStatus)}
     ${lvl?`<div class="kk">Risk</div><div class="kv-v"><span class="rsk ${lvl}">${esc(lvl)}</span></div>`:''}
   </div>`);
+
+  // Tags
+  const tags = r.tags || [];
+  if (tags.length) {
+    h += rs('Tags', `<div class="tags-row">${tags.map(t => `<span class="tag-pill">${esc(t)}</span>`).join('')}</div>`);
+  }
 
   if (r.insertedCode) h += rs('Inserted Code', `<pre>${esc(r.insertedCode.slice(0,3000))}</pre>`);
 
@@ -688,7 +1398,7 @@ function buildRec(r) {
   h += `<div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <button class="p" onclick="doExplain('${esc(r.uuid||'')}')">✨ Explain with AI</button>
     <button class="s" onclick="openRecTab('${esc(r.uuid||'')}')">Open in Record Viewer</button>
-    <span id="exp-status" style="font-size:12px;color:var(--text2)"></span>
+    <span id="exp-status" style="font-size:12px;color:var(--text2)" role="status" aria-live="polite"></span>
   </div><div id="exp-result" style="margin-top:12px"></div>`;
   return h;
 }
@@ -742,7 +1452,7 @@ async function doExport() {
 // ── TEAM ─────────────────────────────────────────────────────────────────────
 async function loadTeam() {
   const el = document.getElementById('team-body');
-  el.innerHTML = '<div class="loading"><div class="spin"></div> Loading…</div>';
+  el.innerHTML = '<div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>';
   try {
     const d = await req('GET', '/team/members');
     const members = d.members || d || [];
@@ -752,7 +1462,7 @@ async function loadTeam() {
         <td>${esc(m.username)}</td>
         <td><span class="bdg${m.role==='admin'?' adm':''}">${esc(m.role)}</span></td>
         <td>${m.insertions??'—'}</td><td>${m.aiLines??'—'}</td>
-        <td>${m.pctShare!=null?(m.pctShare*100).toFixed(1)+'%':'—'}</td>
+        <td>${m.pctShare==null?'—':(m.pctShare*100).toFixed(1)+'%'}</td>
         <td>${fd(m.joinedDate)}</td></tr>`).join('') + '</tbody></table>');
   } catch(e) { el.innerHTML = `<div class="al err">${esc(e.message)}</div>`; }
 }
@@ -790,10 +1500,13 @@ function toggleTheme() {
   } else {
     r.style.setProperty('--bg','#f0f4f8'); r.style.setProperty('--bg2','#ffffff');
     r.style.setProperty('--bg3','#e8edf3'); r.style.setProperty('--text','#1a202c');
-    r.style.setProperty('--text2','#4a5568'); r.style.setProperty('--border','#cbd5e0');
+    r.style.setProperty('--text2','#595959'); r.style.setProperty('--border','#cbd5e0');
     document.getElementById('theme-btn').textContent = '🌙';
   }
   if (_tlChart) { _tlChart.destroy(); _tlChart = null; buildTimeline(_lastDashData || {}); }
+  // Redraw analytics charts with updated colors
+  if (_riskTrendChart) { _riskTrendChart.destroy(); _riskTrendChart = null; loadRiskTrend(); }
+  if (_modelUsageChart) { _modelUsageChart.destroy(); _modelUsageChart = null; loadModelUsage(); }
 }
 
 // ── MCP / BACKEND STATUS ──────────────────────────────────────────────────────
@@ -816,12 +1529,12 @@ let _lastDashData = null;
 
 async function loadTimeline() {
   const el = document.getElementById('tl-body');
-  el.innerHTML = '<div class="loading"><div class="spin"></div> Loading…</div>';
+  el.innerHTML = '<div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>';
   try {
-    const body = {};
+    const body = { workspaceId: _user?.workspaceId };
     const df = g('d-from'), dt = g('d-to');
-    if (df) body.date_from = new Date(df).toISOString();
-    if (dt) body.date_to = new Date(dt + 'T23:59:59').toISOString();
+    if (df) body.dateFrom = new Date(df).toISOString();
+    if (dt) body.dateTo = new Date(dt + 'T23:59:59').toISOString();
     const d = await req('POST', '/insights/dashboard', body);
     _lastDashData = d;
     el.innerHTML = '';
@@ -835,7 +1548,8 @@ function buildTimeline(d) {
   const el = document.getElementById('tl-body');
   if (!el) return;
   const trends = d.riskTrends || [];
-  const hotspots = d.fileHotspots || [];
+  // Backend returns d.hotspots; fall back to d.fileHotspots for compatibility
+  const hotspots = d.hotspots || d.fileHotspots || [];
 
   el.innerHTML = `<div class="tl-chart-wrap"><canvas id="tl-chart"></canvas></div>`;
   if (hotspots.length) el.innerHTML += buildRiskHeatmap(hotspots);
@@ -850,7 +1564,8 @@ function buildTimeline(d) {
   const records = trends.map(t => t.recordCount || 0);
   const highRisk = trends.map(t => t.highRiskCount || 0);
   const avgRisk = trends.map(t => {
-    const v = t.avgRisk;
+    // Backend returns avgRiskScore (not avgRisk)
+    const v = t.avgRiskScore ?? t.avgRisk;
     if (v == null) return null;
     return (typeof v === 'number' && v <= 1 ? v * 100 : Number(v));
   });
@@ -885,14 +1600,19 @@ function buildRiskHeatmap(hotspots) {
   const max = Math.max(...hotspots.map(f => f.recordCount || 0), 1);
   const rows = hotspots.slice(0, 20).map(f => {
     const w = Math.max(8, Math.round(f.recordCount / max * 100));
-    const risk = f.avgRisk || 0;
+    // Backend hotspot items use avgRiskScore (0-100) and filePath
+    const fp = f.filePath || f.fileName || '';
+    const risk = f.avgRiskScore ?? f.avgRisk ?? 0;
     const rn = typeof risk === 'number' && risk <= 1 ? risk : risk / 100;
     const hue = Math.round((1 - Math.min(rn, 1)) * 120);
     const alpha = 0.3 + rn * 0.5;
-    const name = (f.fileName || '').split('/').pop() || f.fileName || '?';
+    const name = (fp).split('/').pop() || fp || '?';
     return `<div class="hm-cell" style="width:${w}%;background:hsla(${hue},70%,50%,${alpha})"
-      title="${esc(f.fileName || '')} · ${f.recordCount} insertions · avg risk ${(rn*100).toFixed(1)}%"
-      onclick="filterByFile('${esc(f.fileName||'')}')">
+      title="${esc(fp)} · ${f.recordCount} insertions · avg risk ${(rn*100).toFixed(1)}%"
+      role="button" tabindex="0"
+      aria-label="File ${esc(fp)} with ${f.recordCount} insertions and avg risk ${(rn*100).toFixed(1)}%"
+      onclick="filterByFile('${esc(fp)}')"
+      onkeydown="if(event.key==='Enter'||event.key===' ')filterByFile('${esc(fp)}')">
       <span class="hm-name">${esc(name)}</span><span class="hm-cnt">${f.recordCount}</span>
     </div>`;
   }).join('');
@@ -909,14 +1629,14 @@ function filterByFile(fp) {
 // ── GRAPH ─────────────────────────────────────────────────────────────────────
 async function loadGraph() {
   const el = document.getElementById('graph-body');
-  el.innerHTML = '<div class="loading"><div class="spin"></div> Building graph…</div>';
+  el.innerHTML = '<div class="loading"><div class="spin" aria-hidden="true"></div> Building graph…</div>';
   try {
-    const d = await req('POST', '/search', { limit: 100 });
+    const d = await req('POST', '/search', { workspaceId: _user?.workspaceId, limit: 100 });
     const results = d.results || [];
     if (!results.length) { el.innerHTML = '<div class="empty">No records yet to graph.</div>'; return; }
     const gd = buildGraphData(results);
     el.innerHTML = `<div class="graph-info">${gd.nodes.length} files · ${gd.links.length} model-shared connections · click a node to search that file</div>
-      <canvas id="graph-canvas"></canvas>`;
+      <canvas id="graph-canvas" aria-label="File lineage graph"></canvas>`;
     drawGraph(gd);
   } catch(e) { el.innerHTML = `<div class="al err">${esc(e.message)}</div>`; }
 }
@@ -927,7 +1647,10 @@ function buildGraphData(records) {
   records.forEach(r => {
     const fp = r.filePath || 'unknown';
     const lvl = ((r.record || {}).riskAssessment || {}).level || '';
-    const riskVal = lvl === 'critical' ? 0.95 : lvl === 'high' ? 0.7 : lvl === 'medium' ? 0.45 : 0.15;
+    const riskByCritical = lvl === 'critical' ? 0.95 : null;
+    const riskByHigh = lvl === 'high' ? 0.7 : null;
+    const riskByMedium = lvl === 'medium' ? 0.45 : null;
+    const riskVal = riskByCritical ?? riskByHigh ?? riskByMedium ?? 0.15;
     if (!fileMap[fp]) { fileMap[fp] = { id: fp, count: 0, risk: 0, model: r.model || '' }; }
     fileMap[fp].count++;
     fileMap[fp].risk = Math.max(fileMap[fp].risk, riskVal);
@@ -967,7 +1690,7 @@ function drawGraph(data) {
     nodes.forEach((a, i) => {
       nodes.forEach((b, j) => {
         if (i >= j) return;
-        const dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx*dx + dy*dy) || 1;
+        const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
         const f = 2200 / (d * d);
         a.vx -= f*dx/d; a.vy -= f*dy/d; b.vx += f*dx/d; b.vy += f*dy/d;
       });
@@ -975,7 +1698,7 @@ function drawGraph(data) {
     data.links.forEach(l => {
       const a = byId[l.source], b = byId[l.target];
       if (!a || !b) return;
-      const dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx*dx + dy*dy) || 1;
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
       const f = (d - 130) * 0.012;
       a.vx += f*dx/d; a.vy += f*dy/d; b.vx -= f*dx/d; b.vy -= f*dy/d;
     });
@@ -1046,7 +1769,7 @@ async function pollAlerts() {
   const el = document.getElementById('alert-feed');
   if (!el) return;
   try {
-    const d = await req('POST', '/search', { limit: 25 });
+    const d = await req('POST', '/search', { workspaceId: _user?.workspaceId, limit: 25 });
     const results = d.results || [];
     const newOnes = results.filter(r => !_alertSeen.has(r.uuid));
     results.forEach(r => _alertSeen.add(r.uuid));
@@ -1067,7 +1790,9 @@ async function pollAlerts() {
     el.innerHTML = results.map(r => {
       const isNew = newOnes.includes(r);
       const lvl = ((r.record?.riskAssessment) || {}).level || '';
-      const snip = (r.snippet || '').replace(/\s+/g, ' ').slice(0, 110);
+      const snip = (r.snippet || '').replaceAll(/\s+/g, ' ').slice(0, 110);
+      const tags = r.tags || [];
+      const tagHtml = tags.length ? `<div class="tags-row" style="grid-column:2;grid-row:3">${tags.map(t => `<span class="tag-pill">${esc(t)}</span>`).join('')}</div>` : '';
       return `<div class="feed-item${isNew ? ' feed-new' : ''}">
         <div class="feed-time">${fd(r.timestampIso)}</div>
         <div class="feed-main">
@@ -1076,6 +1801,7 @@ async function pollAlerts() {
           <span class="feed-model">${esc(r.model || '—')}</span>
         </div>
         ${snip ? `<div class="feed-snip">${esc(snip)}</div>` : ''}
+        ${tagHtml}
         <button class="s feed-view" onclick="openRec('${esc(r.uuid||'')}')">View</button>
       </div>`;
     }).join('');
@@ -1085,8 +1811,538 @@ async function pollAlerts() {
   } catch {}
 }
 
+// ── HELPERS ──────────────────────────────────────────────────────────────────
+function currentWorkspaceId() { return window._workspaceId || _user?.workspaceId || localStorage.getItem('ll_workspace_id') || ''; }
+
+function riskBadge(score) {
+  if (score >= 70) return `<span class="rsk critical">${score}</span>`;
+  if (score >= 40) return `<span class="rsk high">${score}</span>`;
+  if (score >= 20) return `<span class="rsk medium">${score}</span>`;
+  return `<span class="rsk low">${score}</span>`;
+}
+
+// ── DEVELOPER ACTIVITY ───────────────────────────────────────────────────────
+let _devChart = null;
+
+async function loadDeveloperActivity() {
+  const from = document.getElementById('dev-date-from')?.value || null;
+  const to = document.getElementById('dev-date-to')?.value || null;
+  const body = { workspaceId: currentWorkspaceId(), dateFrom: from, dateTo: to };
+  const el = document.getElementById('dev-table-body');
+  if (el) el.innerHTML = '<div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>';
+  try {
+    const data = await req('POST', '/analytics/developer-activity', body);
+    renderDeveloperTable(data.results || []);
+    renderDevChart(data.results || []);
+  } catch (e) {
+    if (el) el.innerHTML = '<p class="placeholder">Developer activity unavailable.</p>';
+  }
+}
+
+function renderDeveloperTable(devs) {
+  const el = document.getElementById('dev-table-body');
+  if (!devs.length) { el.innerHTML = '<p class="placeholder">No developer activity found.</p>'; return; }
+  const rows = devs.map(d => `
+    <tr>
+      <td>${esc(d.username || d.userId || '—')}</td>
+      <td>${d.recordCount ?? '—'}</td>
+      <td>${riskBadge(Math.round(d.avgRisk || 0))}</td>
+      <td>${d.modelCount ?? '—'}</td>
+      <td>${(d.totalTokens || 0).toLocaleString()}</td>
+      <td>$${(d.totalCostUsd || 0).toFixed(4)}</td>
+      <td>${d.lastActive ? new Date(d.lastActive).toLocaleDateString() : '—'}</td>
+    </tr>
+  `).join('');
+  el.innerHTML = `<div class="twrap"><table class="data-table"><thead><tr>
+    <th>Developer</th><th>Records</th><th>Avg Risk</th><th>Models</th><th>Tokens</th><th>Cost</th><th>Last Active</th>
+  </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function renderDevChart(devs) {
+  const canvas = document.getElementById('devActivityChart');
+  if (!canvas || !window.Chart) return;
+  if (_devChart) { _devChart.destroy(); _devChart = null; }
+  if (!devs.length) return;
+  const labels = devs.slice(0, 10).map(d => d.username || d.userId || 'unknown');
+  const counts = devs.slice(0, 10).map(d => d.recordCount || 0);
+  const textColor = _dark ? '#94a3b8' : '#4a5568';
+  const gridColor = _dark ? '#2d4a6a' : '#cbd5e0';
+  _devChart = new Chart(canvas.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{ label: 'AI Records', data: counts, backgroundColor: 'rgba(59,130,246,.55)', borderColor: '#3b82f6', borderWidth: 1 }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: textColor }, grid: { color: gridColor } },
+        y: { beginAtZero: true, ticks: { color: textColor }, grid: { color: gridColor } }
+      }
+    }
+  });
+}
+
+// ── REVIEWER QUEUE ───────────────────────────────────────────────────────────
+async function loadReviews() {
+  const statusFilter = document.getElementById('review-status-filter')?.value || '';
+  const url = statusFilter ? `/reviews?review_status=${encodeURIComponent(statusFilter)}` : '/reviews';
+  const el = document.getElementById('reviews-body');
+  if (el) el.innerHTML = '<div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>';
+  try {
+    const data = await req('GET', url);
+    renderReviews(data.results || []);
+  } catch (e) {
+    if (el) el.innerHTML = '<p class="placeholder">Review queue unavailable.</p>';
+  }
+}
+
+function renderReviews(items) {
+  const el = document.getElementById('reviews-body');
+  if (!items.length) { el.innerHTML = '<p class="placeholder">No reviews found.</p>'; return; }
+  const rows = items.map(item => `
+    <tr>
+      <td><code style="font-size:11px">${esc(item.recordUuid || '')}</code></td>
+      <td><span class="badge badge-${esc(item.status || '')}">${esc(item.status || '')}</span></td>
+      <td>${esc(item.assignedTo || '—')}</td>
+      <td>${esc(item.notes || '—')}</td>
+      <td>${item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '—'}</td>
+      <td style="white-space:nowrap">
+        <button class="btn-sm" onclick="updateReview('${esc(item.id || '')}','approved')">✓ Approve</button>
+        <button class="btn-sm btn-danger" onclick="updateReview('${esc(item.id || '')}','rejected')">✗ Reject</button>
+      </td>
+    </tr>
+  `).join('');
+  el.innerHTML = `<div class="twrap"><table class="data-table"><thead><tr>
+    <th>Record UUID</th><th>Status</th><th>Assigned To</th><th>Notes</th><th>Created</th><th>Actions</th>
+  </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+async function updateReview(reviewId, newStatus) {
+  try {
+    await req('PATCH', `/reviews/${encodeURIComponent(reviewId)}`, { status: newStatus });
+    loadReviews();
+  } catch (e) {
+    alert('Failed to update review: ' + (e.message || e));
+  }
+}
+
+// ── POLICIES ─────────────────────────────────────────────────────────────────
+async function loadPolicies() {
+  try {
+    const data = await req('GET', '/policies');
+    renderPolicies(data.results || []);
+  } catch (e) {
+    const el = document.getElementById('policy-list-body');
+    if (el) el.innerHTML = '<p class="placeholder">Policies unavailable (admin only).</p>';
+  }
+}
+
+function renderPolicies(policies) {
+  const el = document.getElementById('policy-list-body');
+  if (!el) return;
+  if (!policies.length) { el.innerHTML = '<p class="placeholder">No policies configured.</p>'; return; }
+  el.innerHTML = policies.map(p => `
+    <div class="policy-card">
+      <span class="policy-name">${esc(p.name || '')}</span>
+      <span class="badge">${esc(p.policyType || '')}</span>
+      <span class="badge badge-${esc(p.action || '')}">${esc(p.action || '')}</span>
+      <span class="${p.enabled ? 'text-success' : 'text-muted'}">${p.enabled ? 'enabled' : 'disabled'}</span>
+      <button class="btn-sm btn-danger" onclick="deletePolicy('${esc(p.id || '')}')">Delete</button>
+    </div>
+  `).join('');
+}
+
+function showCreatePolicyForm() {
+  document.getElementById('create-policy-form').hidden = false;
+}
+
+async function createPolicy() {
+  const name = document.getElementById('new-policy-name').value.trim();
+  const policyType = document.getElementById('new-policy-type').value;
+  const action = document.getElementById('new-policy-action').value;
+  const configText = document.getElementById('new-policy-config').value.trim();
+  let config = {};
+  try { config = configText ? JSON.parse(configText) : {}; } catch { alert('Invalid JSON in config.'); return; }
+  try {
+    await req('POST', '/policies', { workspaceId: currentWorkspaceId(), name, policyType, action, config });
+    document.getElementById('create-policy-form').hidden = true;
+    loadPolicies();
+  } catch (e) { alert('Failed to create policy: ' + (e.message || e)); }
+}
+
+async function deletePolicy(policyId) {
+  if (!confirm('Delete this policy?')) return;
+  try {
+    await req('DELETE', `/policies/${encodeURIComponent(policyId)}`);
+    loadPolicies();
+  } catch (e) { alert('Failed: ' + (e.message || e)); }
+}
+
+// ── ALERT CONFIGS ─────────────────────────────────────────────────────────────
+async function loadAlertConfigs() {
+  try {
+    const data = await req('GET', '/alert-configs');
+    renderAlertConfigs(data.results || []);
+  } catch (e) {
+    const el = document.getElementById('alert-config-list');
+    if (el) el.innerHTML = '<p class="placeholder">Alert configs unavailable (admin only).</p>';
+  }
+}
+
+function renderAlertConfigs(configs) {
+  const el = document.getElementById('alert-config-list');
+  if (!el) return;
+  if (!configs.length) { el.innerHTML = '<p class="placeholder">No alert channels configured.</p>'; return; }
+  el.innerHTML = configs.map(c => `
+    <div class="policy-card">
+      <span class="policy-name">${esc(c.name || '')}</span>
+      <span class="badge">${esc(c.channel || '')}</span>
+      <span class="text-muted">${(c.triggerOn || []).map(t => esc(t)).join(', ')}</span>
+      <span class="${c.enabled ? 'text-success' : 'text-muted'}">${c.enabled ? 'enabled' : 'disabled'}</span>
+      <button class="btn-sm btn-danger" onclick="deleteAlertConfig('${esc(c.id || '')}')">Delete</button>
+    </div>
+  `).join('');
+}
+
+function showCreateAlertForm() {
+  document.getElementById('create-alert-form').hidden = false;
+}
+
+function updateAlertChannelHint() {
+  const ch = document.getElementById('new-alert-channel')?.value;
+  const hints = {
+    slack: 'Paste your Slack incoming webhook URL: {"webhook_url": "https://hooks.slack.com/..."}',
+    teams: 'Paste your Teams webhook URL: {"webhook_url": "https://outlook.office.com/webhook/..."}',
+    email: 'Provide SMTP config: {"smtp_host": "smtp.gmail.com", "smtp_port": 587, "from_addr": "...", "recipients": ["..."]}',
+    webhook: 'Any HTTPS URL accepting POST: {"webhook_url": "https://..."}',
+  };
+  const el = document.getElementById('alert-channel-hint');
+  if (el) el.textContent = hints[ch] || '';
+}
+
+async function createAlertConfig() {
+  const name = document.getElementById('new-alert-name').value.trim();
+  const channel = document.getElementById('new-alert-channel').value;
+  const configText = document.getElementById('new-alert-config').value.trim();
+  const triggersRaw = document.getElementById('new-alert-triggers').value;
+  let config = {};
+  try { config = configText ? JSON.parse(configText) : {}; } catch { alert('Invalid JSON.'); return; }
+  const triggerOn = triggersRaw.split(',').map(t => t.trim()).filter(Boolean);
+  try {
+    await req('POST', '/alert-configs', { workspaceId: currentWorkspaceId(), name, channel, config, triggerOn });
+    document.getElementById('create-alert-form').hidden = true;
+    loadAlertConfigs();
+  } catch (e) { alert('Failed: ' + (e.message || e)); }
+}
+
+async function deleteAlertConfig(configId) {
+  if (!confirm('Delete this alert channel?')) return;
+  try {
+    await req('DELETE', `/alert-configs/${encodeURIComponent(configId)}`);
+    loadAlertConfigs();
+  } catch (e) { alert('Failed: ' + (e.message || e)); }
+}
+
+// ── ASYNC EXPORT ──────────────────────────────────────────────────────────────
+let _asyncJobId = null;
+let _asyncPollTimer = null;
+
+async function startAsyncExport() {
+  const format = document.getElementById('async-export-format')?.value || 'json';
+  const limit = parseInt(document.getElementById('async-export-limit')?.value || '1000', 10);
+  try {
+    const data = await req('POST', '/export/async', { workspaceId: currentWorkspaceId(), format, limit });
+    _asyncJobId = data.jobId;
+    document.getElementById('async-export-status').hidden = false;
+    document.getElementById('async-job-id').textContent = _asyncJobId || '—';
+    document.getElementById('async-job-status').textContent = data.status || 'queued';
+    document.getElementById('async-download-btn').hidden = true;
+    _pollAsyncExport();
+  } catch (e) {
+    alert('Failed to start export: ' + (e.message || e));
+  }
+}
+
+function _pollAsyncExport() {
+  if (_asyncPollTimer) clearInterval(_asyncPollTimer);
+  _asyncPollTimer = setInterval(async () => {
+    if (!_asyncJobId) { clearInterval(_asyncPollTimer); return; }
+    try {
+      const data = await req('GET', `/export/jobs/${encodeURIComponent(_asyncJobId)}`);
+      document.getElementById('async-job-status').textContent = data.status || '—';
+      if (data.status === 'done') {
+        clearInterval(_asyncPollTimer);
+        document.getElementById('async-download-btn').hidden = false;
+      } else if (data.status === 'failed') {
+        clearInterval(_asyncPollTimer);
+        document.getElementById('async-job-status').textContent = 'Failed: ' + (data.error || 'unknown error');
+      }
+    } catch { clearInterval(_asyncPollTimer); }
+  }, 2000);
+}
+
+async function downloadAsyncExport() {
+  if (!_asyncJobId) return;
+  try {
+    const res = await fetch(`/export/jobs/${encodeURIComponent(_asyncJobId)}/download`, {
+      headers: { Authorization: `Bearer ${_tok}` }
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      alert('Download failed: ' + (d.detail || `HTTP ${res.status}`));
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const fnMatch = disposition.match(/filename="?([^"]+)"?/);
+    a.download = fnMatch ? fnMatch[1] : 'export';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert('Download failed: ' + (e.message || e));
+  }
+}
+
+// ── GITHUB CI ────────────────────────────────────────────────────────────────
+async function loadGithubConfig() {
+  try {
+    const d = await req('GET', '/github/config');
+    document.getElementById('gh-threshold').value = d.risk_threshold ?? 70;
+    document.getElementById('gh-block').checked = d.block_on_high_risk ?? true;
+    document.getElementById('gh-repos').value = (d.allowed_repos || []).join('\n');
+  } catch(e) { /* first load may 404 if not configured */ }
+}
+async function saveGithubConfig() {
+  const threshold = parseInt(document.getElementById('gh-threshold').value, 10);
+  const block_on_high_risk = document.getElementById('gh-block').checked;
+  const repos = document.getElementById('gh-repos').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  const msg = document.getElementById('gh-msg');
+  try {
+    await req('PUT', '/github/config', {risk_threshold: threshold, block_on_high_risk, allowed_repos: repos});
+    msg.textContent = 'Configuration saved.'; msg.style.color = 'var(--ok)';
+  } catch(e) { msg.textContent = e.message || 'Save failed.'; msg.style.color = 'var(--err)'; }
+}
+
+// ── QUALITY METRICS ───────────────────────────────────────────────────────────
+async function loadQuality() {
+  const uuid = document.getElementById('q-uuid').value.trim();
+  if (!uuid) return;
+  const out = document.getElementById('q-result');
+  out.innerHTML = '<div class="loading"><div class="spin"></div> Analyzing…</div>';
+  try {
+    const d = await req('GET', `/quality/${encodeURIComponent(uuid)}`);
+    out.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-top:6px">
+      ${metricCard('Lines', d.totalLines)}
+      ${metricCard('Code Lines', d.codeLines)}
+      ${metricCard('Comment %', (d.commentRatio * 100).toFixed(1) + '%')}
+      ${metricCard('Functions', d.functionCount)}
+      ${metricCard('Classes', d.classCount)}
+      ${metricCard('Cyclomatic', d.cyclomaticComplexity)}
+      ${metricCard('Maintainability', d.maintainabilityScore + '/100')}
+      ${metricCard('Language', d.language)}
+    </div>`;
+  } catch(e) { out.innerHTML = `<span style="color:var(--err)">${e.message || 'Error'}</span>`; }
+}
+function metricCard(label, value) {
+  return `<div class="card" style="text-align:center;padding:12px 8px"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">${label}</div><div style="font-size:18px;font-weight:700">${value}</div></div>`;
+}
+async function loadQualityBatch() {
+  const uuids = document.getElementById('q-batch').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  if (!uuids.length) return;
+  const out = document.getElementById('q-batch-result');
+  out.innerHTML = '<div class="loading"><div class="spin"></div> Analyzing…</div>';
+  try {
+    const d = await req('POST', '/quality/batch', {record_ids: uuids});
+    const s = d.summary;
+    out.innerHTML = `<div class="card"><b>Summary</b><br>
+      Avg Cyclomatic: ${s.avgCyclomaticComplexity} &nbsp;|&nbsp;
+      Avg Maintainability: ${s.avgMaintainabilityScore} &nbsp;|&nbsp;
+      Total Code Lines: ${s.totalCodeLines} &nbsp;|&nbsp;
+      High Complexity: ${s.highComplexityCount} &nbsp;|&nbsp;
+      Low Maintainability: ${s.lowMaintainabilityCount}
+    </div>
+    <table class="tbl" style="margin-top:10px"><thead><tr><th>UUID</th><th>Lang</th><th>Lines</th><th>Cyclomatic</th><th>Maintain.</th></tr></thead>
+    <tbody>${d.results.map(r=>`<tr><td style="font-family:monospace;font-size:11px">${r.record_id.slice(0,8)}…</td><td>${r.metrics?.language||'-'}</td><td>${r.metrics?.codeLines??'-'}</td><td>${r.metrics?.cyclomaticComplexity??'-'}</td><td>${r.metrics?.maintainabilityScore??'-'}</td></tr>`).join('')}</tbody></table>`;
+  } catch(e) { out.innerHTML = `<span style="color:var(--err)">${e.message || 'Error'}</span>`; }
+}
+
+// ── SCHEDULED DIGESTS ─────────────────────────────────────────────────────────
+async function loadDigests() {
+  const out = document.getElementById('digests-body');
+  try {
+    const d = await req('GET', '/scheduled-reports');
+    if (!d.length) { out.innerHTML = '<p style="color:var(--muted)">No digests configured.</p>'; return; }
+    out.innerHTML = `<table class="tbl"><thead><tr><th>Name</th><th>Type</th><th>Frequency</th><th>Recipients</th><th>Enabled</th><th></th></tr></thead>
+    <tbody>${d.map(r=>`<tr>
+      <td>${esc(r.name)}</td>
+      <td>${r.report_type}</td>
+      <td>${r.frequency}</td>
+      <td>${(r.recipients||[]).join(', ')}</td>
+      <td>${r.enabled?'Yes':'No'}</td>
+      <td><button style="font-size:11px;padding:3px 8px" onclick="runDigest('${r.id}')">Run now</button></td>
+    </tr>`).join('')}</tbody></table>`;
+  } catch(e) { out.innerHTML = `<span style="color:var(--err)">${e.message||'Error'}</span>`; }
+}
+function showCreateDigest() {
+  const el = document.getElementById('digests-create');
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+async function createDigest() {
+  const name = document.getElementById('dig-name').value.trim();
+  const report_type = document.getElementById('dig-type').value;
+  const frequency = document.getElementById('dig-freq').value;
+  const recipients = document.getElementById('dig-recipients').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const msg = document.getElementById('dig-msg');
+  try {
+    await req('POST', '/scheduled-reports', {name, report_type, frequency, recipients, enabled: true});
+    msg.textContent = 'Digest created.'; msg.style.color = 'var(--ok)';
+    document.getElementById('digests-create').style.display = 'none';
+    loadDigests();
+  } catch(e) { msg.textContent = e.message || 'Create failed.'; msg.style.color = 'var(--err)'; }
+}
+async function runDigest(id) {
+  try {
+    await req('POST', `/scheduled-reports/${id}/run`);
+    alert('Digest dispatched.');
+  } catch(e) { alert(e.message || 'Failed to run digest.'); }
+}
+
+// ── SSO PROVIDERS ─────────────────────────────────────────────────────────────
+async function loadSsoProviders() {
+  const out = document.getElementById('sso-body');
+  try {
+    const d = await req('GET', '/auth/sso/providers');
+    if (!d.length) { out.innerHTML = '<p style="color:var(--muted)">No SSO providers configured.</p>'; return; }
+    out.innerHTML = `<table class="tbl"><thead><tr><th>Name</th><th>Issuer</th><th>Client ID</th><th>Enabled</th><th></th></tr></thead>
+    <tbody>${d.map(p=>`<tr>
+      <td>${esc(p.name)}</td>
+      <td>${esc(p.issuer)}</td>
+      <td><code style="font-size:11px">${esc(p.client_id)}</code></td>
+      <td>${p.enabled?'Yes':'No'}</td>
+      <td><button style="font-size:11px;padding:3px 8px;color:var(--err)" onclick="deleteSsoProvider('${p.id}')">Delete</button></td>
+    </tr>`).join('')}</tbody></table>`;
+  } catch(e) { out.innerHTML = `<span style="color:var(--err)">${e.message||'Error'}</span>`; }
+}
+function showCreateSso() {
+  const el = document.getElementById('sso-create');
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+async function createSsoProvider() {
+  const name = document.getElementById('sso-name').value.trim();
+  const issuer = document.getElementById('sso-issuer').value.trim();
+  const client_id = document.getElementById('sso-client-id').value.trim();
+  const client_secret = document.getElementById('sso-client-secret').value.trim();
+  const msg = document.getElementById('sso-msg');
+  try {
+    await req('POST', '/auth/sso/providers', {name, issuer, client_id, client_secret, scopes: ['openid','email','profile'], enabled: true});
+    msg.textContent = 'Provider added.'; msg.style.color = 'var(--ok)';
+    document.getElementById('sso-create').style.display = 'none';
+    loadSsoProviders();
+  } catch(e) { msg.textContent = e.message || 'Failed to add.'; msg.style.color = 'var(--err)'; }
+}
+async function deleteSsoProvider(id) {
+  if (!confirm('Delete this SSO provider?')) return;
+  try {
+    await req('DELETE', `/auth/sso/providers/${id}`);
+    loadSsoProviders();
+  } catch(e) { alert(e.message || 'Delete failed.'); }
+}
+
+// ── WORKSPACE ─────────────────────────────────────────────────────────────────
+async function loadWorkspace() {
+  const out = document.getElementById('workspace-body');
+  try {
+    const d = await req('GET', '/workspaces');
+    out.innerHTML = `<div class="card" style="max-width:480px">
+      <h4 style="margin:0 0 14px">Current Workspace</h4>
+      <div style="margin-bottom:8px;font-size:13px"><b>ID:</b> <code>${esc(d.id || _user?.workspace_id || '—')}</code></div>
+      <div style="margin-bottom:14px;font-size:13px"><b>Name:</b> ${esc(d.name || '—')}</div>
+      <label style="display:block;margin-bottom:8px;font-size:13px">Workspace Name
+        <input id="ws-name" type="text" value="${esc(d.name || '')}" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
+      </label>
+      <button class="p" onclick="saveWorkspaceName('${esc(d.id || '')}')">Update Name</button>
+      <div id="ws-msg" style="margin-top:10px;font-size:13px"></div>
+    </div>`;
+  } catch(e) {
+    out.innerHTML = `<div class="card" style="max-width:480px">
+      <h4 style="margin:0 0 14px">Create Workspace</h4>
+      <label style="display:block;margin-bottom:8px;font-size:13px">Workspace ID (slug)
+        <input id="ws-new-id" type="text" placeholder="my-org" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
+      </label>
+      <label style="display:block;margin-bottom:14px;font-size:13px">Display Name
+        <input id="ws-new-name" type="text" placeholder="My Organisation" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
+      </label>
+      <button class="p" onclick="createWorkspace()">Create Workspace</button>
+      <div id="ws-msg" style="margin-top:10px;font-size:13px"></div>
+    </div>`;
+  }
+}
+async function saveWorkspaceName(id) {
+  const name = document.getElementById('ws-name').value.trim();
+  const msg = document.getElementById('ws-msg');
+  try {
+    await req('PATCH', `/workspaces/${encodeURIComponent(id)}`, {name});
+    msg.textContent = 'Name updated.'; msg.style.color = 'var(--ok)';
+  } catch(e) { msg.textContent = e.message || 'Update failed.'; msg.style.color = 'var(--err)'; }
+}
+async function createWorkspace() {
+  const id = document.getElementById('ws-new-id').value.trim();
+  const name = document.getElementById('ws-new-name').value.trim();
+  const msg = document.getElementById('ws-msg');
+  try {
+    await req('POST', '/workspaces', {id, name});
+    msg.textContent = 'Workspace created.'; msg.style.color = 'var(--ok)';
+    loadWorkspace();
+  } catch(e) { msg.textContent = e.message || 'Create failed.'; msg.style.color = 'var(--err)'; }
+}
+
 // ── BOOT ─────────────────────────────────────────────────────────────────────
-showLogin();
+// Auto-login when arriving from the /setup wizard
+(async function boot() {
+  const access = sessionStorage.getItem('ll_access');
+  const refresh = sessionStorage.getItem('ll_refresh');
+  if (access && refresh) {
+    sessionStorage.removeItem('ll_access');
+    sessionStorage.removeItem('ll_refresh');
+    try {
+      // Validate the token by fetching /auth/me
+      const res = await fetch('/auth/me', {headers: {'Authorization': `Bearer ${access}`}});
+      if (res.ok) {
+        const user = await res.json();
+        _tok = access; _ref = refresh;
+        _user = {username: user.username, role: user.role, workspace_id: user.workspaceId};
+        const h = await fetch('/health').then(r => r.json()).catch(() => ({}));
+        _mode = h.productMode || 'plus';
+        document.getElementById('uname').textContent = _user.username;
+        const rb = document.getElementById('role-bdg');
+        rb.textContent = _user.role; rb.className = `bdg${_user.role === 'admin' ? ' adm' : ''}`;
+        const mb = document.getElementById('mode-bdg');
+        mb.textContent = _mode; mb.className = `bdg ${_mode}`;
+        if (_user.role === 'admin') {
+          document.querySelectorAll('.adm-tab').forEach(t => t.style.display = 'inline-flex');
+          document.getElementById('invite-box').style.display = 'block';
+          document.getElementById('policy-config-section').style.display = 'block';
+          document.getElementById('alert-config-section').style.display = 'block';
+        }
+        showApp();
+        go('dashboard');
+        loadPolicies(); loadAlertConfigs(); checkMcp();
+        setInterval(checkMcp, 60000);
+        startAlertPoll();
+        setInterval(updateLastUpdatedText, 30000);
+        return;
+      }
+    } catch(e) {}
+  }
+  showLogin();
+})();
 </script>
 </body>
 </html>

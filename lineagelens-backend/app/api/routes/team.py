@@ -1,22 +1,33 @@
+from __future__ import annotations
+
 import uuid as uuid_pkg
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes.auth import normalize_username, validate_password_strength
+from app.core.audit import log_audit_event
 from app.core.config import Settings, get_settings
 from app.core.mode_guard import require_non_solo
-from app.core.security import AuthContext, get_current_auth_context, hash_password
+from app.core.security import AuthContext, get_current_auth_context, hash_password, require_admin
 from app.db.models import ProvenanceRecord, UserAccount
 from app.db.session import get_db_session
 from app.schemas.team import InviteMemberRequest, InviteMemberResponse, TeamMembersResponse
 from app.services.team_service import build_team_member_stats
 
+VALID_ROLES = {"admin", "member", "viewer", "reviewer", "auditor", "data-engineer"}
 
 router = APIRouter(prefix="/team", tags=["team"])
+
+
+class UpdateRoleRequest(BaseModel):
+    role: str = Field(..., min_length=1, max_length=32)
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 @router.get("/members", dependencies=[Depends(require_non_solo)])
@@ -105,6 +116,134 @@ async def invite_team_member(
         workspaceId=new_user.workspace_id,
         role=new_user.role,
     )
+
+
+@router.get("/members/{user_id}", dependencies=[Depends(require_non_solo)])
+async def get_team_member(
+    user_id: str,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    auth: Annotated[AuthContext, Depends(require_admin)],
+) -> dict:
+    """Get a single team member by ID (admin only)."""
+    parsed = _parse_uuid(user_id)
+    if parsed is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+
+    result = await session.execute(
+        select(UserAccount).where(
+            UserAccount.id == parsed,
+            UserAccount.workspace_id == auth.workspace_id,
+        )
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+
+    return {
+        "id": str(user.id),
+        "username": user.username,
+        "role": user.role,
+        "isActive": user.is_active,
+        "workspaceId": user.workspace_id,
+        "createdAt": user.created_at.isoformat() if user.created_at else None,
+    }
+
+
+@router.patch("/members/{user_id}/role", dependencies=[Depends(require_non_solo)])
+async def update_member_role(
+    user_id: str,
+    payload: UpdateRoleRequest,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    auth: Annotated[AuthContext, Depends(require_admin)],
+) -> dict:
+    """Change a team member's role (admin only). Valid roles: admin, member, viewer, reviewer, auditor, data-engineer."""
+    if payload.role not in VALID_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid role '{payload.role}'. Valid roles: {', '.join(sorted(VALID_ROLES))}.",
+        )
+
+    parsed = _parse_uuid(user_id)
+    if parsed is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+
+    result = await session.execute(
+        select(UserAccount).where(
+            UserAccount.id == parsed,
+            UserAccount.workspace_id == auth.workspace_id,
+        )
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+
+    if str(user.id) == auth.subject and payload.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Admins cannot demote themselves.",
+        )
+
+    old_role = user.role
+    user.role = payload.role
+
+    await log_audit_event(
+        session,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        action="team.role_update",
+        target_uuid=user_id,
+        details={"old_role": old_role, "new_role": payload.role, "target_user": user.username},
+    )
+
+    await session.commit()
+    await session.refresh(user)
+
+    return {
+        "id": str(user.id),
+        "username": user.username,
+        "role": user.role,
+        "workspaceId": user.workspace_id,
+    }
+
+
+@router.patch("/members/{user_id}/deactivate", dependencies=[Depends(require_non_solo)])
+async def deactivate_member(
+    user_id: str,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    auth: Annotated[AuthContext, Depends(require_admin)],
+) -> dict:
+    """Deactivate a team member (admin only). Revokes all active tokens."""
+    parsed = _parse_uuid(user_id)
+    if parsed is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+
+    if user_id == auth.subject:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot deactivate your own account.")
+
+    result = await session.execute(
+        select(UserAccount).where(
+            UserAccount.id == parsed,
+            UserAccount.workspace_id == auth.workspace_id,
+        )
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+
+    user.is_active = False
+    user.token_version = (user.token_version or 0) + 1  # revoke all tokens
+
+    await log_audit_event(
+        session,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        action="team.deactivate",
+        target_uuid=user_id,
+        details={"target_user": user.username},
+    )
+
+    await session.commit()
+    return {"id": str(user.id), "username": user.username, "isActive": False}
 
 
 def _parse_uuid(value: str) -> uuid_pkg.UUID | None:
