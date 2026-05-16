@@ -170,7 +170,7 @@ async def delete_scheduled_report(
     if r is None:
         raise HTTPException(status_code=404, detail="Scheduled report not found.")
 
-    await session.delete(r)
+    session.delete(r)
     await session.commit()
 
 

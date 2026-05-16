@@ -149,7 +149,7 @@ async def remove_tag(
             detail=f"Tag '{tag_val}' not found on this record.",
         )
 
-    await session.delete(existing)
+    session.delete(existing)
 
     await log_audit_event(
         session,

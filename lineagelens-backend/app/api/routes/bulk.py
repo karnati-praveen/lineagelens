@@ -97,7 +97,7 @@ async def bulk_delete(
     deleted_uuids = [str(r.uuid) for r in records]
 
     for record in records:
-        await session.delete(record)
+        session.delete(record)
 
     await log_audit_event(
         session,

@@ -171,7 +171,7 @@ async def delete_policy(
     if policy is None:
         raise HTTPException(status_code=404, detail="Policy not found.")
 
-    await session.delete(policy)
+    session.delete(policy)
     await log_audit_event(
         session,
         workspace_id=auth.workspace_id,

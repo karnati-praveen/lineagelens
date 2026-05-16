@@ -148,5 +148,5 @@ async def delete_alert_config(
     if ac is None:
         raise HTTPException(status_code=404, detail="Alert config not found.")
 
-    await session.delete(ac)
+    session.delete(ac)
     await session.commit()

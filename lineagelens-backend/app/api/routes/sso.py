@@ -141,7 +141,7 @@ async def delete_oidc_provider(
         action="sso.provider.delete",
         details={"name": p.name},
     )
-    await session.delete(p)
+    session.delete(p)
     await session.commit()
 
 

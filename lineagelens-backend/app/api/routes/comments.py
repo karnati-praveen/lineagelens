@@ -198,7 +198,7 @@ async def delete_comment(
         )
 
     record_uuid = comment.record_uuid
-    await session.delete(comment)
+    session.delete(comment)
 
     await log_audit_event(
         session,
