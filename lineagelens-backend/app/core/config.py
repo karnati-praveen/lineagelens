@@ -144,9 +144,14 @@ class Settings(BaseSettings):
 
     @property
     def product_mode(self) -> str:
-        if self.is_sqlite:
-            return "lite"
-        return {"solo": "lite", "enterprise": "max", "full": "max"}.get(self.backend_mode, "plus")
+        return {"solo": "lite", "enterprise": "max"}.get(self.backend_mode, "plus")
+
+    @field_validator("pgvector_dimension")
+    @classmethod
+    def validate_pgvector_dimension(cls, value: int) -> int:
+        if value != 256:
+            raise ValueError("PGVECTOR_DIMENSION must be 256 to match the database schema.")
+        return value
 
     @field_validator("backend_mode")
     @classmethod

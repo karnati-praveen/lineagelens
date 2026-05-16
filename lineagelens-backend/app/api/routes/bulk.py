@@ -176,7 +176,7 @@ async def bulk_tag(
     }
 
 
-@router.post("/bulk/export")
+@router.post("/bulk/export", response_model=None)
 async def bulk_export(
     payload: BulkExportRequest,
     session: Annotated[AsyncSession, Depends(get_db_session)],

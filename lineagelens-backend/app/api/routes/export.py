@@ -102,7 +102,7 @@ def _build_audit_csv_row(r: dict) -> list:
     ]
 
 
-@router.get("/export/audit")
+@router.get("/export/audit", response_model=None)
 async def export_audit_report(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
