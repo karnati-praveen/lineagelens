@@ -293,7 +293,9 @@ export function activate(context: vscode.ExtensionContext): void {
       previousDocumentTexts.delete(document.uri.toString());
     }),
     vscode.workspace.onDidChangeTextDocument((event) => {
-      void queueDocumentChangeProcessing(event);
+      void queueDocumentChangeProcessing(event).catch((err: unknown) => {
+        log(`Document change handler failed: ${toErrorMessage(err)}`);
+      });
     }),
     vscode.commands.registerCommand('lineagelens.start', async () => {
       await initializeStorageService(context, vscode.window.activeTextEditor?.document.uri);
@@ -447,7 +449,9 @@ export function activate(context: vscode.ExtensionContext): void {
         event.affectsConfiguration(CONFIG_SECTION + '.localProxy.retentionMs')
       ) {
         if (runtimeInitialized) {
-          void syncLocalProxyLifecycle();
+          void syncLocalProxyLifecycle().catch((err: unknown) => {
+            log(`Local proxy sync failed: ${toErrorMessage(err)}`);
+          });
         } else {
           log('Local proxy configuration updated. Changes will apply when runtime initializes.');
         }
@@ -455,9 +459,13 @@ export function activate(context: vscode.ExtensionContext): void {
 
       if (event.affectsConfiguration(MODE_CONFIG_SECTION + '.mode')) {
         if (runtimeInitialized) {
-          void initializeStorageService(context, activeUri, true);
+          void initializeStorageService(context, activeUri, true).catch((err: unknown) => {
+            log(`Storage re-initialization failed: ${toErrorMessage(err)}`);
+          });
         } else {
-          void prepareStorageService(context, activeUri, true);
+          void prepareStorageService(context, activeUri, true).catch((err: unknown) => {
+            log(`Storage preparation failed: ${toErrorMessage(err)}`);
+          });
         }
 
         updateStatusBarIndicator(activeUri);
@@ -468,13 +476,17 @@ export function activate(context: vscode.ExtensionContext): void {
         const startupMode = getDetectorConfig(activeUri).startupMode;
 
         if (startupMode === 'eager' && !runtimeInitialized) {
-          void ensureRuntimeInitialized(activeUri);
+          void ensureRuntimeInitialized(activeUri).catch((err: unknown) => {
+            log(`Runtime initialization failed: ${toErrorMessage(err)}`);
+          });
         }
       }
 
       if (isStorageConfigurationChange(event)) {
         if (runtimeInitialized) {
-          void activeStorageService?.handleConfigurationChanged(activeUri);
+          void activeStorageService?.handleConfigurationChanged(activeUri).catch((err: unknown) => {
+            log(`Storage configuration update failed: ${toErrorMessage(err)}`);
+          });
         }
       }
 
@@ -483,11 +495,15 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   const activeUri = vscode.window.activeTextEditor?.document.uri;
-  void prepareStorageService(context, activeUri, true);
+  void prepareStorageService(context, activeUri, true).catch((err: unknown) => {
+    log(`Storage preparation failed on activation: ${toErrorMessage(err)}`);
+  });
 
   const startupMode = getDetectorConfig(activeUri).startupMode;
   if (startupMode === 'eager') {
-    void ensureRuntimeInitialized(activeUri);
+    void ensureRuntimeInitialized(activeUri).catch((err: unknown) => {
+      log(`Eager runtime initialization failed: ${toErrorMessage(err)}`);
+    });
   }
 
   // First-run welcome notification
