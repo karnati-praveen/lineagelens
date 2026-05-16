@@ -20,13 +20,13 @@ spec:
         runAsUser: 1000
       containers:
         - name: proxy
-          image: lineagelens/proxy:latest
+          image: ghcr.io/KarnatiPraveen/lineagelens-proxy:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8788
               name: http
           env:
-            - name: LINEAGELENS_BACKEND_URL
+            - name: BACKEND_URL
               value: "http://lineagelens-backend:8787"
           envFrom:
             - secretRef:
