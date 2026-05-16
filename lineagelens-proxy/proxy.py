@@ -299,7 +299,7 @@ async def _ingest(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{BACKEND_URL}/ingest",
                 json=payload,
@@ -374,6 +374,10 @@ async def _handle_streaming(
         try:
             async for chunk in upstream.aiter_bytes():
                 if not skip_capture and not _capture_overflow:
+                    if len(chunk) > MAX_BODY_BYTES:
+                        _capture_overflow = True
+                        yield chunk
+                        continue
                     collected.append(chunk)
                     _collected_bytes += len(chunk)
                     if _collected_bytes > MAX_BODY_BYTES:
@@ -527,6 +531,9 @@ def _generate_host_cert(hostname: str) -> tuple[bytes, bytes]:
     """
     if hostname in _host_cert_cache:
         return _host_cert_cache[hostname]
+
+    if not PROXY_CA_CERT_PATH or not PROXY_CA_KEY_PATH:
+        raise ValueError("PROXY_CA_CERT_PATH and PROXY_CA_KEY_PATH must be set for MITM mode")
 
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
