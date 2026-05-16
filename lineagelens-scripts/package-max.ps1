@@ -61,7 +61,9 @@ try {
     Copy-Item (Join-Path $repoRoot "lineagelens-scripts\debug.ps1") (Join-Path $bundleRoot "debug.ps1") -Force
 
     npm run compile
+    if ($LASTEXITCODE -ne 0) { throw "npm run compile failed with exit code $LASTEXITCODE" }
     npm test
+    if ($LASTEXITCODE -ne 0) { throw "npm test failed with exit code $LASTEXITCODE" }
     Copy-Item (Join-Path $repoRoot "lineagelens-scripts\quickstart-max.sh") (Join-Path $bundleRoot "quickstart.sh") -Force
     Copy-Item (Join-Path $repoRoot "lineagelens-scripts\reset-max.sh") (Join-Path $bundleRoot "reset.sh") -Force
     Copy-Item (Join-Path $repoRoot "lineagelens-scripts\commands-max.md") (Join-Path $bundleRoot "COMMANDS.md") -Force
