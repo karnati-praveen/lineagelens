@@ -88,6 +88,12 @@ services:
       PROXY_PORT: 8788
     ports:
       - "8788:8788"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8788/proxy-health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
 volumes:
   postgres_team_data:
