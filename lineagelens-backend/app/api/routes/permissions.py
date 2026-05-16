@@ -101,7 +101,7 @@ async def get_record_permissions(
     return {"results": [_ser(p) for p in perms], "count": len(perms)}
 
 
-@router.delete("/permissions/{permission_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/permissions/{permission_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def revoke_permission(
     permission_id: int,
     session: Annotated[AsyncSession, Depends(get_db_session)],

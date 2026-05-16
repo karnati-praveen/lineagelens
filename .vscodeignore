@@ -11,6 +11,7 @@ lineagelens-ad/**
 lineagelens-proxy/**
 lineagelens-src/**
 dist/**
+!dist/extension.js
 .vscode/**
 
 # Local and build artifacts

@@ -121,7 +121,7 @@ async def add_tags(
     return {"record_uuid": record_uuid, "added": added}
 
 
-@router.delete("/provenance/{record_uuid}/tags/{tag}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/provenance/{record_uuid}/tags/{tag}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def remove_tag(
     record_uuid: str,
     tag: str,

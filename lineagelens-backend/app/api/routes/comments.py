@@ -144,7 +144,7 @@ async def list_comments(
     }
 
 
-@router.delete("/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_comment(
     comment_id: str,
     request: Request,

@@ -149,7 +149,7 @@ async def update_scheduled_report(
     return _ser(r)
 
 
-@router.delete("/{report_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{report_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_scheduled_report(
     report_id: str,
     session: Annotated[AsyncSession, Depends(get_db_session)],

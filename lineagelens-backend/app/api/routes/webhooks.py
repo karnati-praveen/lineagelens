@@ -86,7 +86,7 @@ async def list_webhooks(
     return _get_workspace_webhooks(request.app.state, auth.workspace_id)
 
 
-@router.delete("/{webhook_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{webhook_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_webhook(
     webhook_id: str,
     request: Request,

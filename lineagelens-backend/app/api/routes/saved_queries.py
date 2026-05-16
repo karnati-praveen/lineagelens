@@ -96,7 +96,7 @@ async def list_saved_queries(
     }
 
 
-@router.delete("/saved-queries/{query_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/saved-queries/{query_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_saved_query(
     query_id: str,
     session: Annotated[AsyncSession, Depends(get_db_session)],

@@ -102,7 +102,7 @@ async def list_api_keys(
     return {"results": [_ser(k) for k in keys], "count": len(keys)}
 
 
-@router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def revoke_api_key(
     key_id: str,
     session: Annotated[AsyncSession, Depends(get_db_session)],

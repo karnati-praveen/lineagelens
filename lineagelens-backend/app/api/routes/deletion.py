@@ -26,7 +26,7 @@ def _get_client_ip(request: Request) -> str | None:
     return None
 
 
-@router.delete("/provenance/{record_uuid}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/provenance/{record_uuid}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_provenance_record(
     record_uuid: str,
     request: Request,

@@ -113,7 +113,7 @@ async def list_oidc_providers(
     return {"results": [_ser(p) for p in providers], "count": len(providers)}
 
 
-@router.delete("/providers/{provider_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/providers/{provider_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_oidc_provider(
     provider_id: str,
     session: Annotated[AsyncSession, Depends(get_db_session)],
