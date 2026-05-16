@@ -2,11 +2,11 @@ replicaCount: 2
 
 image:
   backend:
-    repository: lineagelens/backend
+    repository: ghcr.io/KarnatiPraveen/lineagelens-backend
     tag: latest
     pullPolicy: Always
   proxy:
-    repository: lineagelens/proxy
+    repository: ghcr.io/KarnatiPraveen/lineagelens-proxy
     tag: latest
     pullPolicy: Always
 
