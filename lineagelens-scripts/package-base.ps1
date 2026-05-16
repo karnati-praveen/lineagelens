@@ -18,11 +18,11 @@ try {
     # Compile TypeScript → dist/extension.js via esbuild
     npm run build
 
+    # Ensure releases dir exists before vsce tries to write into it
+    New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+
     # Package VSIX
     npx vsce package --no-dependencies --allow-missing-repository --out (Join-Path $releaseDir $vsix)
-
-    # Copy VSIX into releases dir
-    New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 
     Write-Host ""
     Write-Host "Base extension ready: $releaseDir\$vsix"

@@ -41,7 +41,9 @@ try {
     New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "lineagelens-docs") | Out-Null
 
     npm run compile
+    if ($LASTEXITCODE -ne 0) { throw "npm run compile failed with exit code $LASTEXITCODE" }
     npm test
+    if ($LASTEXITCODE -ne 0) { throw "npm test failed with exit code $LASTEXITCODE" }
     Copy-Item $composeFile (Join-Path $bundleRoot "lineagelens-deploy\docker-compose.plus.yml") -Force
     Copy-Item $envExample (Join-Path $bundleRoot "lineagelens-deploy\.env.example") -Force
     Copy-Item (Join-Path $repoRoot "lineagelens-docs\native-backend.md") (Join-Path $bundleRoot "lineagelens-docs\native-backend.md") -Force
