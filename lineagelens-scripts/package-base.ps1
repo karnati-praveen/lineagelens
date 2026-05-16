@@ -12,14 +12,14 @@ try {
 
     Write-Host "Building lineagelens-base v$version..."
 
-    # Install deps (CI-clean, no postinstall scripts)
-    npm ci --ignore-scripts
+    # Install deps (no package-lock in base extension, so use install not ci)
+    npm install
 
     # Compile TypeScript → dist/extension.js via esbuild
     npm run build
 
     # Package VSIX
-    npx vsce package --no-dependencies --out (Join-Path $releaseDir $vsix)
+    npx vsce package --no-dependencies --allow-missing-repository --out (Join-Path $releaseDir $vsix)
 
     # Copy VSIX into releases dir
     New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null

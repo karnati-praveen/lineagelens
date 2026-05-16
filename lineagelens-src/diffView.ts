@@ -111,7 +111,7 @@ body{font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);bac
     }
 
     private _escHtml(s: string): string {
-        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
     }
 
     public dispose(): void {

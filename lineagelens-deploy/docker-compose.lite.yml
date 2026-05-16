@@ -37,3 +37,21 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+
+  proxy:
+    build:
+      context: ../lineagelens-proxy
+      dockerfile: Dockerfile
+    image: lineagelens/lineagelens-proxy:lite
+    container_name: lineagelens-proxy
+    restart: unless-stopped
+    depends_on:
+      - lineagelens
+    environment:
+      UPSTREAM_URL: ${PROXY_UPSTREAM_URL:-https://api.anthropic.com}
+      BACKEND_URL: http://lineagelens:8787
+      BACKEND_INGEST_TOKEN: ${PROXY_INGEST_TOKEN:-}
+      PROXY_WORKSPACE_ID: ${PROXY_WORKSPACE_ID:-proxy-capture}
+      PROXY_PORT: 8788
+    ports:
+      - "8788:8788"

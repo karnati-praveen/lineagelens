@@ -593,7 +593,7 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
         <div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>
       </div>
       <div class="tl-chart-wrap" style="margin-top:20px">
-        <canvas id="devActivityChart" height="180" aria-label="Developer activity chart" role="img"></canvas>
+        <canvas id="devActivityChart" height="180" aria-label="Developer activity chart" role="graphics-document"></canvas>
       </div>
     </div>
 
@@ -768,8 +768,8 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
 </div>
 
 <!-- RECORD DETAIL MODAL -->
-<div id="rec-modal" class="modal-bg" role="dialog" aria-modal="true" aria-label="Provenance record detail" tabindex="0" onclick="if(event.target===this)closeModal()" onkeydown="if(event.key==='Escape')closeModal()">
-  <div class="modal">
+<div id="rec-modal" class="modal-bg" onclick="if(event.target===this)closeModal()">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Provenance record detail" tabindex="-1" onkeydown="if(event.key==='Escape')closeModal()">
     <div class="modal-hdr">
       <h3>Provenance Record</h3>
       <button class="modal-close" onclick="closeModal()" aria-label="Close record detail">×</button>
@@ -1255,7 +1255,7 @@ function changePage(delta) {
 }
 
 function changePageSize() {
-  window._pageSize = parseInt(document.getElementById('pageSize').value, 10) || 20;
+  window._pageSize = Number.parseInt(document.getElementById('pageSize').value, 10) || 20;
   window._currentPage = 0;
   doSearch();
 }
@@ -1326,6 +1326,7 @@ function openModal(uuid) {
   mb.innerHTML = '<div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>';
   document.getElementById('rec-modal').classList.add('open');
   document.body.style.overflow = 'hidden';
+  document.querySelector('#rec-modal .modal')?.focus();
   req('GET', `/provenance/${encodeURIComponent(uuid)}`)
     .then(r => { mb.innerHTML = buildRec(r.record || r); })
     .catch(e => { mb.innerHTML = `<div class="al err">${esc(e.message)}</div>`; });
@@ -2051,7 +2052,7 @@ let _asyncPollTimer = null;
 
 async function startAsyncExport() {
   const format = document.getElementById('async-export-format')?.value || 'json';
-  const limit = parseInt(document.getElementById('async-export-limit')?.value || '1000', 10);
+  const limit = Number.parseInt(document.getElementById('async-export-limit')?.value || '1000', 10);
   try {
     const data = await req('POST', '/export/async', { workspaceId: currentWorkspaceId(), format, limit });
     _asyncJobId = data.jobId;
@@ -2120,7 +2121,7 @@ async function loadGithubConfig() {
   } catch(e) { /* first load may 404 if not configured */ }
 }
 async function saveGithubConfig() {
-  const threshold = parseInt(document.getElementById('gh-threshold').value, 10);
+  const threshold = Number.parseInt(document.getElementById('gh-threshold').value, 10);
   const block_on_high_risk = document.getElementById('gh-block').checked;
   const repos = document.getElementById('gh-repos').value.split('\n').map(s=>s.trim()).filter(Boolean);
   const msg = document.getElementById('gh-msg');

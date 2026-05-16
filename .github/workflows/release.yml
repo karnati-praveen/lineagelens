@@ -1,0 +1,184 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # ── Base VSIX ──────────────────────────────────────────────────────
+      - name: Install base extension dependencies
+        working-directory: lineagelens-base-extension
+        run: npm install
+
+      - name: Sync base extension version to tag
+        working-directory: lineagelens-base-extension
+        run: npm version --no-git-tag-version "${{ steps.version.outputs.VERSION }}" || true
+
+      - name: Build base extension
+        working-directory: lineagelens-base-extension
+        run: npm run build
+
+      - name: Package Base VSIX
+        working-directory: lineagelens-base-extension
+        run: |
+          mkdir -p ../lineagelens-releases/base
+          npx @vscode/vsce package \
+            --no-dependencies \
+            --allow-missing-repository \
+            --out "../lineagelens-releases/base/lineagelens-base-${{ steps.version.outputs.VERSION }}.vsix"
+
+      # ── Lite bundle ────────────────────────────────────────────────────
+      - name: Bundle Lite
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          TMPDIR="$(mktemp -d)"
+          BUNDLE="${TMPDIR}/lineagelens-lite-${VERSION}"
+          mkdir -p "${BUNDLE}/lineagelens-backend" \
+                   "${BUNDLE}/lineagelens-deploy"
+          mkdir -p lineagelens-releases/lite
+
+          cp -r lineagelens-backend/. "${BUNDLE}/lineagelens-backend/"
+          find "${BUNDLE}/lineagelens-backend" -type d -name "__pycache__" -print0 | xargs -0 rm -rf 2>/dev/null || true
+          find "${BUNDLE}/lineagelens-backend" -type d -name ".pytest_cache" -print0 | xargs -0 rm -rf 2>/dev/null || true
+          find "${BUNDLE}/lineagelens-backend" -name ".env" -delete
+          find "${BUNDLE}/lineagelens-backend" -name "*.env" -delete
+
+          cp lineagelens-deploy/docker-compose.lite.yml "${BUNDLE}/lineagelens-deploy/"
+          cp lineagelens-deploy/.env.lite.example       "${BUNDLE}/lineagelens-deploy/.env.example"
+          cp lineagelens-scripts/quickstart-lite.sh     "${BUNDLE}/quickstart.sh"
+          cp lineagelens-scripts/reset-lite.sh          "${BUNDLE}/reset.sh"
+          cp lineagelens-scripts/commands-lite.md       "${BUNDLE}/COMMANDS.md"
+          chmod +x "${BUNDLE}/quickstart.sh" "${BUNDLE}/reset.sh"
+
+          (cd "${TMPDIR}" && zip -r \
+            "${GITHUB_WORKSPACE}/lineagelens-releases/lite/lineagelens-lite-${VERSION}.zip" \
+            "lineagelens-lite-${VERSION}")
+
+      # ── Plus bundle ────────────────────────────────────────────────────
+      - name: Bundle Plus
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          TMPDIR="$(mktemp -d)"
+          BUNDLE="${TMPDIR}/lineagelens-plus-${VERSION}"
+          mkdir -p "${BUNDLE}/lineagelens-backend" \
+                   "${BUNDLE}/lineagelens-proxy" \
+                   "${BUNDLE}/lineagelens-deploy" \
+                   "${BUNDLE}/lineagelens-scripts" \
+                   "${BUNDLE}/lineagelens-docs"
+          mkdir -p lineagelens-releases/plus
+
+          # Backend
+          cp -r lineagelens-backend/. "${BUNDLE}/lineagelens-backend/"
+          find "${BUNDLE}/lineagelens-backend" -type d -name "__pycache__" -print0 | xargs -0 rm -rf 2>/dev/null || true
+          find "${BUNDLE}/lineagelens-backend" -type d -name ".pytest_cache" -print0 | xargs -0 rm -rf 2>/dev/null || true
+          find "${BUNDLE}/lineagelens-backend" -name ".env" -delete
+          find "${BUNDLE}/lineagelens-backend" -name "*.env" -delete
+
+          # Proxy
+          cp -r lineagelens-proxy/. "${BUNDLE}/lineagelens-proxy/"
+          find "${BUNDLE}/lineagelens-proxy" -type d -name "__pycache__" -print0 | xargs -0 rm -rf 2>/dev/null || true
+
+          # Deploy
+          cp lineagelens-deploy/docker-compose.plus.yml "${BUNDLE}/lineagelens-deploy/"
+          cp lineagelens-deploy/.env.plus.example       "${BUNDLE}/lineagelens-deploy/.env.example"
+
+          # Docs (optional — present when lineagelens-docs/ is tracked)
+          [ -f lineagelens-docs/native-backend.md ] && \
+            cp lineagelens-docs/native-backend.md "${BUNDLE}/lineagelens-docs/" || true
+
+          # Scripts
+          cp lineagelens-scripts/run-backend-native.ps1  "${BUNDLE}/lineagelens-scripts/"
+          cp lineagelens-scripts/test-backend-native.ps1 "${BUNDLE}/lineagelens-scripts/"
+          cp lineagelens-scripts/debug.sh                "${BUNDLE}/debug.sh"
+          cp lineagelens-scripts/debug.ps1               "${BUNDLE}/debug.ps1"
+          cp lineagelens-scripts/quickstart-plus.sh      "${BUNDLE}/quickstart.sh"
+          cp lineagelens-scripts/reset-plus.sh           "${BUNDLE}/reset.sh"
+          cp lineagelens-scripts/commands-plus.md        "${BUNDLE}/COMMANDS.md"
+          chmod +x "${BUNDLE}/quickstart.sh" "${BUNDLE}/reset.sh" "${BUNDLE}/debug.sh"
+
+          (cd "${TMPDIR}" && zip -r \
+            "${GITHUB_WORKSPACE}/lineagelens-releases/plus/lineagelens-plus-${VERSION}.zip" \
+            "lineagelens-plus-${VERSION}")
+
+      # ── Max bundle ─────────────────────────────────────────────────────
+      - name: Bundle Max
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          TMPDIR="$(mktemp -d)"
+          BUNDLE="${TMPDIR}/lineagelens-max-${VERSION}"
+          mkdir -p "${BUNDLE}/lineagelens-backend" \
+                   "${BUNDLE}/lineagelens-proxy" \
+                   "${BUNDLE}/lineagelens-deploy" \
+                   "${BUNDLE}/lineagelens-scripts" \
+                   "${BUNDLE}/lineagelens-docs"
+          mkdir -p lineagelens-releases/max
+
+          # Backend
+          cp -r lineagelens-backend/. "${BUNDLE}/lineagelens-backend/"
+          find "${BUNDLE}/lineagelens-backend" -type d -name "__pycache__" -print0 | xargs -0 rm -rf 2>/dev/null || true
+          find "${BUNDLE}/lineagelens-backend" -type d -name ".pytest_cache" -print0 | xargs -0 rm -rf 2>/dev/null || true
+          find "${BUNDLE}/lineagelens-backend" -name ".env" -delete
+          find "${BUNDLE}/lineagelens-backend" -name "*.env" -delete
+
+          # Proxy
+          cp -r lineagelens-proxy/. "${BUNDLE}/lineagelens-proxy/"
+          find "${BUNDLE}/lineagelens-proxy" -type d -name "__pycache__" -print0 | xargs -0 rm -rf 2>/dev/null || true
+
+          # Deploy
+          cp lineagelens-deploy/docker-compose.max.yml "${BUNDLE}/lineagelens-deploy/"
+          cp lineagelens-deploy/.env.max.example       "${BUNDLE}/lineagelens-deploy/.env.example"
+
+          # Docs (optional — present when lineagelens-docs/ is tracked)
+          for doc in native-backend.md architecture.md shipping-modes.md; do
+            [ -f "lineagelens-docs/${doc}" ] && \
+              cp "lineagelens-docs/${doc}" "${BUNDLE}/lineagelens-docs/" || true
+          done
+
+          # Scripts
+          cp lineagelens-scripts/run-backend-native.ps1  "${BUNDLE}/lineagelens-scripts/"
+          cp lineagelens-scripts/test-backend-native.ps1 "${BUNDLE}/lineagelens-scripts/"
+          cp lineagelens-scripts/debug.sh                "${BUNDLE}/debug.sh"
+          cp lineagelens-scripts/debug.ps1               "${BUNDLE}/debug.ps1"
+          cp lineagelens-scripts/quickstart-max.sh       "${BUNDLE}/quickstart.sh"
+          cp lineagelens-scripts/reset-max.sh            "${BUNDLE}/reset.sh"
+          cp lineagelens-scripts/commands-max.md         "${BUNDLE}/COMMANDS.md"
+          chmod +x "${BUNDLE}/quickstart.sh" "${BUNDLE}/reset.sh" "${BUNDLE}/debug.sh"
+
+          (cd "${TMPDIR}" && zip -r \
+            "${GITHUB_WORKSPACE}/lineagelens-releases/max/lineagelens-max-${VERSION}.zip" \
+            "lineagelens-max-${VERSION}")
+
+      # ── GitHub Release ─────────────────────────────────────────────────
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          gh release create "v${VERSION}" \
+            --title "LineageLens v${VERSION}" \
+            --generate-notes \
+            "lineagelens-releases/base/lineagelens-base-${VERSION}.vsix#Base VS Code Extension (.vsix)" \
+            "lineagelens-releases/lite/lineagelens-lite-${VERSION}.zip#Lite Bundle — SQLite, single container (.zip)" \
+            "lineagelens-releases/plus/lineagelens-plus-${VERSION}.zip#Plus Bundle — PostgreSQL, full governance (.zip)" \
+            "lineagelens-releases/max/lineagelens-max-${VERSION}.zip#Max Bundle — PostgreSQL + Neo4j, graph lineage (.zip)"

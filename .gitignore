@@ -24,6 +24,10 @@ skills-lock.json
 pratry.md
 pratry.sh
 
+# Release artifacts (built locally; not committed)
+lineagelens-releases/**/*.zip
+lineagelens-releases/**/*.vsix
+
 # Logs / temp
 *.log
 .DS_Store
@@ -35,7 +39,6 @@ cli/node_modules/
 lineagelens-ad/
 
 # Marketing and automation docs (local only)
-lineagelens-docs/
 lineagelens-marketing/
 lineagelens-n8n/
 

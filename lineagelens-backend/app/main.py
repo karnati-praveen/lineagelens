@@ -217,7 +217,7 @@ class RequestGuardsMiddleware(BaseHTTPMiddleware):
         client_ip = get_client_ip(request)
         key = f"http:{client_ip}"
 
-        decision = await limiter.acheck(
+        decision = limiter.acheck(
             key=key,
             limit=current_settings.rate_limit_max_requests,
             window_seconds=current_settings.rate_limit_window_seconds,
@@ -359,7 +359,7 @@ async def lifespan(app: FastAPI):
         app.state.neo4j_service = neo4j_service
 
         from app.services.report_scheduler import start_scheduler, stop_scheduler
-        await start_scheduler(session_factory)
+        start_scheduler(session_factory)
 
         yield
     finally:

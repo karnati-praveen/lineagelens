@@ -57,16 +57,20 @@ resources:
     requests:
       cpu: 250m
       memory: 512Mi
+      ephemeral-storage: 256Mi
     limits:
       cpu: 1000m
       memory: 1Gi
+      ephemeral-storage: 1Gi
   proxy:
     requests:
       cpu: 100m
       memory: 128Mi
+      ephemeral-storage: 64Mi
     limits:
       cpu: 500m
       memory: 256Mi
+      ephemeral-storage: 256Mi
 
 podSecurityContext:
   runAsNonRoot: true

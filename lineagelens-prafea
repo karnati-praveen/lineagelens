@@ -1,7 +1,7 @@
 # LineageLens — Complete System & Product Documentation
 
-Last reviewed from the local codebase: 2026-05-13
-Version: 0.0.8
+Last reviewed from the local codebase: 2026-05-15
+Version: 0.1.0
 
 ---
 
@@ -37,9 +37,11 @@ For regulated industries — fintech, healthcare, defense — AI code governance
 
 ### Target Users
 
-**Base users.** Individual engineers using AI tools heavily who want a personal record of what AI wrote in their codebase. They run LineageLens Base: local-first, no shared team features, capture and explain.
+**Base users.** Individual engineers using AI tools heavily who want a personal record of what AI wrote in their codebase. They install the LineageLens Base VS Code extension: file-watcher capture, local JSON storage, no backend, no account, fully offline.
 
-**Plus workspaces (5-50 engineers).** Teams shipping AI-assisted code who need shared provenance records, semantic search across all insertions, governance dashboards, and AI contribution pattern review. They run LineageLens Plus.
+**Lite teams (1-10 engineers).** Small teams and indie developers who want a shared dashboard without Postgres complexity or per-seat pricing. They run LineageLens Lite: a single Docker container with SQLite, a browser-based setup wizard, and full proxy capture — free, runs on a $5 VPS.
+
+**Plus workspaces (5-50 engineers).** Teams shipping AI-assisted code who need shared provenance records, semantic search across all insertions, governance dashboards, and AI contribution pattern review. They run LineageLens Plus with a PostgreSQL backend.
 
 **Max organizations.** Large teams with compliance requirements, multi-workspace setups, full graph lineage tracking, and audit export needs. They run LineageLens Max with Neo4j-backed lineage graphs.
 
@@ -168,9 +170,10 @@ Optional fields enable richer records: `fullPromptMessages`, `rawModelResponse`,
 
 The helper automatically infers `promptStatus` from the presence of prompt/response data, synthesizes a `PromptCorrelationResult`, and sets `shimName: 'lightweight-adapter'` so the backend can identify the source.
 
-Three operating profiles:
-- **`base`**: Everything stays in VS Code storage or workspace file.
-- **`plus`**: Backend stores provenance; Neo4j and vector search are optional.
+Four operating profiles:
+- **`base`**: Everything stays in VS Code storage or workspace file. No backend.
+- **`lite`**: Backend stores provenance in SQLite (BACKEND_MODE=solo). No Postgres, no Neo4j.
+- **`plus`**: Backend stores provenance in PostgreSQL; Neo4j and vector search are optional.
 - **`max`**: Full graph lineage (Neo4j) and vector search enabled.
 
 ### FastAPI Backend
@@ -564,43 +567,84 @@ See `.github/workflows/` for setup.
 
 ---
 
-## SECTION 4: MODES (Base, Plus, Max)
+## SECTION 4: MODES (Base, Lite, Plus, Max)
 
 ### How Modes Work
 
 The backend reads `BACKEND_MODE` from the environment (`solo`, `team`, or `enterprise`). A FastAPI dependency (`require_non_solo`) is applied as a route-level guard to features requiring Plus or higher. The health endpoint always exposes `productMode` so the VS Code extension can detect which tier is running.
 
-### Base Mode
+**Product tier → backend mode mapping:**
 
-`BACKEND_MODE=solo` → `productMode=base`
+| Product tier | BACKEND_MODE | Database | productMode value |
+|---|---|---|---|
+| Base | none (no backend) | Local JSON / VS Code global state | N/A |
+| Lite | `solo` | SQLite | `base` |
+| Plus | `team` | PostgreSQL + pgvector | `plus` |
+| Max | `enterprise` | PostgreSQL + pgvector + Neo4j | `max` |
 
-**Designed for:** Individual developers. One person, one machine, local deployment.
+Note: The `productMode` value `base` is returned by `BACKEND_MODE=solo` — this corresponds to the **Lite** product tier (single container, SQLite). The **Base** product tier (VS Code extension only) has no backend and no `productMode`.
+
+### Base Tier (VS Code Extension Only)
+
+The Base product tier runs without any backend. There is no `BACKEND_MODE` to set. The VS Code extension captures insertions via file-watcher events and stores records in VS Code global state or a local JSON file.
+
+**Designed for:** Individual developers who want zero-infrastructure capture — install and go.
+
+**Includes:**
+- File-watcher insertion detection (≥ 4 net lines, configurable)
+- Local JSON storage (VS Code global state or workspace file)
+- Per-record risk scoring (computed locally)
+- Basic timeline sidebar view
+- Offline and air-gapped operation
+
+**Does not include:**
+- Proxy capture (no backend to receive proxy records)
+- Full 11-adapter detection (no proxy traffic to classify)
+- Web dashboard
+- Team sharing
+
+**Local storage limit:** `LocalStorageService` enforces a **2,000 record maximum**. Oldest records are evicted when the cap is reached.
+
+**Artifact:** `lineagelens-base-*.vsix`
+
+---
+
+### Lite Mode (BACKEND_MODE=solo)
+
+`BACKEND_MODE=solo` → `productMode=base` (backend health endpoint value)
+
+The **Lite** product tier runs `BACKEND_MODE=solo` with SQLite as the database. It is the simplest self-hosted backend: a single Docker container, no external database dependencies.
+
+**Designed for:** Small teams (1–10 people) and individual developers who want a shared dashboard without Postgres complexity.
 
 **Includes:**
 - Full provenance capture (HTTP ingest + WebSocket)
+- 11 AI adapter detectors via the transparent proxy
 - LLM-powered explanation (`/explain`)
 - Provenance record fetch (`/provenance/{uuid}`)
-- Authentication (register, login, refresh, logout, `/auth/me`)
-- MCP server (connects to local backend)
+- JWT authentication (register, login, refresh, logout, `/auth/me`)
+- First-boot setup wizard at `/setup` — browser-based admin account creation, no curl commands
+- Basic web dashboard (timeline, risk overview, capture history)
+- Basic team management (admin + member roles)
 - Health endpoint
 
 **Disabled:**
 - Semantic search (`/search`) → 403
 - Insights dashboard (`/insights/dashboard`) → 403
-- Team management (`/team/*`) → 403
-- Audit export → admin-only, requires Plus/Max
+- Full team management (`/team/*`) → basic only
+- Audit export (CSV) → Plus/Max only
+- MCP server → Plus/Max only
+- GitHub Actions integration → Plus/Max only
 
 **Infrastructure:**
-- PostgreSQL only (no Neo4j)
+- SQLite (`sqlite+aiosqlite:///./data/lineagelens.db`) — single file in Docker volume
 - Hash-based embeddings (no OpenAI API key required)
-- Small connection pool (`DB_POOL_SIZE=3`)
-- Conservative rate limits (5 concurrent WebSocket connections)
+- No Postgres, no Redis, no Neo4j
 
-**Local storage limit:** When running without a backend (VS Code global state or workspace JSON file), the `LocalStorageService` enforces a **2,000 record maximum**. Oldest records are evicted when the cap is reached.
+**Compose file:** `lineagelens-deploy/docker-compose.lite.yml`
+**Quickstart:** `bash lineagelens-scripts/quickstart-lite.sh`
 
-**Quickstart:** `bash lineagelens-scripts/quickstart-base.sh`
-
-### Plus Mode
+### Plus Mode (BACKEND_MODE=team)
 
 `BACKEND_MODE=team` → `productMode=plus`
 
@@ -622,7 +666,7 @@ The backend reads `BACKEND_MODE` from the environment (`solo`, `team`, or `enter
 
 **Quickstart:** `bash lineagelens-scripts/quickstart-plus.sh`
 
-### Max Mode
+### Max Mode (BACKEND_MODE=enterprise)
 
 `BACKEND_MODE=enterprise` → `productMode=max`
 
@@ -640,25 +684,31 @@ The backend reads `BACKEND_MODE` from the environment (`solo`, `team`, or `enter
 
 ### Feature Comparison
 
-| Feature                    | Base | Plus | Max |
-|----------------------------|------|------|-----|
-| Provenance capture         | yes  | yes  | yes |
-| WebSocket ingest           | yes  | yes  | yes |
-| LLM explain                | yes  | yes  | yes |
-| JWT auth + logout          | yes  | yes  | yes |
-| Lightweight adapter ingest | yes  | yes  | yes |
-| MCP server                 | yes  | yes  | yes |
-| Universal LLM proxy        | yes  | yes  | yes |
-| Semantic search            | no   | yes  | yes |
-| Governance dashboard       | no   | yes  | yes |
-| Timeline & risk heatmap    | no   | yes  | yes |
-| File lineage graph         | no   | yes  | yes |
-| Live capture feed          | no   | yes  | yes |
-| Team management            | no   | yes  | yes |
-| Audit export (CSV)         | no   | yes  | yes |
-| OpenAI embeddings          | no   | opt  | opt |
-| Neo4j graph lineage        | no   | no   | yes |
-| Vector search              | no   | no   | yes |
+| Feature                    | Base       | Lite   | Plus | Max |
+|----------------------------|------------|--------|------|-----|
+| Provenance capture         | file-watch | proxy  | proxy | proxy |
+| WebSocket ingest           | no         | yes    | yes  | yes |
+| LLM explain                | local only | yes    | yes  | yes |
+| JWT auth + logout          | no         | yes    | yes  | yes |
+| Setup wizard (no curl)     | no         | yes    | yes  | yes |
+| Lightweight adapter ingest | yes        | yes    | yes  | yes |
+| 11 adapter detectors       | no         | yes    | yes  | yes |
+| Basic dashboard            | no         | yes    | yes  | yes |
+| MCP server                 | no         | no     | yes  | yes |
+| Universal LLM proxy        | no         | yes    | yes  | yes |
+| Semantic search            | no         | no     | yes  | yes |
+| Full governance dashboard  | no         | no     | yes  | yes |
+| Timeline & risk heatmap    | no         | basic  | yes  | yes |
+| File lineage graph         | no         | no     | yes  | yes |
+| Live capture feed          | no         | no     | yes  | yes |
+| Team management            | no         | basic  | yes  | yes |
+| Audit export (CSV)         | no         | no     | yes  | yes |
+| GitHub Actions integration | no         | no     | yes  | yes |
+| OpenAI embeddings          | no         | no     | opt  | opt |
+| Neo4j graph lineage        | no         | no     | no   | yes |
+| Vector search              | no         | no     | no   | yes |
+| Storage                    | Local JSON | SQLite | PostgreSQL + pgvector | PostgreSQL + pgvector + Neo4j |
+| Backend mode               | none       | solo   | team | enterprise |
 
 ---
 
@@ -858,23 +908,32 @@ Applied outermost first:
 
 ### Docker Compose Bundles
 
-| File | Tier | Services |
-|---|---|---|
-| `lineagelens-deploy/docker-compose.base.yml` | Base | postgres, backend |
-| `lineagelens-deploy/docker-compose.plus.yml` | Plus | postgres, backend |
-| `lineagelens-deploy/docker-compose.max.yml` | Max | postgres, neo4j, backend |
+| File | Tier | Services | Database |
+|---|---|---|---|
+| `lineagelens-deploy/docker-compose.lite.yml` | Lite | backend | SQLite (in-container) |
+| `lineagelens-deploy/docker-compose.plus.yml` | Plus | postgres, backend, proxy | PostgreSQL + pgvector |
+| `lineagelens-deploy/docker-compose.max.yml` | Max | postgres, neo4j, backend, proxy | PostgreSQL + pgvector + Neo4j |
+
+Note: Base tier has no compose file — it is the VS Code VSIX extension only.
 
 All backends build from `lineagelens-backend/Dockerfile`. Postgres uses `pgvector/pgvector:pg16`. Neo4j uses the official `neo4j` image.
 
 ### Quickstart Scripts
 
 ```
-lineagelens-scripts/quickstart-base.sh    # Base: 7-step setup
-lineagelens-scripts/quickstart-plus.sh    # Plus: 7-step setup
-lineagelens-scripts/quickstart-max.sh     # Max: 7-step setup
+lineagelens-scripts/quickstart-lite.sh    # Lite: starts single container, opens setup wizard
+lineagelens-scripts/quickstart-plus.sh    # Plus: starts postgres + backend + proxy
+lineagelens-scripts/quickstart-max.sh     # Max: starts postgres + neo4j + backend + proxy
 ```
 
-Each script:
+**Lite quickstart** (`quickstart-lite.sh`):
+1. Checks docker/compose prerequisites
+2. Stops conflicting containers on port 8787
+3. Generates JWT secrets with `openssl rand` if `.env` is absent
+4. Starts the single container and waits for `/health` 200
+5. Prints the setup wizard URL (`http://localhost:8787/setup`) and opens it in the browser if possible
+
+**Plus/Max quickstart** (`quickstart-plus.sh`, `quickstart-max.sh`):
 1. Checks prerequisites (docker, openssl, curl, python3)
 2. Stops existing containers (preserving volumes)
 3. Generates secrets with `openssl rand` if `.env` is absent; validates existing `.env` if present
@@ -892,20 +951,24 @@ npm install -g .
 
 | Command | Description |
 |---|---|
-| `lineagelens start --mode plus` | Start Plus backend (also: `max`) |
+| `lineagelens start --mode lite` | Start Lite backend |
+| `lineagelens start --mode plus` | Start Plus backend |
+| `lineagelens start --mode max` | Start Max backend |
 | `lineagelens stop --mode plus` | Stop backend containers |
 | `lineagelens status` | Show container health for all modes |
-| `lineagelens logs --mode plus` | Tail backend logs (Ctrl+C to stop) |
+| `lineagelens logs --mode lite` | Tail Lite backend logs |
+| `lineagelens logs --mode plus` | Tail Plus backend logs (Ctrl+C to stop) |
 | `lineagelens logs --mode plus --service backend` | Tail a specific service |
 
-**Note:** The CLI supports `plus` and `max` modes only. `base` is not a valid `--mode` value.
+**Note:** The CLI supports `lite`, `plus`, and `max` modes. `base` is not a valid `--mode` value (Base has no backend).
 
 **CLI env file location:** Each tier's `.env` is stored at `~/.lineagelens/{mode}/.env` (e.g., `~/.lineagelens/plus/.env`). The quickstart scripts generate this file; the CLI reads it on each start. To edit secrets after first run, update the file at that path directly.
 
 ### Reset Scripts
 
 ```
-lineagelens-scripts/reset-base.sh    # Destroy Base containers, volumes, and data
+lineagelens-scripts/reset-base.sh    # Clear Base local JSON records (VS Code global state)
+lineagelens-scripts/reset-lite.sh    # Stop Lite container and delete SQLite data file
 lineagelens-scripts/reset-plus.sh    # Destroy Plus containers, volumes, and data
 lineagelens-scripts/reset-max.sh     # Destroy Max containers, volumes, and data
 ```
@@ -914,7 +977,15 @@ Use only for a full reset. These remove all data.
 
 ### Environment Variables
 
-**Required (all modes)**
+**Required (Lite)**
+
+| Variable | Description |
+|---|---|
+| `JWT_SECRET_KEY` | Access token signing key (generated by quickstart-lite.sh) |
+| `JWT_REFRESH_SECRET_KEY` | Refresh token signing key |
+| `DATABASE_URL` | `sqlite+aiosqlite:///./data/lineagelens.db` (set in docker-compose.lite.yml) |
+
+**Required (Plus/Max)**
 
 | Variable | Description |
 |---|---|
@@ -949,14 +1020,14 @@ Use only for a full reset. These remove all data.
 | `EXPLAIN_LLM_API_URL` | OpenAI-compatible endpoint |
 | `EXPLAIN_LLM_TIMEOUT_SECONDS` | Default: 25 |
 
-**Connection pool**
+**Connection pool** (Plus/Max only — SQLite does not use a pool)
 
-| Variable | Base default | Plus default |
+| Variable | Solo/Lite default | Plus default |
 |---|---|---|
-| `DB_POOL_SIZE` | 3 | 10 |
-| `DB_MAX_OVERFLOW` | 5 | 20 |
-| `DB_POOL_TIMEOUT_SECONDS` | 30 | 30 |
-| `DB_POOL_RECYCLE_SECONDS` | 1800 | 1800 |
+| `DB_POOL_SIZE` | N/A (SQLite) | 10 |
+| `DB_MAX_OVERFLOW` | N/A (SQLite) | 20 |
+| `DB_POOL_TIMEOUT_SECONDS` | N/A | 30 |
+| `DB_POOL_RECYCLE_SECONDS` | N/A | 1800 |
 
 **Rate limits**
 
@@ -965,7 +1036,7 @@ Use only for a full reset. These remove all data.
 | `RATE_LIMIT_ENABLED` | Toggle all rate limiting | `true` |
 | `RATE_LIMIT_MAX_REQUESTS` | HTTP requests per window | 120 |
 | `RATE_LIMIT_WINDOW_SECONDS` | HTTP rate limit window | 60 |
-| `RATE_LIMIT_WS_MAX_CONNECTIONS` | Concurrent WebSocket connections | 5 (base), 30 (plus) |
+| `RATE_LIMIT_WS_MAX_CONNECTIONS` | Concurrent WebSocket connections | 5 (lite/solo), 30 (plus/max) |
 | `RATE_LIMIT_WS_MAX_MESSAGES` | Messages per WS window | 120 |
 
 **WebSocket / Search**
@@ -1129,23 +1200,28 @@ LineageLens is the first system that captures provenance at insertion time, stor
 
 ## SECTION 10: BUSINESS MODEL
 
-**Base** — Free or low one-time price
-- Single user, self-hosted Docker
-- Capture + explain + MCP server (read-only)
-- No team features, no semantic search
-- Target: individual engineers experimenting with AI tools
+**Base** — Free (open-source VS Code extension)
+- VS Code extension only — file-watcher capture, local JSON storage
+- Zero infrastructure, zero configuration, works offline
+- No team sharing, no web dashboard, no proxy capture
+- Target: individual engineers who want personal provenance records
 
-**Plus** — Monthly subscription per workspace
-- 5–50 developers
-- Full feature set: capture, semantic search, governance dashboard, timeline, graph, live feed, team management, audit export, MCP server
+**Lite** — Free (open-source, self-hosted)
+- Single Docker container, SQLite, no Postgres
+- Full proxy capture, 11 adapters, basic team dashboard, setup wizard
+- Runs on a $5 VPS or spare laptop
+- Target: small teams and indie developers who need shared visibility without cost or complexity
+
+**Plus** — $12 per developer per month
+- Full governance platform: PostgreSQL, semantic search, full dashboard, team management, MCP server, GitHub Actions, CSV export
 - Self-hosted Docker (customer's infrastructure)
-- Target: engineering teams at product companies, agencies, startups
+- Target: engineering teams at product companies, agencies, Series A–C startups (5–50 developers)
 
-**Max** — Annual contract
-- Unlimited users, multi-workspace support
-- Neo4j graph lineage + all Plus features
-- Priority support, SLA, audit export
-- Managed hosting available as add-on
+**Max** — Contact sales (annual contract)
+- Everything in Plus + Neo4j graph lineage + full vector + graph search
+- Multi-workspace, compliance-ready, production deployment
+- Priority support, SLA, audit export for regulators
+- Target: Series C+, regulated industries (fintech, healthtech), 50+ developer orgs
 - Target: regulated industries (fintech, healthcare), large engineering organizations with AI governance requirements
 
 ### Why Self-Hosted
@@ -1234,8 +1310,8 @@ Provenance is not a one-time problem. Teams writing AI-assisted code need ongoin
 | Insights service | `lineagelens-backend/app/services/insights_service.py` |
 | Neo4j service | `lineagelens-backend/app/services/neo4j_service.py` |
 | Deploy configs | `lineagelens-deploy/` |
-| Quickstart scripts | `lineagelens-scripts/quickstart-{base,plus,max}.sh` |
-| Reset scripts | `lineagelens-scripts/reset-{base,plus,max}.sh` |
+| Quickstart scripts | `lineagelens-scripts/quickstart-{lite,plus,max}.sh` (Base = VSIX install only) |
+| Reset scripts | `lineagelens-scripts/reset-{base,lite,plus,max}.sh` |
 | Commands reference | `lineagelens-releases/commands.md` |
 
 ### Alembic Migrations (in order)

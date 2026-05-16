@@ -5,7 +5,7 @@ import hashlib
 import hmac
 import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dc_replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID as PyUUID
 
@@ -369,15 +369,14 @@ def require_role(*roles: str):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Account not found or inactive.",
             )
-        # admin can always proceed
-        if row.role == "admin":
-            return auth
-        if row.role not in allowed:
+        if row.role != "admin" and row.role not in allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Required role(s): {', '.join(sorted(allowed))}. Your role: {row.role}.",
             )
-        return auth
+        # Return a new AuthContext carrying the DB-verified role so handlers
+        # always see live role state, not a potentially stale JWT claim.
+        return dc_replace(auth, token_payload={**auth.token_payload, "role": row.role})
 
     return _check
 

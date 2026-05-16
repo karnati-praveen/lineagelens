@@ -641,6 +641,9 @@ async def _connect_to_upstream(
                 host, port, ssl=server_ctx
             )
         else:
+            # Plain TCP tunnel: client-side TLS is established within the tunnel
+            # by the connecting application (browser/SDK). The proxy must not add
+            # its own TLS layer here, as that would break the end-to-end handshake.
             up_reader, up_writer = await asyncio.open_connection(host, port)
     except Exception as exc:
         logger.warning("CONNECT upstream error %s:%s — %s", host, port, exc)

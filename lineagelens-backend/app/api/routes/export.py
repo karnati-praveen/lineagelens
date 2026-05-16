@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 MAX_EXPORT_ROWS = 10_000
 
+_background_tasks: set[asyncio.Task] = set()
+
 
 def _pick(record: dict, *keys: str) -> str:
     for k in keys:
@@ -149,11 +151,9 @@ async def export_audit_report(
     fmt = format.strip().lower()
 
     logger.info(
-        "AUDIT_EXPORT workspace=%s user=%s date_from=%s date_to=%s record_count=%d format=%s",
+        "AUDIT_EXPORT workspace=%s user=%s record_count=%d format=%s",
         auth.workspace_id,
         str(auth.subject),
-        date_from,
-        date_to,
         record_count,
         fmt,
     )
@@ -265,8 +265,10 @@ async def start_async_export(
     job = new_job()
     jobs_store[job.job_id] = job
 
-    # Fire and forget
-    asyncio.create_task(run_export_job(job, records, fmt, jobs_store))
+    # Fire and forget — keep a strong reference so GC cannot collect the task early.
+    task = asyncio.create_task(run_export_job(job, records, fmt, jobs_store))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     return {
         "jobId": job.job_id,

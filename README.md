@@ -2,20 +2,42 @@
 
 > **Git blame for AI-generated code** — captures every AI insertion and traces it back to its prompt, model, and developer.
 
-LineageLens is an AI code intelligence platform. It sits between your AI coding tools and the AI providers they call, capturing every significant code insertion — what was generated, by which model, from which prompt, and who accepted it. Works with any editor, any AI tool, any team.
+LineageLens is an AI code provenance platform. It sits between your AI coding tools and the AI providers they call, capturing every significant code insertion — what was generated, by which model, from which prompt, and who accepted it. Works with any editor, any AI tool, any team.
 
 ---
 
 ## How It Works
 
+**Base** — file-watcher, zero infrastructure:
 ```
-Your AI Tool  →  LineageLens Proxy  →  AI Provider (Anthropic, OpenAI, etc.)
-                        ↓
-               Provenance Record
-     stored in PostgreSQL + optional Neo4j
+File change detected in VS Code  →  Insertion extracted
+                                          ↓
+                               Provenance record stored
+                               in Local JSON / VS Code state
 ```
 
-The proxy is transparent. Your AI tool sends requests as normal. LineageLens intercepts the traffic, extracts the prompt and response, and stores a structured provenance record — without modifying any code or slowing down your workflow. The VS Code extension also captures insertions directly via file watchers and Claude Code hook events.
+**Lite** — single container, SQLite, no Postgres:
+```
+Your AI Tool  →  LineageLens Proxy (8788)  →  AI Provider
+                          ↓
+                  Provenance Record
+                          ↓
+             Lite Backend + SQLite (8787)
+             (single Docker container — your VPS or laptop)
+```
+
+**Plus / Max** — team backend, full governance:
+```
+Your AI Tool  →  LineageLens Proxy (8788)  →  AI Provider
+                          ↓
+                  Provenance Record
+                          ↓
+          FastAPI Backend + PostgreSQL + pgvector (8787)
+                          ↓ (Max only)
+                   Neo4j Graph Instance
+```
+
+The proxy is transparent. Your AI tool sends requests as normal. LineageLens intercepts the traffic, extracts the prompt and response, and stores a structured provenance record — without modifying any code or slowing down your workflow. The VS Code extension also captures insertions directly via file watchers.
 
 ---
 
@@ -25,19 +47,33 @@ The proxy is transparent. Your AI tool sends requests as normal. LineageLens int
 
 Zero shared infrastructure. Fully private. Works offline.
 
-- Records stored locally as a JSON file or in VS Code global state.
-- Best for individual developers and offline workflows.
-- Includes provenance capture, AI-assisted explanation, and local lineage.
-- Quickstart: `bash lineagelens-scripts/quickstart-base.sh`
-- Deploy: `lineagelens-deploy/docker-compose.base.yml`
+- VS Code extension only — file-watcher detection of AI insertions (≥ 4 lines by default)
+- Records stored locally as JSON in VS Code global state
+- Best for individual developers and air-gapped environments
+- No proxy, no backend, no account required
+- Quickstart: install the Base VSIX from the release package, open VS Code
+- Package script: `powershell -File lineagelens-scripts/package-base.ps1`
+
+### LineageLens Lite
+
+Shared dashboard for small teams. Free. No Postgres required.
+
+- Single Docker container backend with SQLite storage
+- First-boot setup wizard — admin account created in the browser, no curl commands
+- Transparent proxy capture at `localhost:8788` with 11 AI adapter detectors
+- Basic governance dashboard: timeline, risk overview, capture history
+- Runs on any $5 VPS or a spare laptop with Docker
+- Quickstart: `bash lineagelens-scripts/quickstart-lite.sh`
+- Deploy: `lineagelens-deploy/docker-compose.lite.yml`
 
 ### LineageLens Plus
 
-Shared backend without graph complexity.
+Shared backend with full governance. No graph complexity.
 
-- FastAPI backend with semantic search, governance dashboard, and team management.
-- Runs without Neo4j. pgvector enables vector search when OpenAI embeddings are configured.
-- Docker is optional. See [lineagelens-docs/native-backend.md](lineagelens-docs/native-backend.md) to run natively.
+- FastAPI backend with semantic search, full governance dashboard, and team management
+- PostgreSQL + pgvector storage. No Neo4j dependency.
+- GitHub Actions PR annotation and provenance review bot
+- MCP server with 7 tools for in-context provenance queries
 - Quickstart: `bash lineagelens-scripts/quickstart-plus.sh`
 - Deploy: `lineagelens-deploy/docker-compose.plus.yml`
 
@@ -45,8 +81,9 @@ Shared backend without graph complexity.
 
 Complete provenance intelligence and auditability.
 
-- Adds Neo4j graph lineage and full vector search on top of Plus.
-- Best for production deployments with compliance requirements.
+- Adds Neo4j graph lineage and full vector search on top of Plus
+- Traces code ancestry across tools, sessions, and developers
+- Best for production deployments with compliance requirements
 - Quickstart: `bash lineagelens-scripts/quickstart-max.sh`
 - Deploy: `lineagelens-deploy/docker-compose.max.yml`
 
@@ -54,18 +91,26 @@ Complete provenance intelligence and auditability.
 
 ## Quick Start
 
+### Base (under 2 minutes)
+
 **Step 1 — Install the extension**
 
-Install `lineagelens-*.vsix` from your release bundle into VS Code.
+Install `lineagelens-base-*.vsix` from your release bundle into VS Code. File-watcher capture starts immediately.
 
-**Step 2 — Start your backend**
+### Lite (under 10 minutes)
+
+**Step 1 — Run the quickstart**
 ```bash
-bash lineagelens-scripts/quickstart-plus.sh    # or quickstart-base.sh / quickstart-max.sh
+bash lineagelens-scripts/quickstart-lite.sh
 ```
 
-**Step 3 — Point your AI tool at the proxy**
+**Step 2 — Open the setup wizard**
+```
+http://localhost:8787/setup
+```
+Create your admin account in three steps. No curl commands.
 
-The proxy runs on port `8788`. Set your AI tool's API base URL:
+**Step 3 — Point your AI tool at the proxy**
 ```bash
 # Claude Code / Anthropic SDK
 export ANTHROPIC_BASE_URL=http://localhost:8788
@@ -74,12 +119,25 @@ export ANTHROPIC_BASE_URL=http://localhost:8788
 export OPENAI_BASE_URL=http://localhost:8788
 ```
 
-**Step 4 — Open the dashboard**
+### Plus / Max
+
+**Step 1 — Start your backend**
+```bash
+bash lineagelens-scripts/quickstart-plus.sh    # or quickstart-max.sh
+```
+
+**Step 2 — Point your AI tool at the proxy**
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:8788
+export OPENAI_BASE_URL=http://localhost:8788
+```
+
+**Step 3 — Open the dashboard**
 ```
 http://localhost:8787/dashboard
 ```
 
-**Step 5 — Use the CLI**
+**Step 4 — Use the CLI (optional)**
 ```bash
 lineagelens start --mode plus    # Start backend (plus or max)
 lineagelens status               # Container health
@@ -98,6 +156,7 @@ npm install -g lineagelens-cli
 
 | Command | Description |
 |---|---|
+| `lineagelens start --mode lite` | Start Lite backend |
 | `lineagelens start --mode plus` | Start Plus backend (also: `max`) |
 | `lineagelens stop --mode plus` | Stop backend containers |
 | `lineagelens status` | Show container health for all modes |
@@ -137,7 +196,7 @@ aider --openai-api-base http://localhost:8788
 
 ## MCP Server
 
-LineageLens ships an MCP server that lets AI assistants query provenance data directly inside the chat — without switching tabs or leaving the conversation.
+LineageLens ships an MCP server (Plus and Max) that lets AI assistants query provenance data directly inside the chat — without switching tabs or leaving the conversation.
 
 ### Install
 ```bash
@@ -188,8 +247,6 @@ Add to `~/.claude/settings.json` (global) or `.claude/settings.json` (project):
 | `check_file_risk` | Risk breakdown and model usage for a specific file |
 | `usage_report` | AI usage summary — lines, models, risk, developers (date-range filterable) |
 
-See [lineagelens-releases/commands.md](lineagelens-releases/commands.md) for complete setup instructions.
-
 ---
 
 ## Supported AI Tools
@@ -216,7 +273,7 @@ Each match stores: `toolName`, `provider`, `sessionId`, `conversationId`, `runId
 
 ## Dashboard
 
-The self-hosted dashboard at `http://localhost:8787/dashboard` includes:
+The self-hosted dashboard at `http://localhost:8787/dashboard` includes (Plus/Max):
 
 **Governance Overview** — Total records, prompt capture rate, average risk score, high-risk and critical counts, unique files, models, AI lines added, agent sessions, team members. Compliance controls and file hotspots below.
 
@@ -236,9 +293,11 @@ The self-hosted dashboard at `http://localhost:8787/dashboard` includes:
 
 **Team** — Member list with per-user AI insertion counts, lines added, share %, and join date. Admin invite form.
 
-**Theme toggle** — ☀️/🌙 button switches between dark (default) and light mode. Timeline chart re-renders with matching colors.
+**Theme toggle** — ☀️/🌙 button switches between dark (default) and light mode.
 
 **Backend status dot** — Green/red indicator in the topbar. Shows backend version and product mode on hover.
+
+Lite includes a basic dashboard with timeline and risk overview. Full dashboard features (semantic search, live feed, team management, CSV export) are available in Plus and Max.
 
 ---
 
@@ -291,30 +350,39 @@ See [lineagelens-docs/lightweight-adapters.md](lineagelens-docs/lightweight-adap
 
 ## Feature Matrix
 
-| Feature | Base | Plus | Max |
-|---|---|---|---|
-| Provenance capture | ✓ | ✓ | ✓ |
-| WebSocket ingest | ✓ | ✓ | ✓ |
-| LLM explain | ✓ | ✓ | ✓ |
-| JWT auth + logout | ✓ | ✓ | ✓ |
-| Lightweight adapter ingest | ✓ | ✓ | ✓ |
-| MCP server | ✓ | ✓ | ✓ |
-| Semantic search | — | ✓ | ✓ |
-| Governance dashboard | — | ✓ | ✓ |
-| Timeline & risk heatmap | — | ✓ | ✓ |
-| File lineage graph | — | ✓ | ✓ |
-| Live capture feed | — | ✓ | ✓ |
-| Team management | — | ✓ | ✓ |
-| Audit export (CSV) | — | ✓ | ✓ |
-| OpenAI embeddings | — | opt | opt |
-| Neo4j graph lineage | — | — | ✓ |
-| Vector search | — | — | ✓ |
+| Feature | Base | Lite | Plus | Max |
+|---|---|---|---|---|
+| Provenance capture (file-watcher) | ✓ | ✓ | ✓ | ✓ |
+| Provenance capture (proxy) | — | ✓ | ✓ | ✓ |
+| 11 AI adapter detectors | — | ✓ | ✓ | ✓ |
+| WebSocket ingest | — | ✓ | ✓ | ✓ |
+| LLM explain | ✓ (local) | ✓ | ✓ | ✓ |
+| JWT auth + logout | — | ✓ | ✓ | ✓ |
+| Setup wizard (no curl) | — | ✓ | ✓ | ✓ |
+| Lightweight adapter ingest | ✓ | ✓ | ✓ | ✓ |
+| Basic dashboard | — | ✓ | ✓ | ✓ |
+| Governance dashboard (full) | — | — | ✓ | ✓ |
+| Timeline & risk heatmap | — | basic | ✓ | ✓ |
+| File lineage graph | — | — | ✓ | ✓ |
+| Live capture feed | — | — | ✓ | ✓ |
+| Team management | — | basic | ✓ | ✓ |
+| MCP server | — | — | ✓ | ✓ |
+| Semantic search | — | — | ✓ | ✓ |
+| Audit export (CSV) | — | — | ✓ | ✓ |
+| GitHub Actions integration | — | — | ✓ | ✓ |
+| OpenAI embeddings | — | — | opt | opt |
+| Neo4j graph lineage | — | — | — | ✓ |
+| Vector search | — | — | — | ✓ |
+| Storage | Local JSON | SQLite | PostgreSQL + pgvector | PostgreSQL + pgvector + Neo4j |
+| Backend mode | none | `solo` | `team` | `enterprise` |
+| Infrastructure | None | Docker (1 container) | Docker + PostgreSQL | Docker + PostgreSQL + Neo4j |
+| Offline / air-gapped | ✓ | Docker-dependent | Deployment-dependent | Deployment-dependent |
 
 ---
 
 ## GitHub Actions Integration
 
-Two workflows included:
+Two workflows included (Plus/Max):
 
 **PR Annotation** — Annotates every pull request with which lines are AI-generated, which model produced them, and who accepted them.
 
@@ -331,7 +399,25 @@ npm install
 npm run compile
 ```
 
-Release helpers:
+Release helpers (PowerShell):
+```bash
+# Base — packages the VS Code extension as a .vsix
+powershell -File lineagelens-scripts/package-base.ps1
+
+# Lite — bundles backend + compose + quickstart as .zip
+powershell -File lineagelens-scripts/package-lite.ps1
+
+# Plus — bundles backend + compose + quickstart as .zip
+powershell -File lineagelens-scripts/package-plus.ps1
+
+# Max — bundles backend + compose + quickstart as .zip
+powershell -File lineagelens-scripts/package-max.ps1
+
+# All tiers in sequence
+powershell -File lineagelens-scripts/release.ps1
+```
+
+NPM wrappers (Base, Plus, Max):
 ```bash
 npm run ship:base
 npm run ship:plus

@@ -511,6 +511,7 @@
     "native:test": "powershell -ExecutionPolicy Bypass -File ./lineagelens-scripts/test-backend-native.ps1",
     "release": "powershell -ExecutionPolicy Bypass -File ./lineagelens-scripts/release.ps1",
     "ship:base": "powershell -ExecutionPolicy Bypass -File ./lineagelens-scripts/package-base.ps1",
+    "ship:lite": "powershell -ExecutionPolicy Bypass -File ./lineagelens-scripts/package-lite.ps1",
     "ship:plus": "powershell -ExecutionPolicy Bypass -File ./lineagelens-scripts/package-plus.ps1",
     "ship:max": "powershell -ExecutionPolicy Bypass -File ./lineagelens-scripts/package-max.ps1",
     "publish": "npx @vscode/vsce publish",

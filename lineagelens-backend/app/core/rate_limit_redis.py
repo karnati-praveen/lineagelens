@@ -60,7 +60,12 @@ class RedisRateLimiter:
         )
 
         count = int(result[0])
-        allowed = bool(result[1])
+        # Redis returns numeric values as strings when decode_responses=True.
+        # Converting to int avoids truthiness issues (e.g. '0' is truthy as a string).
+        try:
+            allowed = int(result[1]) == 1
+        except Exception:
+            allowed = bool(result[1])
 
         if not allowed:
             try:

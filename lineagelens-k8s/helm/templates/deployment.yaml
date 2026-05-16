@@ -29,6 +29,7 @@ spec:
         app: {{ include "lineagelens.fullname" . }}-backend
         {{- include "lineagelens.labels" . | nindent 8 }}
     spec:
+      automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
@@ -80,6 +81,7 @@ spec:
       labels:
         app: {{ include "lineagelens.fullname" . }}-proxy
     spec:
+      automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:

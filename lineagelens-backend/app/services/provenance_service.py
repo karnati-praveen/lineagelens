@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 import logging
+import math
 import re
 import uuid as uuid_pkg
 from typing import Any
@@ -165,7 +166,7 @@ async def ingest_provenance_event(
         if app_state is not None and record.risk_score is not None:
             try:
                 from app.api.routes.webhooks import trigger_webhooks  # local import to avoid circular
-                asyncio.create_task(
+                _wh_task = asyncio.create_task(
                     trigger_webhooks(
                         app_state,
                         workspace_id=record.workspace_id,
@@ -174,6 +175,7 @@ async def ingest_provenance_event(
                         file_path=record.file_path,
                     )
                 )
+                _wh_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
             except Exception as webhook_error:
                 logger.debug("Webhook trigger skipped: %s", webhook_error)
 
@@ -305,7 +307,7 @@ async def _vector_search(
     query_embedding = await generate_embedding(query_text, settings.pgvector_dimension, settings)
 
     # Guard: skip vector path if embedding is None or all-zeros
-    if query_embedding is None or all(v == 0.0 for v in query_embedding):
+    if query_embedding is None or all(math.isclose(v, 0.0) for v in query_embedding):
         logger.warning(
             "Vector search skipped: query embedding is null or zero-vector; falling back to keyword search"
         )

@@ -146,7 +146,7 @@ class Settings(BaseSettings):
     def product_mode(self) -> str:
         if self.is_sqlite:
             return "lite"
-        return {"solo": "base", "enterprise": "max", "full": "max"}.get(self.backend_mode, "plus")
+        return {"solo": "lite", "enterprise": "max", "full": "max"}.get(self.backend_mode, "plus")
 
     @field_validator("backend_mode")
     @classmethod

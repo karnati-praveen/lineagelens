@@ -15,7 +15,7 @@ $pkg | ConvertTo-Json -Depth 100 | Set-Content $pkgPath -Encoding utf8
 Write-Host "Bumped version: $($parts[0]).$($parts[1]).$(([int]$parts[2] - 1)) → $newVersion"
 
 # ── Run all three package scripts ─────────────────────────────────────
-$scripts = @("package-base.ps1", "package-plus.ps1", "package-max.ps1")
+$scripts = @("package-base.ps1", "package-lite.ps1", "package-plus.ps1", "package-max.ps1")
 foreach ($s in $scripts) {
     $scriptPath = Join-Path $PSScriptRoot $s
     Write-Host ""
@@ -29,5 +29,6 @@ foreach ($s in $scripts) {
 Write-Host ""
 Write-Host "Release $newVersion complete."
 Write-Host "  lineagelens-releases/base/lineagelens-base-$newVersion.vsix  (VS Code extension)"
+Write-Host "  lineagelens-releases/lite/lineagelens-lite-$newVersion.zip"
 Write-Host "  lineagelens-releases/plus/lineagelens-plus-$newVersion.zip"
 Write-Host "  lineagelens-releases/max/lineagelens-max-$newVersion.zip"

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 _SCHEDULER_TASK: asyncio.Task | None = None
 
 
-async def start_scheduler(session_factory) -> None:
+def start_scheduler(session_factory) -> None:
     global _SCHEDULER_TASK
     if _SCHEDULER_TASK is not None and not _SCHEDULER_TASK.done():
         return
@@ -27,10 +27,7 @@ async def stop_scheduler() -> None:
     global _SCHEDULER_TASK
     if _SCHEDULER_TASK and not _SCHEDULER_TASK.done():
         _SCHEDULER_TASK.cancel()
-        try:
-            await _SCHEDULER_TASK
-        except asyncio.CancelledError:
-            pass
+        await asyncio.gather(_SCHEDULER_TASK, return_exceptions=True)
     logger.info("Report scheduler stopped.")
 
 
@@ -40,7 +37,7 @@ async def _scheduler_loop(session_factory) -> None:
             await asyncio.sleep(300)  # poll every 5 minutes
             await _run_due_reports(session_factory)
         except asyncio.CancelledError:
-            break
+            raise
         except Exception as exc:
             logger.warning("Scheduler loop error: %s", exc)
 

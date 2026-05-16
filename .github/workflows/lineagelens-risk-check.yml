@@ -76,7 +76,12 @@ jobs:
 
           echo "max_risk=$MAX_RISK" >> "$GITHUB_OUTPUT"
           echo "failed=$FAILED" >> "$GITHUB_OUTPUT"
-          echo "report=$REPORT" >> "$GITHUB_OUTPUT"
+          {
+            echo "report<<LINEAGELENS_EOF"
+            printf "%s" "$REPORT"
+            echo ""
+            echo "LINEAGELENS_EOF"
+          } >> "$GITHUB_OUTPUT"
 
           if [ "$FAILED" = "1" ]; then
             echo "::error::LineageLens risk check failed. High-risk AI-generated code detected."

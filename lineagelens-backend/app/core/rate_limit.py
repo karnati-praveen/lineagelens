@@ -63,7 +63,7 @@ class InMemoryRateLimiter:
         while bucket and bucket[0] <= threshold:
             bucket.popleft()
 
-    async def acheck(self, *, key: str, limit: int, window_seconds: int) -> RateLimitDecision:
+    def acheck(self, *, key: str, limit: int, window_seconds: int) -> RateLimitDecision:
         return self.check(key=key, limit=limit, window_seconds=window_seconds)
 
     def _compact_if_necessary(self, *, now: float, window_seconds: int) -> None:

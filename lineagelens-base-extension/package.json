@@ -3,8 +3,12 @@
   "displayName": "LineageLens Base",
   "description": "Lightweight AI code provenance — capture and review every AI-generated insertion locally, no server required.",
   "version": "0.1.0",
-  "publisher": "lineagelens",
+  "publisher": "karnatipraveen",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/karnati-praveen/lineagelens"
+  },
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],
   "keywords": ["ai", "provenance", "copilot", "code-tracking", "lineage"],

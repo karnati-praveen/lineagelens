@@ -62,7 +62,7 @@ services:
       NEO4J_ENABLED: "true"
       VECTOR_SEARCH_ENABLED: "true"
       LINEAGE_STRICT_MODE: "false"
-      APP_ENV: development
+      APP_ENV: production
       APP_TITLE: LineageLens Max Backend
       APP_VERSION: 0.1.0
       DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/provenance
