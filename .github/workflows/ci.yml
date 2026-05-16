@@ -63,6 +63,7 @@ jobs:
       BACKEND_CORS_ORIGINS: http://localhost:3000
       # SQLite for CI — no Postgres service or Alembic migrations needed
       DATABASE_URL: sqlite+aiosqlite:///./data/test.db
+      PYTHONPATH: .
 
     steps:
       - name: Checkout repository
