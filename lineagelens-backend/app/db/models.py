@@ -31,7 +31,7 @@ class ProvenanceRecord(Base):
     workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
 
-    request_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    request_uuid: Mapped[uuid_pkg.UUID | None] = mapped_column(Uuid(native_uuid=False), nullable=True)
 
     file_path: Mapped[str] = mapped_column(Text, nullable=False)
     file_uri: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -19,7 +19,8 @@ echo ""
 echo -e "${BOLD}LineageLens Lite — Clear All Data${RESET}"
 echo ""
 
-DATA_DIR="$(cd "$(dirname "$0")" && pwd)/data"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DATA_DIR="$SCRIPT_DIR/lineagelens-deploy/data"
 DB_FILE="$DATA_DIR/lineagelens.db"
 
 if [[ ! -f "$DB_FILE" ]]; then
@@ -30,7 +31,7 @@ fi
 
 read -r -p "  Delete database at $DB_FILE? All data will be lost. [y/N] " confirm
 if [[ "$confirm" =~ ^[Yy]$ ]]; then
-    docker compose -f lineagelens-deploy/docker-compose.lite.yml down 2>/dev/null || true
+    docker compose --project-name lineagelens -f "$SCRIPT_DIR/lineagelens-deploy/docker-compose.lite.yml" down 2>/dev/null || true
     rm -f "$DB_FILE"
     ok "Database cleared."
     info "Run bash quickstart.sh to start fresh."
