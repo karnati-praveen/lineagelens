@@ -47,11 +47,18 @@ try {
     Copy-Item $composeFile (Join-Path $bundleRoot "lineagelens-deploy\docker-compose.max.yml") -Force
     Copy-Item $envExample (Join-Path $bundleRoot "lineagelens-deploy\.env.example") -Force
 
+    # MCP server
+    Copy-Item (Join-Path $repoRoot "lineagelens-mcp") (Join-Path $bundleRoot "lineagelens-mcp") -Recurse -Force
+    Get-ChildItem (Join-Path $bundleRoot "lineagelens-mcp") -Directory -Recurse -Force |
+        Where-Object { $_.Name -in @('__pycache__') } |
+        Remove-Item -Recurse -Force
+
     # Docs
     New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "lineagelens-docs") | Out-Null
     Copy-Item (Join-Path $repoRoot "lineagelens-docs\native-backend.md") (Join-Path $bundleRoot "lineagelens-docs\native-backend.md") -Force
     Copy-Item (Join-Path $repoRoot "lineagelens-docs\architecture.md") (Join-Path $bundleRoot "lineagelens-docs\architecture.md") -Force
     Copy-Item (Join-Path $repoRoot "lineagelens-docs\shipping-modes.md") (Join-Path $bundleRoot "lineagelens-docs\shipping-modes.md") -Force
+    Copy-Item (Join-Path $repoRoot "lineagelens-docs\lightweight-adapters.md") (Join-Path $bundleRoot "lineagelens-docs\lightweight-adapters.md") -Force
 
     # Scripts
     New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "lineagelens-scripts") | Out-Null
@@ -59,6 +66,16 @@ try {
     Copy-Item (Join-Path $repoRoot "lineagelens-scripts\test-backend-native.ps1") (Join-Path $bundleRoot "lineagelens-scripts\test-backend-native.ps1") -Force
     Copy-Item (Join-Path $repoRoot "lineagelens-scripts\debug.sh") (Join-Path $bundleRoot "debug.sh") -Force
     Copy-Item (Join-Path $repoRoot "lineagelens-scripts\debug.ps1") (Join-Path $bundleRoot "debug.ps1") -Force
+
+    # README
+    Copy-Item (Join-Path $repoRoot "README.md") (Join-Path $bundleRoot "README.md") -Force
+
+    # GitHub Actions workflows
+    New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "lineagelens-github-actions") | Out-Null
+    Copy-Item (Join-Path $repoRoot ".github\workflows\lineagelens-annotate.yml") (Join-Path $bundleRoot "lineagelens-github-actions\lineagelens-annotate.yml") -Force
+    Copy-Item (Join-Path $repoRoot ".github\workflows\lineagelens-risk-check.yml") (Join-Path $bundleRoot "lineagelens-github-actions\lineagelens-risk-check.yml") -Force
+    Copy-Item (Join-Path $repoRoot ".github\workflows\pr-policy-check.yml") (Join-Path $bundleRoot "lineagelens-github-actions\pr-policy-check.yml") -Force
+    Copy-Item (Join-Path $repoRoot ".github\workflows\provenance-review.yml") (Join-Path $bundleRoot "lineagelens-github-actions\provenance-review.yml") -Force
 
     npm run compile
     npm test
