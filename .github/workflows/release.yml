@@ -55,20 +55,36 @@ jobs:
           TMPDIR="$(mktemp -d)"
           BUNDLE="${TMPDIR}/lineagelens-lite-${VERSION}"
           mkdir -p "${BUNDLE}/lineagelens-backend" \
-                   "${BUNDLE}/lineagelens-deploy"
+                   "${BUNDLE}/lineagelens-proxy" \
+                   "${BUNDLE}/lineagelens-deploy" \
+                   "${BUNDLE}/lineagelens-docs"
           mkdir -p lineagelens-releases/lite
 
+          # Backend
           cp -r lineagelens-backend/. "${BUNDLE}/lineagelens-backend/"
           find "${BUNDLE}/lineagelens-backend" -type d -name "__pycache__" -print0 | xargs -0 rm -rf 2>/dev/null || true
           find "${BUNDLE}/lineagelens-backend" -type d -name ".pytest_cache" -print0 | xargs -0 rm -rf 2>/dev/null || true
           find "${BUNDLE}/lineagelens-backend" -name ".env" -delete
           find "${BUNDLE}/lineagelens-backend" -name "*.env" -delete
 
+          # Proxy (compose uses local build context)
+          cp -r lineagelens-proxy/. "${BUNDLE}/lineagelens-proxy/"
+          find "${BUNDLE}/lineagelens-proxy" -type d -name "__pycache__" -print0 | xargs -0 rm -rf 2>/dev/null || true
+
+          # Deploy
           cp lineagelens-deploy/docker-compose.lite.yml "${BUNDLE}/lineagelens-deploy/"
           cp lineagelens-deploy/.env.lite.example       "${BUNDLE}/lineagelens-deploy/.env.example"
-          cp lineagelens-scripts/quickstart-lite.sh     "${BUNDLE}/quickstart.sh"
-          cp lineagelens-scripts/reset-lite.sh          "${BUNDLE}/reset.sh"
-          cp lineagelens-scripts/commands-lite.md       "${BUNDLE}/COMMANDS.md"
+
+          # Docs
+          cp lineagelens-docs/architecture.md         "${BUNDLE}/lineagelens-docs/"
+          cp lineagelens-docs/lightweight-adapters.md "${BUNDLE}/lineagelens-docs/"
+          cp lineagelens-docs/shipping-modes.md       "${BUNDLE}/lineagelens-docs/"
+
+          # README and scripts
+          cp README.md                               "${BUNDLE}/README.md"
+          cp lineagelens-scripts/quickstart-lite.sh "${BUNDLE}/quickstart.sh"
+          cp lineagelens-scripts/reset-lite.sh      "${BUNDLE}/reset.sh"
+          cp lineagelens-scripts/commands-lite.md   "${BUNDLE}/COMMANDS.md"
           chmod +x "${BUNDLE}/quickstart.sh" "${BUNDLE}/reset.sh"
 
           (cd "${TMPDIR}" && zip -r \
@@ -85,7 +101,9 @@ jobs:
                    "${BUNDLE}/lineagelens-proxy" \
                    "${BUNDLE}/lineagelens-deploy" \
                    "${BUNDLE}/lineagelens-scripts" \
-                   "${BUNDLE}/lineagelens-docs"
+                   "${BUNDLE}/lineagelens-docs" \
+                   "${BUNDLE}/lineagelens-mcp" \
+                   "${BUNDLE}/lineagelens-github-actions"
           mkdir -p lineagelens-releases/plus
 
           # Backend
@@ -99,22 +117,35 @@ jobs:
           cp -r lineagelens-proxy/. "${BUNDLE}/lineagelens-proxy/"
           find "${BUNDLE}/lineagelens-proxy" -type d -name "__pycache__" -print0 | xargs -0 rm -rf 2>/dev/null || true
 
+          # MCP server
+          cp -r lineagelens-mcp/. "${BUNDLE}/lineagelens-mcp/"
+          find "${BUNDLE}/lineagelens-mcp" -type d -name "__pycache__" -print0 | xargs -0 rm -rf 2>/dev/null || true
+
           # Deploy
           cp lineagelens-deploy/docker-compose.plus.yml "${BUNDLE}/lineagelens-deploy/"
           cp lineagelens-deploy/.env.plus.example       "${BUNDLE}/lineagelens-deploy/.env.example"
 
-          # Docs (optional — present when lineagelens-docs/ is tracked)
-          [ -f lineagelens-docs/native-backend.md ] && \
-            cp lineagelens-docs/native-backend.md "${BUNDLE}/lineagelens-docs/" || true
+          # Docs
+          cp lineagelens-docs/native-backend.md       "${BUNDLE}/lineagelens-docs/"
+          cp lineagelens-docs/architecture.md         "${BUNDLE}/lineagelens-docs/"
+          cp lineagelens-docs/shipping-modes.md       "${BUNDLE}/lineagelens-docs/"
+          cp lineagelens-docs/lightweight-adapters.md "${BUNDLE}/lineagelens-docs/"
 
-          # Scripts
-          cp lineagelens-scripts/run-backend-native.ps1  "${BUNDLE}/lineagelens-scripts/"
-          cp lineagelens-scripts/test-backend-native.ps1 "${BUNDLE}/lineagelens-scripts/"
-          cp lineagelens-scripts/debug.sh                "${BUNDLE}/debug.sh"
-          cp lineagelens-scripts/debug.ps1               "${BUNDLE}/debug.ps1"
-          cp lineagelens-scripts/quickstart-plus.sh      "${BUNDLE}/quickstart.sh"
-          cp lineagelens-scripts/reset-plus.sh           "${BUNDLE}/reset.sh"
-          cp lineagelens-scripts/commands-plus.md        "${BUNDLE}/COMMANDS.md"
+          # GitHub Actions workflows (user drops into their own .github/workflows/)
+          cp .github/workflows/lineagelens-annotate.yml  "${BUNDLE}/lineagelens-github-actions/"
+          cp .github/workflows/lineagelens-risk-check.yml "${BUNDLE}/lineagelens-github-actions/"
+          cp .github/workflows/pr-policy-check.yml       "${BUNDLE}/lineagelens-github-actions/"
+          cp .github/workflows/provenance-review.yml     "${BUNDLE}/lineagelens-github-actions/"
+
+          # README and scripts
+          cp README.md                                      "${BUNDLE}/README.md"
+          cp lineagelens-scripts/run-backend-native.ps1    "${BUNDLE}/lineagelens-scripts/"
+          cp lineagelens-scripts/test-backend-native.ps1   "${BUNDLE}/lineagelens-scripts/"
+          cp lineagelens-scripts/debug.sh                  "${BUNDLE}/debug.sh"
+          cp lineagelens-scripts/debug.ps1                 "${BUNDLE}/debug.ps1"
+          cp lineagelens-scripts/quickstart-plus.sh        "${BUNDLE}/quickstart.sh"
+          cp lineagelens-scripts/reset-plus.sh             "${BUNDLE}/reset.sh"
+          cp lineagelens-scripts/commands-plus.md          "${BUNDLE}/COMMANDS.md"
           chmod +x "${BUNDLE}/quickstart.sh" "${BUNDLE}/reset.sh" "${BUNDLE}/debug.sh"
 
           (cd "${TMPDIR}" && zip -r \
@@ -131,7 +162,9 @@ jobs:
                    "${BUNDLE}/lineagelens-proxy" \
                    "${BUNDLE}/lineagelens-deploy" \
                    "${BUNDLE}/lineagelens-scripts" \
-                   "${BUNDLE}/lineagelens-docs"
+                   "${BUNDLE}/lineagelens-docs" \
+                   "${BUNDLE}/lineagelens-mcp" \
+                   "${BUNDLE}/lineagelens-github-actions"
           mkdir -p lineagelens-releases/max
 
           # Backend
@@ -145,24 +178,35 @@ jobs:
           cp -r lineagelens-proxy/. "${BUNDLE}/lineagelens-proxy/"
           find "${BUNDLE}/lineagelens-proxy" -type d -name "__pycache__" -print0 | xargs -0 rm -rf 2>/dev/null || true
 
+          # MCP server
+          cp -r lineagelens-mcp/. "${BUNDLE}/lineagelens-mcp/"
+          find "${BUNDLE}/lineagelens-mcp" -type d -name "__pycache__" -print0 | xargs -0 rm -rf 2>/dev/null || true
+
           # Deploy
           cp lineagelens-deploy/docker-compose.max.yml "${BUNDLE}/lineagelens-deploy/"
           cp lineagelens-deploy/.env.max.example       "${BUNDLE}/lineagelens-deploy/.env.example"
 
-          # Docs (optional — present when lineagelens-docs/ is tracked)
-          for doc in native-backend.md architecture.md shipping-modes.md; do
-            [ -f "lineagelens-docs/${doc}" ] && \
-              cp "lineagelens-docs/${doc}" "${BUNDLE}/lineagelens-docs/" || true
-          done
+          # Docs
+          cp lineagelens-docs/native-backend.md       "${BUNDLE}/lineagelens-docs/"
+          cp lineagelens-docs/architecture.md         "${BUNDLE}/lineagelens-docs/"
+          cp lineagelens-docs/shipping-modes.md       "${BUNDLE}/lineagelens-docs/"
+          cp lineagelens-docs/lightweight-adapters.md "${BUNDLE}/lineagelens-docs/"
 
-          # Scripts
-          cp lineagelens-scripts/run-backend-native.ps1  "${BUNDLE}/lineagelens-scripts/"
-          cp lineagelens-scripts/test-backend-native.ps1 "${BUNDLE}/lineagelens-scripts/"
-          cp lineagelens-scripts/debug.sh                "${BUNDLE}/debug.sh"
-          cp lineagelens-scripts/debug.ps1               "${BUNDLE}/debug.ps1"
-          cp lineagelens-scripts/quickstart-max.sh       "${BUNDLE}/quickstart.sh"
-          cp lineagelens-scripts/reset-max.sh            "${BUNDLE}/reset.sh"
-          cp lineagelens-scripts/commands-max.md         "${BUNDLE}/COMMANDS.md"
+          # GitHub Actions workflows (user drops into their own .github/workflows/)
+          cp .github/workflows/lineagelens-annotate.yml   "${BUNDLE}/lineagelens-github-actions/"
+          cp .github/workflows/lineagelens-risk-check.yml "${BUNDLE}/lineagelens-github-actions/"
+          cp .github/workflows/pr-policy-check.yml        "${BUNDLE}/lineagelens-github-actions/"
+          cp .github/workflows/provenance-review.yml      "${BUNDLE}/lineagelens-github-actions/"
+
+          # README and scripts
+          cp README.md                                     "${BUNDLE}/README.md"
+          cp lineagelens-scripts/run-backend-native.ps1   "${BUNDLE}/lineagelens-scripts/"
+          cp lineagelens-scripts/test-backend-native.ps1  "${BUNDLE}/lineagelens-scripts/"
+          cp lineagelens-scripts/debug.sh                 "${BUNDLE}/debug.sh"
+          cp lineagelens-scripts/debug.ps1                "${BUNDLE}/debug.ps1"
+          cp lineagelens-scripts/quickstart-max.sh        "${BUNDLE}/quickstart.sh"
+          cp lineagelens-scripts/reset-max.sh             "${BUNDLE}/reset.sh"
+          cp lineagelens-scripts/commands-max.md          "${BUNDLE}/COMMANDS.md"
           chmod +x "${BUNDLE}/quickstart.sh" "${BUNDLE}/reset.sh" "${BUNDLE}/debug.sh"
 
           (cd "${TMPDIR}" && zip -r \
