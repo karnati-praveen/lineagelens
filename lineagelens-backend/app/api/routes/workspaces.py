@@ -6,7 +6,7 @@ from typing import Annotated
 from uuid import UUID as PyUUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +22,12 @@ logger = logging.getLogger(__name__)
 
 class WorkspaceCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=256)
-    workspace_id: str | None = Field(default=None, alias="workspaceId", min_length=1, max_length=128)
+    workspace_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        validation_alias=AliasChoices("workspace_id", "workspaceId", "id"),
+    )
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -36,6 +41,7 @@ class WorkspaceUpdateRequest(BaseModel):
 
 def _ser_workspace(ws: Workspace) -> dict:
     return {
+        "id": ws.id,
         "workspaceId": ws.id,
         "name": ws.name,
         "ownerId": ws.owner_id,
@@ -80,20 +86,18 @@ async def create_workspace(
 
 
 @router.get("")
-async def list_workspaces(
+async def get_current_workspace(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> dict:
-    """List workspaces visible to the caller. Returns the caller's current workspace."""
+    """Return the caller's current workspace."""
     result = await session.execute(
         select(Workspace).where(Workspace.id == auth.workspace_id)
     )
     ws = result.scalar_one_or_none()
     if ws is not None:
-        items = [_ser_workspace(ws)]
-    else:
-        items = [{"workspaceId": auth.workspace_id, "name": auth.workspace_id, "ownerId": None, "settings": {}, "createdAt": None, "updatedAt": None}]
-    return {"results": items, "count": len(items)}
+        return _ser_workspace(ws)
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found.")
 
 
 @router.patch("/{workspace_id}")

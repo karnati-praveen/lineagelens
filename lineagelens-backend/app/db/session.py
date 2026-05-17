@@ -139,6 +139,19 @@ async def initialize_database(engine: AsyncEngine) -> None:
                 "Run 'alembic upgrade head'."
             )
 
+        workspaces_check = await connection.execute(
+            text(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema = 'public' "
+                "AND table_name = 'workspaces'"
+            )
+        )
+        if workspaces_check.scalar_one_or_none() is None:
+            raise RuntimeError(
+                "Database schema is out of date: 'workspaces' table missing. "
+                "Run 'alembic upgrade head'."
+            )
+
         vector_ext = await connection.execute(
             text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
         )
