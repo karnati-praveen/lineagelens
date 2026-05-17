@@ -47,3 +47,6 @@ lineagelens-n8n/
 .env.*
 !.env.example
 !.env.docker.example
+!.env.lite.example
+!.env.plus.example
+!.env.max.example
