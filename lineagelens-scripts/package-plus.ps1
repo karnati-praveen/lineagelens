@@ -39,12 +39,16 @@ try {
     New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "lineagelens-deploy") | Out-Null
     New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "lineagelens-scripts") | Out-Null
     New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "lineagelens-docs") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "lineagelens-github-actions") | Out-Null
 
     npm run compile
     npm test
     Copy-Item $composeFile (Join-Path $bundleRoot "lineagelens-deploy\docker-compose.plus.yml") -Force
     Copy-Item $envExample (Join-Path $bundleRoot "lineagelens-deploy\.env.example") -Force
     Copy-Item (Join-Path $repoRoot "lineagelens-docs\native-backend.md") (Join-Path $bundleRoot "lineagelens-docs\native-backend.md") -Force
+    Copy-Item (Join-Path $repoRoot "lineagelens-docs\architecture.md") (Join-Path $bundleRoot "lineagelens-docs\architecture.md") -Force
+    Copy-Item (Join-Path $repoRoot "lineagelens-docs\shipping-modes.md") (Join-Path $bundleRoot "lineagelens-docs\shipping-modes.md") -Force
+    Copy-Item (Join-Path $repoRoot "lineagelens-docs\lightweight-adapters.md") (Join-Path $bundleRoot "lineagelens-docs\lightweight-adapters.md") -Force
     Copy-Item (Join-Path $repoRoot "lineagelens-scripts\run-backend-native.ps1") (Join-Path $bundleRoot "lineagelens-scripts\run-backend-native.ps1") -Force
     Copy-Item (Join-Path $repoRoot "lineagelens-scripts\test-backend-native.ps1") (Join-Path $bundleRoot "lineagelens-scripts\test-backend-native.ps1") -Force
     Copy-Item (Join-Path $repoRoot "lineagelens-scripts\debug.sh") (Join-Path $bundleRoot "debug.sh") -Force
@@ -52,6 +56,16 @@ try {
     Copy-Item (Join-Path $repoRoot "lineagelens-scripts\quickstart-plus.sh") (Join-Path $bundleRoot "quickstart.sh") -Force
     Copy-Item (Join-Path $repoRoot "lineagelens-scripts\reset-plus.sh") (Join-Path $bundleRoot "reset.sh") -Force
     Copy-Item (Join-Path $repoRoot "lineagelens-scripts\commands-plus.md") (Join-Path $bundleRoot "COMMANDS.md") -Force
+    Copy-Item (Join-Path $repoRoot "README.md") (Join-Path $bundleRoot "README.md") -Force
+    Copy-Item (Join-Path $repoRoot "lineagelens-mcp") (Join-Path $bundleRoot "lineagelens-mcp") -Recurse -Force
+    Get-ChildItem (Join-Path $bundleRoot "lineagelens-mcp") -Directory -Recurse -Force |
+        Where-Object { $_.Name -in @('__pycache__') } |
+        Remove-Item -Recurse -Force
+    # GitHub Actions workflows — user drops these into their own repo's .github/workflows/
+    Copy-Item (Join-Path $repoRoot ".github\workflows\lineagelens-annotate.yml") (Join-Path $bundleRoot "lineagelens-github-actions\lineagelens-annotate.yml") -Force
+    Copy-Item (Join-Path $repoRoot ".github\workflows\lineagelens-risk-check.yml") (Join-Path $bundleRoot "lineagelens-github-actions\lineagelens-risk-check.yml") -Force
+    Copy-Item (Join-Path $repoRoot ".github\workflows\pr-policy-check.yml") (Join-Path $bundleRoot "lineagelens-github-actions\pr-policy-check.yml") -Force
+    Copy-Item (Join-Path $repoRoot ".github\workflows\provenance-review.yml") (Join-Path $bundleRoot "lineagelens-github-actions\provenance-review.yml") -Force
 
     if (Test-Path (Join-Path $bundleRoot "lineagelens-ad")) {
         throw "Packaging safeguard failed: lineagelens-ad was copied into the Plus bundle."
