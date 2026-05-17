@@ -533,7 +533,7 @@
     "tree-sitter-python": "^0.21.0",
     "tree-sitter-typescript": "^0.21.2",
     "uuid": "^9.0.1",
-    "ws": "^8.18.0"
+    "ws": "^8.20.1"
   },
   "devDependencies": {
     "@types/http-proxy": "^1.17.15",
