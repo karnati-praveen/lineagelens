@@ -62,6 +62,7 @@ fi
 step "2/4" "Setting up configuration"
 
 mkdir -p "$DATA_DIR"
+chmod 777 "$DATA_DIR"
 
 if [[ -f "$ENV_FILE" ]]; then
     info ".env already exists — reusing existing secrets."
