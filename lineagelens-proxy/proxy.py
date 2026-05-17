@@ -415,10 +415,11 @@ async def _handle_streaming(
         try:
             async for chunk in upstream.aiter_bytes():
                 if not skip_capture and not _capture_overflow:
-                    collected.append(chunk)
                     _collected_bytes += len(chunk)
                     if _collected_bytes > MAX_BODY_BYTES:
                         _capture_overflow = True
+                    else:
+                        collected.append(chunk)
                 yield chunk
         finally:
             await upstream.aclose()

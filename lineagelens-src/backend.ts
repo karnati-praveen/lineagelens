@@ -71,6 +71,8 @@ export class BackendIngestClient implements vscode.Disposable {
           'LineageLens: backend is unreachable at startup. Events will be queued until it recovers.'
         );
       }
+    }).catch((error: unknown) => {
+      this.log('Backend health check failed during initialization: ' + toErrorMessage(error));
     });
   }
 

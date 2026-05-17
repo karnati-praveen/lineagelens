@@ -293,7 +293,9 @@ export function activate(context: vscode.ExtensionContext): void {
       previousDocumentTexts.delete(document.uri.toString());
     }),
     vscode.workspace.onDidChangeTextDocument((event) => {
-      void queueDocumentChangeProcessing(event);
+      queueDocumentChangeProcessing(event).catch((error: unknown) => {
+        log('Document change processing failed: ' + toErrorMessage(error));
+      });
     }),
     vscode.commands.registerCommand('lineagelens.start', async () => {
       await initializeStorageService(context, vscode.window.activeTextEditor?.document.uri);
