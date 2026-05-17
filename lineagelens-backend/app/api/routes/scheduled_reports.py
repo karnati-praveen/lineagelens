@@ -144,6 +144,14 @@ async def update_scheduled_report(
     if payload.enabled is not None:
         r.enabled = payload.enabled
 
+    await log_audit_event(
+        session,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        action="scheduled_report.update",
+        target_uuid=str(r.id),
+        details={"name": r.name},
+    )
     await session.commit()
     await session.refresh(r)
     return _ser(r)
@@ -170,6 +178,14 @@ async def delete_scheduled_report(
     if r is None:
         raise HTTPException(status_code=404, detail="Scheduled report not found.")
 
+    await log_audit_event(
+        session,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        action="scheduled_report.delete",
+        target_uuid=str(r.id),
+        details={"name": r.name},
+    )
     await session.delete(r)
     await session.commit()
 

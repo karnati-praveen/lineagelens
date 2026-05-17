@@ -251,7 +251,10 @@ async def sso_callback(
     sso_username = f"sso_{sub}"[:128]
 
     user_result = await session.execute(
-        select(UserAccount).where(UserAccount.username == sso_username)
+        select(UserAccount).where(
+            UserAccount.username == sso_username,
+            UserAccount.workspace_id == workspace_id,
+        )
     )
     user = user_result.scalar_one_or_none()
 

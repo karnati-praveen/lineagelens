@@ -57,19 +57,34 @@ MAX_RESPONSE_BODY_BYTES = MAX_BODY_BYTES  # reuse same limit for response pre-fl
 def detect_provider_and_format(url: str, headers: dict) -> str:
     """Detect which LLM provider this request targets.
 
-    Checks the destination URL and, for Anthropic, the presence of the
-    anthropic-version header.  Returns one of: "anthropic", "openai",
-    "gemini", or "unknown".
+    Checks the destination URL, headers, and request path.
+    Returns one of: "anthropic", "openai", "gemini", or "unknown".
     """
     url_lower = url.lower()
     header_keys = {k.lower() for k in headers}
 
+    # Anthropic: direct API or header signature
     if "anthropic.com" in url_lower or "anthropic-version" in header_keys:
         return "anthropic"
-    if "openai.com" in url_lower:
-        return "openai"
+    # Gemini
     if "googleapis.com" in url_lower or "generativelanguage.googleapis.com" in url_lower:
         return "gemini"
+    # OpenAI official
+    if "openai.com" in url_lower:
+        return "openai"
+    # Azure OpenAI: *.openai.azure.com
+    if "openai.azure.com" in url_lower:
+        return "openai"
+    # Together AI, Groq, Fireworks, Mistral — all speak OpenAI chat format
+    for host in ("api.together.xyz", "api.groq.com", "api.fireworks.ai", "api.mistral.ai"):
+        if host in url_lower:
+            return "openai"
+    # Path-based heuristic for generic /v1/messages (Anthropic format) or /v1/chat/completions
+    path = urllib.parse.urlparse(url).path
+    if "/v1/messages" in path:
+        return "anthropic"
+    if "/v1/chat/completions" in path:
+        return "openai"
     return "unknown"
 
 
@@ -407,6 +422,8 @@ async def _handle_streaming(
             await client.aclose()
             if skip_capture:
                 pass  # already logged above
+            elif upstream.status_code >= 400:
+                logger.debug("skipping capture: upstream status %d", upstream.status_code)
             elif not _capture_overflow:
                 text = _text_from_sse(collected, provider)
                 _task = asyncio.create_task(

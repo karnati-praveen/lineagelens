@@ -919,6 +919,8 @@ function go(name) {
   if (name==='reviews') loadReviews();
   if (name==='alerts') { clearAlertBadge(); loadAlerts(); }
   if (name==='team') loadTeam();
+  if (name==='record') loadRec();
+  if (name==='quality') loadQuality();
   if (name==='search') document.getElementById('s-kw').focus();
   if (name==='github') loadGithubConfig();
   if (name==='scheduled-reports') loadDigests();
@@ -1470,13 +1472,12 @@ async function loadTeam() {
     const d = await req('GET', '/team/members');
     const members = d.members || d || [];
     if (!members.length) { el.innerHTML = '<div class="empty">No team members yet.</div>'; return; }
-    el.innerHTML = tw('Members', `<table><thead><tr><th>Username</th><th>Role</th><th>Insertions</th><th>AI Lines</th><th>Share</th><th>Joined</th></tr></thead><tbody>` +
+    el.innerHTML = tw('Members', `<table><thead><tr><th>Username</th><th>Role</th><th>Records</th><th>Net Lines Added</th><th>Joined</th></tr></thead><tbody>` +
       members.map(m => `<tr>
         <td>${esc(m.username)}</td>
         <td><span class="bdg${m.role==='admin'?' adm':''}">${esc(m.role)}</span></td>
-        <td>${m.insertions??'—'}</td><td>${m.aiLines??'—'}</td>
-        <td>${m.pctShare==null?'—':(m.pctShare*100).toFixed(1)+'%'}</td>
-        <td>${fd(m.joinedDate)}</td></tr>`).join('') + '</tbody></table>');
+        <td>${m.recordCount??'—'}</td><td>${m.netAddedLines??'—'}</td>
+        <td>${fd(m.joinedAtIso)}</td></tr>`).join('') + '</tbody></table>');
   } catch(e) { el.innerHTML = `<div class="al err">${esc(e.message)}</div>`; }
 }
 
@@ -2075,6 +2076,7 @@ async function startAsyncExport() {
   const limit = Number.parseInt(document.getElementById('async-export-limit')?.value || '1000', 10);
   try {
     const data = await req('POST', '/export/async', { workspaceId: currentWorkspaceId(), format, limit });
+    if (!data.jobId) { alert('Export started but no job ID returned.'); return; }
     _asyncJobId = data.jobId;
     document.getElementById('async-export-status').hidden = false;
     document.getElementById('async-job-id').textContent = _asyncJobId || '—';
