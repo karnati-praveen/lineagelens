@@ -339,16 +339,27 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.db_engine = engine
     app.state.db_session_factory = session_factory
-    app.state.webhooks = {}
     app.title = settings.app_title
     app.version = settings.app_version
+
+    from app.core.redis_store import RedisStore
+    redis_client = None
     if settings.redis_url:
         from app.core.rate_limit_redis import RedisRateLimiter
         rate_limiter = RedisRateLimiter(settings.redis_url)
+        try:
+            import redis.asyncio as aioredis
+            redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
+            await redis_client.ping()
+            logger.info("Redis KV store connected.")
+        except Exception as exc:
+            logger.warning("Redis KV store unavailable, using in-process fallback: %s", exc)
+            redis_client = None
         logger.info("Redis-backed rate limiter initialised.")
     else:
         rate_limiter = InMemoryRateLimiter(settings.rate_limit_max_tracked_keys)
     app.state.rate_limiter = rate_limiter
+    app.state.kv_store = RedisStore(redis_client)
 
     neo4j_service: Neo4jLineageService | None = None
     app.state.neo4j_service = neo4j_service
@@ -369,6 +380,8 @@ async def lifespan(app: FastAPI):
             await neo4j_service.close()
         if hasattr(rate_limiter, "close"):
             await rate_limiter.close()
+        if redis_client is not None:
+            await redis_client.aclose()
         await engine.dispose()
 
 

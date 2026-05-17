@@ -19,8 +19,8 @@ aiosqlite>=0.20.0
 # Graph lineage — install when NEO4J_ENABLED=true
 # neo4j==5.26.0
 
-# Redis rate limiter — install when REDIS_URL is set
-# redis[asyncio]>=5.0.0
+# Redis — rate limiter and shared KV store (export jobs, webhooks)
+redis[asyncio]>=5.0.0
 
 # AST parsing — optional, improves code analysis accuracy
 # tree-sitter==0.21.3; python_version < "3.12"

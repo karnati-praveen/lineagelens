@@ -36,15 +36,25 @@ class WebhookRegisterRequest(BaseModel):
     risk_threshold: int = 70
 
 
-def _get_workspace_webhooks(app_state: object, workspace_id: str) -> list[WebhookConfig]:
-    webhooks_store: dict[str, list[WebhookConfig]] = getattr(app_state, "webhooks", {})
+async def _get_workspace_webhooks(app_state: object, workspace_id: str) -> list[WebhookConfig]:
+    kv_store = getattr(app_state, "kv_store", None)
+    if kv_store is not None:
+        data = await kv_store.get(f"webhooks:{workspace_id}")
+        if data is None:
+            return []
+        return [WebhookConfig(**item) for item in data]
+    webhooks_store: dict = getattr(app_state, "webhooks", {})
     return list(webhooks_store.get(workspace_id, []))
 
 
-def _set_workspace_webhooks(
+async def _set_workspace_webhooks(
     app_state: object, workspace_id: str, webhooks: list[WebhookConfig]
 ) -> None:
-    webhooks_store: dict[str, list[WebhookConfig]] = getattr(app_state, "webhooks", {})
+    kv_store = getattr(app_state, "kv_store", None)
+    if kv_store is not None:
+        await kv_store.set(f"webhooks:{workspace_id}", [w.model_dump() for w in webhooks])
+        return
+    webhooks_store: dict = getattr(app_state, "webhooks", {})
     webhooks_store[workspace_id] = webhooks
     app_state.webhooks = webhooks_store  # type: ignore[attr-defined]
 
@@ -71,9 +81,9 @@ async def register_webhook(
         active=True,
         created_at=datetime.now(tz=UTC).isoformat(),
     )
-    existing = _get_workspace_webhooks(request.app.state, auth.workspace_id)
+    existing = await _get_workspace_webhooks(request.app.state, auth.workspace_id)
     existing.append(config)
-    _set_workspace_webhooks(request.app.state, auth.workspace_id, existing)
+    await _set_workspace_webhooks(request.app.state, auth.workspace_id, existing)
     logger.info(
         "Webhook registered: workspace=%s id=%s url=%s threshold=%d",
         auth.workspace_id,
@@ -90,7 +100,7 @@ async def list_webhooks(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> list[WebhookConfig]:
     """List all webhooks for the authenticated workspace."""
-    return _get_workspace_webhooks(request.app.state, auth.workspace_id)
+    return await _get_workspace_webhooks(request.app.state, auth.workspace_id)
 
 
 @router.delete("/{webhook_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
@@ -100,14 +110,14 @@ async def delete_webhook(
     auth: Annotated[AuthContext, Depends(require_admin)],
 ) -> None:
     """Delete a webhook by ID (admin only)."""
-    existing = _get_workspace_webhooks(request.app.state, auth.workspace_id)
+    existing = await _get_workspace_webhooks(request.app.state, auth.workspace_id)
     updated = [w for w in existing if w.id != webhook_id]
     if len(updated) == len(existing):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Webhook not found.",
         )
-    _set_workspace_webhooks(request.app.state, auth.workspace_id, updated)
+    await _set_workspace_webhooks(request.app.state, auth.workspace_id, updated)
     logger.info(
         "Webhook deleted: workspace=%s id=%s",
         auth.workspace_id,
@@ -133,7 +143,7 @@ async def trigger_webhooks(
     Called as an asyncio background task after a successful ingest.  Errors
     are logged but never re-raised so ingest callers are not affected.
     """
-    webhooks = _get_workspace_webhooks(app_state, workspace_id)
+    webhooks = await _get_workspace_webhooks(app_state, workspace_id)
     if not webhooks:
         return
 

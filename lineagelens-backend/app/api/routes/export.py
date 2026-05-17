@@ -18,7 +18,7 @@ from app.core.audit import log_audit_event
 from app.core.security import AuthContext, ensure_workspace_scope, get_current_auth_context
 from app.db.models import ProvenanceRecord, UserAccount
 from app.db.session import get_db_session
-from app.services.export_service import ExportJob, cleanup_old_jobs, new_job, run_export_job
+from app.services.export_service import cleanup_old_jobs, deserialize_job, new_job, run_export_job, serialize_job
 from app.services.provenance_service import build_workspace_record_filters, serialize_provenance_record
 from app.schemas.provenance import SearchRequest
 
@@ -253,21 +253,17 @@ async def start_async_export(
     )
     records = [serialize_provenance_record(r) for r in result.scalars().all()]
 
-    # Get or create jobs store on app.state
-    jobs_store: dict = getattr(request.app.state, "export_jobs", None)
-    if jobs_store is None:
-        request.app.state.export_jobs = {}
-        jobs_store = request.app.state.export_jobs
+    kv_store = request.app.state.kv_store
 
-    # Cleanup old jobs opportunistically
-    cleanup_old_jobs(jobs_store)
+    # Opportunistically clean up stale in-memory jobs (no-op for Redis)
+    await cleanup_old_jobs(kv_store)
 
     job = new_job()
     job_key = f"{auth.workspace_id}:{job.job_id}"
-    jobs_store[job_key] = job
+    await kv_store.set(job_key, serialize_job(job))
 
     # Fire and forget — keep a strong reference so GC cannot collect the task early.
-    task = asyncio.create_task(run_export_job(job, records, fmt, jobs_store, job_key))
+    task = asyncio.create_task(run_export_job(job, records, fmt, kv_store, job_key))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 
@@ -286,8 +282,8 @@ async def get_export_job_status(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> dict:
     """Poll export job status."""
-    jobs_store: dict = getattr(request.app.state, "export_jobs", {})
-    job = jobs_store.get(f"{auth.workspace_id}:{job_id}")
+    kv_store = request.app.state.kv_store
+    job = deserialize_job(await kv_store.get(f"{auth.workspace_id}:{job_id}"))
     if job is None:
         raise HTTPException(status_code=404, detail="Export job not found.")
 
@@ -310,8 +306,8 @@ async def download_export_job(
     """Download a completed export job result."""
     from fastapi.responses import Response
 
-    jobs_store: dict = getattr(request.app.state, "export_jobs", {})
-    job = jobs_store.get(f"{auth.workspace_id}:{job_id}")
+    kv_store = request.app.state.kv_store
+    job = deserialize_job(await kv_store.get(f"{auth.workspace_id}:{job_id}"))
     if job is None:
         raise HTTPException(status_code=404, detail="Export job not found.")
     if job.status in {"pending", "running"}:

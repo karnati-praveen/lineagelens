@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import csv
 import io
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import asdict, dataclass, field
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.core.redis_store import RedisStore
 
 logger = logging.getLogger(__name__)
-
-# In-memory job store. app.state.export_jobs is set in main.py lifespan.
-# Each job: {status, result_bytes, result_content_type, filename, error, created_at, completed_at}
 
 
 @dataclass
@@ -31,23 +32,40 @@ def new_job() -> ExportJob:
     return ExportJob(job_id=str(uuid.uuid4()), status="pending")
 
 
+def serialize_job(job: ExportJob) -> dict:
+    d = asdict(job)
+    if d.get("result_bytes") is not None:
+        d["result_bytes"] = base64.b64encode(d["result_bytes"]).decode()
+        d["_bytes_b64"] = True
+    return d
+
+
+def deserialize_job(data: dict | None) -> ExportJob | None:
+    if data is None:
+        return None
+    data = dict(data)
+    if data.pop("_bytes_b64", False) and data.get("result_bytes"):
+        data["result_bytes"] = base64.b64decode(data["result_bytes"])
+    return ExportJob(**data)
+
+
 async def run_export_job(
     job: ExportJob,
     records: list[dict],
     fmt: str,
-    jobs_store: dict[str, ExportJob],
-    store_key: str | None = None,
+    kv_store: RedisStore,
+    store_key: str,
 ) -> None:
     """
     Background coroutine that writes records to the requested format.
-    Updates job in-place and in jobs_store.
+    Updates job status in the kv_store after completion.
     Supports: "json", "csv", "parquet"
     """
     job.status = "running"
     try:
         if fmt == "json":
-            import json
-            data = json.dumps({"results": records, "count": len(records)}, default=str).encode()
+            import json as _json
+            data = _json.dumps({"results": records, "count": len(records)}, default=str).encode()
             job.result_bytes = data
             job.result_content_type = "application/json"
             job.filename = "export.json"
@@ -83,7 +101,7 @@ async def run_export_job(
         job.error = str(exc)
         job.completed_at = time.time()
     finally:
-        jobs_store[store_key or job.job_id] = job
+        await kv_store.set(store_key, serialize_job(job))
 
 
 def _write_parquet(records: list[dict]) -> bytes:
@@ -117,13 +135,21 @@ def _write_parquet(records: list[dict]) -> bytes:
     return buf.getvalue()
 
 
-def cleanup_old_jobs(jobs_store: dict[str, ExportJob], max_age_seconds: int = 3600) -> int:
-    """Remove completed/failed jobs older than max_age_seconds. Returns count removed."""
+async def cleanup_old_jobs(kv_store: RedisStore, max_age_seconds: int = 3600) -> int:
+    """Remove completed/failed jobs older than max_age_seconds from in-memory store.
+
+    Redis-backed stores handle expiry via TTL — this function is a no-op for them.
+    """
+    if kv_store.uses_redis:
+        return 0
     now = time.time()
-    to_remove = [
-        jid for jid, j in jobs_store.items()
-        if j.status in {"done", "failed"} and j.completed_at and (now - j.completed_at) > max_age_seconds
-    ]
-    for jid in to_remove:
-        del jobs_store[jid]
+    to_remove = []
+    for key, val in kv_store.local_items():
+        if isinstance(val, dict):
+            completed_at = val.get("completed_at")
+            status = val.get("status", "")
+            if status in {"done", "failed"} and completed_at and (now - completed_at) > max_age_seconds:
+                to_remove.append(key)
+    for key in to_remove:
+        kv_store.local_pop(key)
     return len(to_remove)

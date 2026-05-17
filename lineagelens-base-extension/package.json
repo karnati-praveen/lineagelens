@@ -9,11 +9,23 @@
     "type": "git",
     "url": "https://github.com/karnati-praveen/lineagelens"
   },
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Other"],
-  "keywords": ["ai", "provenance", "copilot", "code-tracking", "lineage"],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "provenance",
+    "copilot",
+    "code-tracking",
+    "lineage"
+  ],
   "icon": "images/icon.png",
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -84,7 +96,11 @@
         },
         "lineagelensBase.excludePatterns": {
           "type": "array",
-          "default": ["**/node_modules/**", "**/.git/**", "**/dist/**"],
+          "default": [
+            "**/node_modules/**",
+            "**/.git/**",
+            "**/dist/**"
+          ],
           "description": "Glob patterns for files to exclude from capture."
         }
       }
@@ -93,16 +109,20 @@
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
     "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
-    "package": "vsce package"
+    "package": "vsce package",
+    "test": "jest"
   },
   "dependencies": {
     "minimatch": "^9.0.4"
   },
   "devDependencies": {
+    "@types/jest": "^29.5.14",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^2.22.0",
     "esbuild": "^0.19.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.4.9",
     "typescript": "^5.3.0"
   }
 }
