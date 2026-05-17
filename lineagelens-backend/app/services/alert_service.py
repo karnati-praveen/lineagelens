@@ -64,12 +64,15 @@ async def _send_to_channel(config, *, event: str, payload: dict) -> None:
         await _post_webhook(webhook_url, message, channel)
 
     elif channel == "email":
+        import asyncio
+
         recipients = cfg.get("recipients") or cfg.get("email")
         smtp_host = cfg.get("smtp_host", "localhost")
         smtp_port = int(cfg.get("smtp_port", 587))
         from_addr = cfg.get("from_addr", "lineagelens@noreply.local")
         subject = f"[LineageLens Alert] {event} in workspace {config.workspace_id}"
-        _send_email(smtp_host, smtp_port, from_addr, recipients, subject, message)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _send_email, smtp_host, smtp_port, from_addr, recipients, subject, message)
 
 
 async def _post_webhook(url: str, message: dict, channel: str) -> None:

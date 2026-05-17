@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class AddTagsRequest(BaseModel):
-    tags: list[str] = Field(..., min_length=1)
+    tags: list[Annotated[str, Field(max_length=128)]] = Field(..., min_length=1, max_length=50)
     workspace_id: str | None = Field(default=None, alias="workspaceId")
 
     model_config = ConfigDict(populate_by_name=True, extra="allow")

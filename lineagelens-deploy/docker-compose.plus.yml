@@ -95,6 +95,12 @@ services:
       PROXY_PORT: 8788
     ports:
       - "8788:8788"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8788/proxy-health', timeout=3)\" 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
 volumes:
   postgres_team_data:

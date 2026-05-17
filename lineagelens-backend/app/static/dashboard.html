@@ -1871,7 +1871,7 @@ function renderDeveloperTable(devs) {
     <tr>
       <td>${esc(d.username || d.userId || '—')}</td>
       <td>${d.recordCount ?? '—'}</td>
-      <td>${riskBadge(Math.round(d.avgRisk || 0))}</td>
+      <td>${riskBadge(Math.round(d.avgRiskScore ?? d.avgRisk ?? 0))}</td>
       <td>${d.modelCount ?? '—'}</td>
       <td>${(d.totalTokens || 0).toLocaleString()}</td>
       <td>$${(d.totalCostUsd || 0).toFixed(4)}</td>
@@ -2185,7 +2185,7 @@ async function loadQuality() {
       ${metricCard('Maintainability', d.maintainabilityScore + '/100')}
       ${metricCard('Language', d.language)}
     </div>`;
-  } catch(e) { out.innerHTML = `<span style="color:var(--err)">${e.message || 'Error'}</span>`; }
+  } catch(e) { out.innerHTML = `<span style="color:var(--err)">${esc(e.message || 'Error')}</span>`; }
 }
 function metricCard(label, value) {
   return `<div class="card" style="text-align:center;padding:12px 8px"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">${label}</div><div style="font-size:18px;font-weight:700">${value}</div></div>`;
@@ -2207,7 +2207,7 @@ async function loadQualityBatch() {
     </div>
     <table class="tbl" style="margin-top:10px"><thead><tr><th>UUID</th><th>Lang</th><th>Lines</th><th>Cyclomatic</th><th>Maintain.</th></tr></thead>
     <tbody>${d.results.map(r=>`<tr><td style="font-family:monospace;font-size:11px">${r.record_id.slice(0,8)}…</td><td>${r.metrics?.language||'-'}</td><td>${r.metrics?.codeLines??'-'}</td><td>${r.metrics?.cyclomaticComplexity??'-'}</td><td>${r.metrics?.maintainabilityScore??'-'}</td></tr>`).join('')}</tbody></table>`;
-  } catch(e) { out.innerHTML = `<span style="color:var(--err)">${e.message || 'Error'}</span>`; }
+  } catch(e) { out.innerHTML = `<span style="color:var(--err)">${esc(e.message || 'Error')}</span>`; }
 }
 
 // ── SCHEDULED DIGESTS ─────────────────────────────────────────────────────────
@@ -2267,7 +2267,7 @@ async function loadSsoProviders() {
       <td>${p.enabled?'Yes':'No'}</td>
       <td><button style="font-size:11px;padding:3px 8px;color:var(--err)" onclick="deleteSsoProvider('${esc(p.id)}')">Delete</button></td>
     </tr>`).join('')}</tbody></table>`;
-  } catch(e) { out.innerHTML = `<span style="color:var(--err)">${e.message||'Error'}</span>`; }
+  } catch(e) { out.innerHTML = `<span style="color:var(--err)">${esc(e.message||'Error')}</span>`; }
 }
 function showCreateSso() {
   const el = document.getElementById('sso-create');
