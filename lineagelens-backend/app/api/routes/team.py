@@ -92,6 +92,12 @@ async def invite_team_member(
             detail="Username is already registered.",
         )
 
+    if payload.role not in VALID_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid role '{payload.role}'. Must be one of: {', '.join(sorted(VALID_ROLES))}.",
+        )
+
     new_user = UserAccount(
         username=username,
         password_hash=hash_password(payload.password),

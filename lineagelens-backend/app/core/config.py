@@ -77,6 +77,10 @@ class Settings(BaseSettings):
         default="",
         alias="BACKEND_TRUSTED_HOSTS",
     )
+    trusted_proxy_ips: str = Field(
+        default="",
+        alias="TRUSTED_PROXY_IPS",
+    )
 
     http_max_body_bytes: int = Field(default=2_000_000, alias="HTTP_MAX_BODY_BYTES")
     ws_max_message_bytes: int = Field(default=2_000_000, alias="WS_MAX_MESSAGE_BYTES")

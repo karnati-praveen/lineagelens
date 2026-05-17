@@ -8,7 +8,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import log_audit_event
-from app.core.security import AuthContext, require_admin
+from app.core.security import AuthContext, get_client_ip, require_admin
 from app.db.models import ProvenanceRecord
 from app.db.session import get_db_session
 from app.services.provenance_service import get_provenance_by_uuid, serialize_provenance_record
@@ -16,14 +16,6 @@ from app.services.provenance_service import get_provenance_by_uuid, serialize_pr
 router = APIRouter(tags=["deletion"])
 logger = logging.getLogger(__name__)
 
-
-def _get_client_ip(request: Request) -> str | None:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return None
 
 
 @router.delete("/provenance/{record_uuid}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
@@ -54,7 +46,7 @@ async def delete_provenance_record(
         action="record.delete",
         target_uuid=record_uuid,
         details={"file_path": record.file_path},
-        ip_address=_get_client_ip(request),
+        ip_address=get_client_ip(request),
     )
 
     await session.commit()
@@ -98,7 +90,7 @@ async def redact_provenance_record(
         action="record.redact",
         target_uuid=record_uuid,
         details={"file_path": record.file_path},
-        ip_address=_get_client_ip(request),
+        ip_address=get_client_ip(request),
     )
 
     await session.commit()

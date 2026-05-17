@@ -7,6 +7,7 @@ import logging
 import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import Annotated
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -55,6 +56,12 @@ async def register_webhook(
     auth: Annotated[AuthContext, Depends(require_admin)],
 ) -> WebhookConfig:
     """Register a new webhook for the authenticated workspace (admin only)."""
+    parsed_url = urlparse(body.url)
+    if parsed_url.scheme not in ("http", "https") or not parsed_url.netloc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Webhook URL must be a valid http:// or https:// URL.",
+        )
     config = WebhookConfig(
         id=str(uuid_pkg.uuid4()),
         workspace_id=auth.workspace_id,

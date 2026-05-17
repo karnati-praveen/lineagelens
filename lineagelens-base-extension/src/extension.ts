@@ -92,7 +92,7 @@ export function activate(context: vscode.ExtensionContext): void {
         'Open File',
       );
       if (open === 'Open File') {
-        vscode.workspace.openTextDocument(uri).then(doc => vscode.window.showTextDocument(doc));
+        vscode.workspace.openTextDocument(uri).then(doc => vscode.window.showTextDocument(doc)).catch(() => {});
       }
     }),
   );
@@ -108,7 +108,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (action === 'Open Sidebar') {
         vscode.commands.executeCommand('lineagelens.captures.focus');
       }
-    });
+    }).catch(() => {});
   }
 }
 

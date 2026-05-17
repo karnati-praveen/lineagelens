@@ -36,6 +36,7 @@ async def run_export_job(
     records: list[dict],
     fmt: str,
     jobs_store: dict[str, ExportJob],
+    store_key: str | None = None,
 ) -> None:
     """
     Background coroutine that writes records to the requested format.
@@ -82,7 +83,7 @@ async def run_export_job(
         job.error = str(exc)
         job.completed_at = time.time()
     finally:
-        jobs_store[job.job_id] = job
+        jobs_store[store_key or job.job_id] = job
 
 
 def _write_parquet(records: list[dict]) -> bytes:

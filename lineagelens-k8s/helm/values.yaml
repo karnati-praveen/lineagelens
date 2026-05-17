@@ -3,12 +3,12 @@ replicaCount: 2
 image:
   backend:
     repository: lineagelens/backend
-    tag: latest
-    pullPolicy: Always
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
   proxy:
     repository: lineagelens/proxy
-    tag: latest
-    pullPolicy: Always
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
 
 service:
   backend:

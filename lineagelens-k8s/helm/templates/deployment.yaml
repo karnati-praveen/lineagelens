@@ -92,7 +92,7 @@ spec:
             - containerPort: 8788
               name: http
           env:
-            - name: LINEAGELENS_BACKEND_URL
+            - name: BACKEND_URL
               value: "http://{{ include "lineagelens.fullname" . }}-backend:8787"
           envFrom:
             - secretRef:

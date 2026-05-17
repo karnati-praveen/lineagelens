@@ -27,6 +27,8 @@ from app.services.risk_service import compute_risk_score
 
 logger = logging.getLogger(__name__)
 
+_BG_TASKS: set[asyncio.Task] = set()
+
 
 @dataclass(slots=True)
 class IngestOutcome:
@@ -175,7 +177,8 @@ async def ingest_provenance_event(
                         file_path=record.file_path,
                     )
                 )
-                _wh_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+                _BG_TASKS.add(_wh_task)
+                _wh_task.add_done_callback(_BG_TASKS.discard)
             except Exception as webhook_error:
                 logger.debug("Webhook trigger skipped: %s", webhook_error)
 

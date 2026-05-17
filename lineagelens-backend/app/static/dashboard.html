@@ -866,11 +866,15 @@ async function doRegister() {
 
 async function doLogout() {
   try { await req('POST', '/auth/logout', {}); } catch {}
+  if (_mcpTimer) { clearInterval(_mcpTimer); _mcpTimer = null; }
+  if (_lastUpdatedTimer) { clearInterval(_lastUpdatedTimer); _lastUpdatedTimer = null; }
   clearTok(); showLogin();
 }
 
 // ── INIT ─────────────────────────────────────────────────────────────────────
 async function initApp() {
+  if (_mcpTimer) { clearInterval(_mcpTimer); _mcpTimer = null; }
+  if (_lastUpdatedTimer) { clearInterval(_lastUpdatedTimer); _lastUpdatedTimer = null; }
   if (!_user) {
     try { _user = await req('GET', '/auth/me'); } catch { showLogin(); return; }
   }
@@ -896,10 +900,10 @@ async function initApp() {
   loadPolicies();
   loadAlertConfigs();
   checkMcp();
-  setInterval(checkMcp, 60000);
+  _mcpTimer = setInterval(checkMcp, 60000);
   startAlertPoll();
   // Update "last updated" text every 30s
-  setInterval(updateLastUpdatedText, 30000);
+  _lastUpdatedTimer = setInterval(updateLastUpdatedText, 30000);
 }
 
 // ── TABS ─────────────────────────────────────────────────────────────────────
@@ -1283,8 +1287,14 @@ async function doSearch() {
     if (kw) body.keywords = kw;
     if (mo) body.model = mo;
     if (fi) body.file_path = fi;
-    if (sf) body.date_from = new Date(sf).toISOString();
-    if (st) body.date_to = new Date(st+'T23:59:59').toISOString();
+    if (sf) {
+      const dFrom = new Date(sf);
+      if (!isNaN(dFrom.getTime())) body.date_from = dFrom.toISOString();
+    }
+    if (st) {
+      const d = new Date(st + 'T23:59:59');
+      if (!isNaN(d.getTime())) body.date_to = d.toISOString();
+    }
     // Merge advanced filters
     Object.assign(body, window._activeFilters);
     // Pagination
@@ -1748,6 +1758,8 @@ function drawGraph(data) {
 let _alertPoll = null;
 let _alertSeen = new Set();
 let _alertCount = 0;
+let _mcpTimer = null;
+let _lastUpdatedTimer = null;
 
 function loadAlerts() { pollAlerts(); }
 
@@ -2335,9 +2347,11 @@ async function createWorkspace() {
         showApp();
         go('dashboard');
         loadPolicies(); loadAlertConfigs(); checkMcp();
-        setInterval(checkMcp, 60000);
+        if (_mcpTimer) { clearInterval(_mcpTimer); _mcpTimer = null; }
+        if (_lastUpdatedTimer) { clearInterval(_lastUpdatedTimer); _lastUpdatedTimer = null; }
+        _mcpTimer = setInterval(checkMcp, 60000);
         startAlertPoll();
-        setInterval(updateLastUpdatedText, 30000);
+        _lastUpdatedTimer = setInterval(updateLastUpdatedText, 30000);
         return;
       }
     } catch(e) {}

@@ -12,7 +12,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import log_audit_event
-from app.core.security import AuthContext, ensure_workspace_scope, get_current_auth_context, require_admin, require_role
+from app.core.security import AuthContext, ensure_workspace_scope, get_client_ip, get_current_auth_context, require_admin, require_role
 from app.db.models import ProvenanceRecord, ProvenanceTag
 from app.db.session import get_db_session
 from app.services.provenance_service import serialize_provenance_record
@@ -22,14 +22,6 @@ logger = logging.getLogger(__name__)
 
 MAX_BULK_RECORDS = 500
 
-
-def _get_client_ip(request: Request) -> str | None:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return None
 
 
 class BulkDeleteRequest(BaseModel):
@@ -105,7 +97,7 @@ async def bulk_delete(
         user_id=auth.subject,
         action="record.delete",
         details={"bulk": True, "count": len(deleted_uuids), "uuids": deleted_uuids},
-        ip_address=_get_client_ip(request),
+        ip_address=get_client_ip(request),
     )
 
     await session.commit()
@@ -162,7 +154,7 @@ async def bulk_tag(
         user_id=auth.subject,
         action="tag.add",
         details={"bulk": True, "tags": tag_values, "record_count": len(records)},
-        ip_address=_get_client_ip(request),
+        ip_address=get_client_ip(request),
     )
 
     await session.commit()
@@ -280,7 +272,7 @@ async def bulk_flag(
         user_id=auth.subject,
         action="record.flag",
         details={"bulk": True, "reason": reason_tag, "count": len(records)},
-        ip_address=_get_client_ip(request),
+        ip_address=get_client_ip(request),
     )
     await session.commit()
     return {
@@ -323,7 +315,7 @@ async def bulk_review(
         user_id=auth.subject,
         action="review.bulk_create",
         details={"count": queued},
-        ip_address=_get_client_ip(request),
+        ip_address=get_client_ip(request),
     )
     await session.commit()
     return {

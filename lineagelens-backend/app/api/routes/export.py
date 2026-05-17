@@ -263,10 +263,11 @@ async def start_async_export(
     cleanup_old_jobs(jobs_store)
 
     job = new_job()
-    jobs_store[job.job_id] = job
+    job_key = f"{auth.workspace_id}:{job.job_id}"
+    jobs_store[job_key] = job
 
     # Fire and forget — keep a strong reference so GC cannot collect the task early.
-    task = asyncio.create_task(run_export_job(job, records, fmt, jobs_store))
+    task = asyncio.create_task(run_export_job(job, records, fmt, jobs_store, job_key))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 
@@ -286,7 +287,7 @@ async def get_export_job_status(
 ) -> dict:
     """Poll export job status."""
     jobs_store: dict = getattr(request.app.state, "export_jobs", {})
-    job = jobs_store.get(job_id)
+    job = jobs_store.get(f"{auth.workspace_id}:{job_id}")
     if job is None:
         raise HTTPException(status_code=404, detail="Export job not found.")
 
@@ -310,7 +311,7 @@ async def download_export_job(
     from fastapi.responses import Response
 
     jobs_store: dict = getattr(request.app.state, "export_jobs", {})
-    job = jobs_store.get(job_id)
+    job = jobs_store.get(f"{auth.workspace_id}:{job_id}")
     if job is None:
         raise HTTPException(status_code=404, detail="Export job not found.")
     if job.status in {"pending", "running"}:

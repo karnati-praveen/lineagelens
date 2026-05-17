@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace as dc_replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID as PyUUID
 
-from fastapi import Depends, HTTPException, WebSocket, status
+from fastapi import Depends, HTTPException, Request, WebSocket, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import ExpiredSignatureError, JWTError, jwt
 from sqlalchemy import select
@@ -22,6 +22,20 @@ from app.db.session import get_db_session
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 _PBKDF2_SCHEME = "pbkdf2_sha256"
 _PBKDF2_ITERATIONS = 390000
+
+
+def get_client_ip(request: Request, settings: Settings | None = None) -> str | None:
+    """Return the real client IP, only trusting X-Forwarded-For from allowlisted proxies."""
+    trusted_ips: set[str] = set()
+    if settings is not None:
+        raw = getattr(settings, "trusted_proxy_ips", "") or ""
+        trusted_ips = {ip.strip() for ip in raw.split(",") if ip.strip()}
+
+    peer_ip = request.client.host if request.client else None
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded and (not trusted_ips or peer_ip in trusted_ips):
+        return forwarded.split(",")[0].strip()
+    return peer_ip
 
 
 @dataclass(slots=True)

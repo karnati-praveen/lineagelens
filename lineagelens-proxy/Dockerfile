@@ -8,8 +8,12 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY proxy.py ./
+RUN addgroup --system app && adduser --system --ingroup app app
+
+COPY --chown=app:app proxy.py ./
 
 EXPOSE 8788
+
+USER app
 
 CMD ["python", "proxy.py"]

@@ -46,7 +46,8 @@ services:
     container_name: lineagelens-proxy
     restart: unless-stopped
     depends_on:
-      - lineagelens
+      lineagelens:
+        condition: service_healthy
     environment:
       UPSTREAM_URL: ${PROXY_UPSTREAM_URL:-https://api.anthropic.com}
       BACKEND_URL: http://lineagelens:8787

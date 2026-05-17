@@ -406,7 +406,7 @@ export function activate(context: vscode.ExtensionContext): void {
           isRedacted: r.isRedacted ?? false,
         })));
       } catch (err) {
-        vscode.window.showErrorMessage(`Failed to load diff: ${err}`);
+        vscode.window.showErrorMessage(`Failed to load diff: ${toErrorMessage(err)}`);
       }
     }),
     // lineagelens.flagRecord — flag a record
