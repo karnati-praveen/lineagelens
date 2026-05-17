@@ -56,7 +56,7 @@ async def list_audit_log(
     count_result = await session.execute(
         select(func.count()).select_from(AuditLog).where(and_(*filters))
     )
-    total = count_result.scalar_one()
+    total = count_result.scalar_one_or_none() or 0
 
     result = await session.execute(
         select(AuditLog)

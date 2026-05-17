@@ -868,6 +868,7 @@ async function doLogout() {
   try { await req('POST', '/auth/logout', {}); } catch {}
   if (_mcpTimer) { clearInterval(_mcpTimer); _mcpTimer = null; }
   if (_lastUpdatedTimer) { clearInterval(_lastUpdatedTimer); _lastUpdatedTimer = null; }
+  if (_alertPoll) { clearInterval(_alertPoll); _alertPoll = null; }
   clearTok(); showLogin();
 }
 
@@ -875,6 +876,7 @@ async function doLogout() {
 async function initApp() {
   if (_mcpTimer) { clearInterval(_mcpTimer); _mcpTimer = null; }
   if (_lastUpdatedTimer) { clearInterval(_lastUpdatedTimer); _lastUpdatedTimer = null; }
+  if (_alertPoll) { clearInterval(_alertPoll); _alertPoll = null; }
   if (!_user) {
     try { _user = await req('GET', '/auth/me'); } catch { showLogin(); return; }
   }
@@ -1948,7 +1950,10 @@ async function loadPolicies() {
     renderPolicies(data.results || []);
   } catch (e) {
     const el = document.getElementById('policy-list-body');
-    if (el) el.innerHTML = '<p class="placeholder">Policies unavailable (admin only).</p>';
+    const msg = (e.message || '').includes('403') || (e.message || '').toLowerCase().includes('forbidden')
+      ? 'Policies unavailable (admin only).'
+      : 'Failed to load policies: ' + (e.message || 'unknown error');
+    if (el) el.innerHTML = `<p class="placeholder">${esc(msg)}</p>`;
   }
 }
 
@@ -2000,7 +2005,10 @@ async function loadAlertConfigs() {
     renderAlertConfigs(data.results || []);
   } catch (e) {
     const el = document.getElementById('alert-config-list');
-    if (el) el.innerHTML = '<p class="placeholder">Alert configs unavailable (admin only).</p>';
+    const msg = (e.message || '').includes('403') || (e.message || '').toLowerCase().includes('forbidden')
+      ? 'Alert configs unavailable (admin only).'
+      : 'Failed to load alert configs: ' + (e.message || 'unknown error');
+    if (el) el.innerHTML = `<p class="placeholder">${esc(msg)}</p>`;
   }
 }
 
@@ -2092,7 +2100,7 @@ function _pollAsyncExport() {
         clearInterval(_asyncPollTimer);
         document.getElementById('async-job-status').textContent = 'Failed: ' + (data.error || 'unknown error');
       }
-    } catch { clearInterval(_asyncPollTimer); }
+    } catch(e) { clearInterval(_asyncPollTimer); document.getElementById('async-job-status').textContent = 'Error: ' + (e.message || 'network error'); }
   }, 2000);
 }
 
@@ -2130,7 +2138,12 @@ async function loadGithubConfig() {
     document.getElementById('gh-threshold').value = d.risk_threshold ?? 70;
     document.getElementById('gh-block').checked = d.block_on_high_risk ?? true;
     document.getElementById('gh-repos').value = (d.allowed_repos || []).join('\n');
-  } catch(e) { /* first load may 404 if not configured */ }
+  } catch(e) {
+    if (!(e.message || '').includes('404')) {
+      const msg = document.getElementById('gh-msg');
+      if (msg) { msg.textContent = 'Failed to load config: ' + (e.message || 'unknown error'); msg.style.color = 'var(--err)'; }
+    }
+  }
 }
 async function saveGithubConfig() {
   const threshold = Number.parseInt(document.getElementById('gh-threshold').value, 10);
@@ -2355,7 +2368,7 @@ async function createWorkspace() {
         _lastUpdatedTimer = setInterval(updateLastUpdatedText, 30000);
         return;
       }
-    } catch(e) {}
+    } catch(e) { showLogin(); return; }
   }
   showLogin();
 })();

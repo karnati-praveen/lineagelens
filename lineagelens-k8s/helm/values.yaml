@@ -72,6 +72,9 @@ resources:
       memory: 256Mi
       ephemeral-storage: 256Mi
 
+proxy:
+  upstreamUrl: "https://api.anthropic.com"
+
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 1000

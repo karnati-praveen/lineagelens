@@ -47,7 +47,7 @@ services:
       start_period: 60s
 
   backend:
-    image: ghcr.io/${LINEAGELENS_REGISTRY_OWNER:-lineagelens}/lineagelens-backend:latest
+    image: ghcr.io/${LINEAGELENS_REGISTRY_OWNER:-karnati-praveen}/lineagelens-backend:latest
     container_name: lineagelens-max-backend
     restart: unless-stopped
     depends_on:
@@ -104,7 +104,7 @@ services:
       - "8787:8787"
 
   proxy:
-    image: ghcr.io/${LINEAGELENS_REGISTRY_OWNER:-lineagelens}/lineagelens-proxy:latest
+    image: ghcr.io/${LINEAGELENS_REGISTRY_OWNER:-karnati-praveen}/lineagelens-proxy:latest
     container_name: lineagelens-max-proxy
     restart: unless-stopped
     depends_on:

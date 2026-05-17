@@ -30,7 +30,7 @@ async def list_provenance_records(
     count_result = await session.execute(
         select(func.count()).select_from(ProvenanceRecord).where(and_(*filters))
     )
-    total = count_result.scalar_one()
+    total = count_result.scalar_one_or_none() or 0
 
     result = await session.execute(
         select(ProvenanceRecord)

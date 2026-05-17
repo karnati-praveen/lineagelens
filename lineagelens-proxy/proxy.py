@@ -130,7 +130,10 @@ def _redact(text: str) -> str:
 
 
 def _fwd_headers(h) -> dict:
-    return {k: v for k, v in h.items() if k.lower() not in _DROP_REQ}
+    forwarded = {k: v for k, v in h.items() if k.lower() not in _DROP_REQ}
+    if "authorization" in {k.lower() for k in forwarded}:
+        logger.debug("Forwarding Authorization header to upstream — ensure client API keys are intended for %s", UPSTREAM_URL)
+    return forwarded
 
 
 def _resp_headers(h) -> dict:
@@ -144,25 +147,41 @@ def _is_streaming(body: bytes) -> bool:
         return False
 
 
-def _text_from_body(body: bytes) -> str:
+def _text_from_body(body: bytes, provider: str = "unknown") -> str:
     """Extract assistant text from a complete (non-streaming) JSON response."""
     try:
         data = json.loads(body)
     except Exception:
         return ""
-    # OpenAI / compatible
-    try:
-        return data["choices"][0]["message"]["content"] or ""
-    except (KeyError, IndexError, TypeError):
-        pass
-    # Anthropic
-    try:
-        parts = data["content"]
-        if isinstance(parts, list):
-            return "\n".join(p.get("text", "") for p in parts if p.get("type") == "text")
-    except (KeyError, TypeError):
-        pass
-    return ""
+
+    def _try_openai(d: dict) -> str:
+        try:
+            return d["choices"][0]["message"]["content"] or ""
+        except (KeyError, IndexError, TypeError):
+            return ""
+
+    def _try_anthropic(d: dict) -> str:
+        try:
+            parts = d["content"]
+            if isinstance(parts, list):
+                return "\n".join(p.get("text", "") for p in parts if p.get("type") == "text")
+        except (KeyError, TypeError):
+            pass
+        return ""
+
+    def _try_gemini(d: dict) -> str:
+        try:
+            return d["candidates"][0]["content"]["parts"][0]["text"] or ""
+        except (KeyError, IndexError, TypeError):
+            return ""
+
+    if provider == "openai":
+        return _try_openai(data)
+    if provider == "anthropic":
+        return _try_anthropic(data)
+    if provider == "gemini":
+        return _try_gemini(data)
+    return _try_openai(data) or _try_anthropic(data) or _try_gemini(data)
 
 
 def _delta_from_sse_payload(payload: str, provider: str = "unknown") -> str:
@@ -261,9 +280,10 @@ def _text_from_sse(chunks: list[bytes], provider: str = "unknown") -> str:
 
 def _extract_code(text: str) -> str:
     """Pull out fenced code blocks; fall back to full text if none found."""
-    blocks = re.findall(r"```\w*\n?(.*?)```", text, re.DOTALL)
-    if blocks:
-        return "\n\n".join(b.strip() for b in blocks if b.strip())
+    blocks = re.findall(r"```(?:\w+)?\n?(.*?)```", text, re.DOTALL)
+    non_empty = [b.strip() for b in blocks if b.strip()]
+    if non_empty:
+        return "\n\n".join(non_empty)
     return text.strip()
 
 
@@ -274,6 +294,8 @@ async def _ingest(
     upstream_path: str,
     provider: str = "unknown",
     file_path: str = "proxy-capture",
+    upstream_method: str = "POST",
+    upstream_status: int = 200,
 ) -> None:
     if not text.strip():
         return
@@ -294,17 +316,18 @@ async def _ingest(
         "provenance": {
             "source": "lineagelens-universal-proxy",
             "upstreamPath": upstream_path,
+            "upstreamMethod": upstream_method,
+            "upstreamStatus": upstream_status,
             "provider": provider,
         },
     }
 
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 f"{BACKEND_URL}/ingest",
                 json=payload,
                 headers={"Authorization": f"Bearer {INGEST_TOKEN}"},
-                timeout=10.0,
             )
             resp.raise_for_status()
         logger.info("captured %d chars → backend (provider=%s)", len(code), provider)
@@ -387,7 +410,10 @@ async def _handle_streaming(
             elif not _capture_overflow:
                 text = _text_from_sse(collected, provider)
                 _task = asyncio.create_task(
-                    _ingest(text, f"/{safe_path}", provider=provider, file_path=file_path)
+                    _ingest(
+                        text, f"/{safe_path}", provider=provider, file_path=file_path,
+                        upstream_method=method, upstream_status=upstream.status_code,
+                    )
                 )
                 _background_tasks.add(_task)
                 _task.add_done_callback(_background_tasks.discard)
@@ -434,12 +460,15 @@ async def _handle_non_streaming(
         except ValueError:
             pass
 
-    if not skip_capture:
+    if not skip_capture and upstream.status_code < 400:
         if len(upstream.content) <= MAX_BODY_BYTES:
-            text = _text_from_body(upstream.content)
+            text = _text_from_body(upstream.content, provider=provider)
             if text:
                 _task = asyncio.create_task(
-                    _ingest(text, f"/{safe_path}", provider=provider, file_path=file_path)
+                    _ingest(
+                        text, f"/{safe_path}", provider=provider, file_path=file_path,
+                        upstream_method=method, upstream_status=upstream.status_code,
+                    )
                 )
                 _background_tasks.add(_task)
                 _task.add_done_callback(_background_tasks.discard)
@@ -786,6 +815,19 @@ if __name__ == "__main__":
         logger.info("Workspace: %s", WORKSPACE_ID)
         logger.info("Token    : %s", "configured" if INGEST_TOKEN else "NOT SET — captures will be skipped")
         logger.info("CONNECT  : port %d", PROXY_CONNECT_PORT)
+
+        # Guard: BACKEND_URL must not point at the proxy itself.
+        _proxy_self = f"http://{PROXY_HOST}:{PROXY_PORT}"
+        if BACKEND_URL.rstrip("/") in (_proxy_self, f"http://localhost:{PROXY_PORT}", f"http://127.0.0.1:{PROXY_PORT}"):
+            logger.error(
+                "MISCONFIGURATION: BACKEND_URL (%s) points at the proxy itself — ingest calls would loop. "
+                "Set BACKEND_URL to the LineageLens backend address.",
+                BACKEND_URL,
+            )
+
+        if not INGEST_TOKEN:
+            logger.warning("BACKEND_INGEST_TOKEN is not set — all AI captures will be skipped.")
+
         await asyncio.gather(server.serve(), _run_connect_server())
 
     asyncio.run(_main())

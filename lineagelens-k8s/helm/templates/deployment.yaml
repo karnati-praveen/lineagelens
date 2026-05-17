@@ -94,6 +94,10 @@ spec:
           env:
             - name: BACKEND_URL
               value: "http://{{ include "lineagelens.fullname" . }}-backend:8787"
+            - name: UPSTREAM_URL
+              value: {{ .Values.proxy.upstreamUrl | default "https://api.anthropic.com" | quote }}
+            - name: PROXY_PORT
+              value: "8788"
           envFrom:
             - secretRef:
                 name: {{ include "lineagelens.fullname" . }}-secrets
