@@ -31,6 +31,21 @@ try {
     Copy-Item $composeFile (Join-Path $bundleRoot "lineagelens-deploy\docker-compose.lite.yml") -Force
     Copy-Item $envExample  (Join-Path $bundleRoot "lineagelens-deploy\.env.example") -Force
 
+    # Proxy source (built locally by docker-compose.lite.yml via build: context: ../lineagelens-proxy)
+    Copy-Item (Join-Path $repoRoot "lineagelens-proxy") (Join-Path $bundleRoot "lineagelens-proxy") -Recurse -Force
+    Get-ChildItem (Join-Path $bundleRoot "lineagelens-proxy") -Directory -Recurse -Force |
+        Where-Object { $_.Name -in @('.pytest_cache', '__pycache__') } |
+        Remove-Item -Recurse -Force
+
+    # Docs (architecture, adapter, and shipping-mode references for Lite users)
+    New-Item -ItemType Directory -Force -Path (Join-Path $bundleRoot "lineagelens-docs") | Out-Null
+    Copy-Item (Join-Path $repoRoot "lineagelens-docs\architecture.md")          (Join-Path $bundleRoot "lineagelens-docs\architecture.md")          -Force
+    Copy-Item (Join-Path $repoRoot "lineagelens-docs\lightweight-adapters.md")  (Join-Path $bundleRoot "lineagelens-docs\lightweight-adapters.md")  -Force
+    Copy-Item (Join-Path $repoRoot "lineagelens-docs\shipping-modes.md")        (Join-Path $bundleRoot "lineagelens-docs\shipping-modes.md")        -Force
+
+    # Top-level README
+    Copy-Item (Join-Path $repoRoot "README.md") (Join-Path $bundleRoot "README.md") -Force
+
     # Scripts
     Copy-Item (Join-Path $repoRoot "lineagelens-scripts\quickstart-lite.sh") (Join-Path $bundleRoot "quickstart.sh") -Force
     Copy-Item (Join-Path $repoRoot "lineagelens-scripts\reset-lite.sh")      (Join-Path $bundleRoot "reset.sh")      -Force
