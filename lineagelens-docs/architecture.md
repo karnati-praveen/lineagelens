@@ -8,10 +8,11 @@ LineageLens is an AI code intelligence platform. It captures every significant c
 
 The capture layer, provenance record schema, agent adapter system, and backend are all editor-agnostic. Any tool that writes files and routes traffic through the proxy can have its insertions tracked and attributed.
 
-The system supports three operating modes:
+The system supports four operating modes:
 
-- **Base** — local-only storage, no backend required.
-- **Plus** — backend-backed storage with PostgreSQL, no Neo4j or vector search.
+- **Base** — VS Code extension only, local-only storage, no backend required.
+- **Lite** — single Docker container, SQLite storage, basic dashboard. No Postgres required.
+- **Plus** — backend-backed storage with PostgreSQL, full governance dashboard, no Neo4j.
 - **Max** — full backend with PostgreSQL, Neo4j lineage, and vector search.
 
 ---

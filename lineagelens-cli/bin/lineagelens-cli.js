@@ -16,7 +16,7 @@ const { setJsonMode, isJsonMode } = require('../src/utils/lineagelens-cli-output
 const { getActiveMode } = require('../src/utils/lineagelens-cli-config');
 const pkg = require('../package.json');
 
-const VALID_MODES = ['base', 'plus', 'max'];
+const VALID_MODES = ['base', 'lite', 'plus', 'max'];
 
 function assertMode(mode) {
   if (!VALID_MODES.includes(mode)) {
@@ -42,7 +42,7 @@ function resolveMode(provided, fallback) {
     return active;
   }
   if (fallback) return fallback;
-  console.error('No mode specified and no active mode is saved. Use --mode base, --mode plus, or --mode max.');
+  console.error('No mode specified and no active mode is saved. Use --mode base, --mode lite, --mode plus, or --mode max.');
   process.exit(1);
 }
 
@@ -50,7 +50,7 @@ const program = new Command();
 
 program
   .name('lineagelens')
-  .description('Manage LineageLens backends (Base, Plus, Max modes)')
+  .description('Manage LineageLens backends (Base, Lite, Plus, Max modes)')
   .version(pkg.version)
   .option('--json', 'Output results as JSON', false)
   .option('-y, --yes', 'Non-interactive mode: answer all prompts with defaults', false)
@@ -61,8 +61,8 @@ program
 
 program
   .command('start')
-  .description('Start the LineageLens backend (Plus or Max mode)')
-  .option('-m, --mode <mode>', 'Backend mode: plus | max')
+  .description('Start the LineageLens backend')
+  .option('-m, --mode <mode>', 'Backend mode: lite | plus | max')
   .action(async (opts) => {
     const globalOpts = program.opts();
     const mode = resolveMode(opts.mode, 'plus');
@@ -73,7 +73,7 @@ program
 program
   .command('stop')
   .description('Stop the LineageLens backend')
-  .option('-m, --mode <mode>', 'Backend mode: plus | max')
+  .option('-m, --mode <mode>', 'Backend mode: lite | plus | max')
   .option('-v, --volumes', 'Also remove persistent volumes (wipes data)', false)
   .option('--confirm-wipe', 'Required when using --volumes: confirms permanent data deletion', false)
   .action((opts) => {
@@ -85,7 +85,7 @@ program
 program
   .command('status')
   .description('Show running container status for all configured modes')
-  .option('-m, --mode <mode>', 'Limit to a specific mode: plus | max')
+  .option('-m, --mode <mode>', 'Limit to a specific mode: lite | plus | max')
   .action((opts) => {
     if (opts.mode) assertMode(opts.mode);
     status(opts);
@@ -94,7 +94,7 @@ program
 program
   .command('logs')
   .description('Tail logs from a running backend')
-  .option('-m, --mode <mode>', 'Backend mode: plus | max')
+  .option('-m, --mode <mode>', 'Backend mode: lite | plus | max')
   .option('-s, --service <service>', 'Filter to one service: backend | proxy | postgres | neo4j')
   .option('-n, --tail <lines>', 'Number of lines to show from the end', '100')
   .action((opts) => {
@@ -107,7 +107,7 @@ program
 program
   .command('restart')
   .description('Stop then start the LineageLens backend (data preserved)')
-  .option('-m, --mode <mode>', 'Backend mode: plus | max')
+  .option('-m, --mode <mode>', 'Backend mode: lite | plus | max')
   .action(async (opts) => {
     const mode = resolveMode(opts.mode, 'plus');
     assertMode(mode);
@@ -117,7 +117,7 @@ program
 program
   .command('update')
   .description('Pull latest images and recreate containers (data preserved)')
-  .option('-m, --mode <mode>', 'Backend mode: plus | max')
+  .option('-m, --mode <mode>', 'Backend mode: lite | plus | max')
   .action(async (opts) => {
     const mode = resolveMode(opts.mode, 'plus');
     assertMode(mode);
@@ -127,7 +127,7 @@ program
 program
   .command('backup')
   .description('Dump the Postgres database to a local file')
-  .option('-m, --mode <mode>', 'Backend mode: plus | max')
+  .option('-m, --mode <mode>', 'Backend mode: lite | plus | max')
   .option('-o, --output <file>', 'Output file path (default: lineagelens-backup-<mode>-<timestamp>.dump)')
   .action((opts) => {
     const mode = resolveMode(opts.mode, 'plus');
@@ -138,7 +138,7 @@ program
 program
   .command('upgrade')
   .description('Safely upgrade: backup DB, pull new images, force-recreate containers, health check')
-  .option('-m, --mode <mode>', 'Backend mode: plus | max')
+  .option('-m, --mode <mode>', 'Backend mode: lite | plus | max')
   .action(async (opts) => {
     const globalOpts = program.opts();
     const mode = resolveMode(opts.mode, 'plus');
@@ -149,7 +149,7 @@ program
 program
   .command('rollback')
   .description('Restore database from a dump file: stop backend, pg_restore, restart, health check')
-  .option('-m, --mode <mode>', 'Backend mode: plus | max')
+  .option('-m, --mode <mode>', 'Backend mode: lite | plus | max')
   .option('-f, --file <file>', 'Path to the .dump file to restore from')
   .action(async (opts) => {
     const mode = resolveMode(opts.mode, 'plus');

@@ -51,7 +51,7 @@ function prompt(question) {
 
 /**
  * Ensure env file exists and is populated for the given mode.
- * @param {string} mode - 'plus' | 'max'
+ * @param {string} mode - 'lite' | 'plus' | 'max'
  * @param {{ nonInteractive?: boolean }} opts
  */
 async function ensureEnv(mode, opts = {}) {

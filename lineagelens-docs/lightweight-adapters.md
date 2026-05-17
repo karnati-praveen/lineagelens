@@ -1,10 +1,11 @@
 # Lightweight Adapters
 
-LineageLens supports three practical operating profiles:
+LineageLens supports four operating profiles:
 
 - `base`: records are stored locally as a JSON file. No backend or services required.
-- `plus`: the backend stores provenance without requiring Neo4j or vector search.
-- `max`: the backend enables graph lineage and vector search.
+- `lite`: single Docker container with SQLite storage. No Postgres required.
+- `plus`: shared backend with PostgreSQL, no Neo4j or vector search.
+- `max`: full backend with PostgreSQL, Neo4j graph lineage, and vector search.
 
 The lightweight adapter boundary is for tools that can identify an insertion event without depending on any editor API. Use it when you want to create provenance from a CLI, a script, a CI job, a manual reviewer flow, or any non-editor environment.
 

@@ -2,7 +2,7 @@
 
 > **Git blame for AI-generated code** — captures every AI insertion and traces it back to its prompt, model, and developer.
 
-LineageLens is an AI code provenance platform. It sits between your AI coding tools and the AI providers they call, capturing every significant code insertion — what was generated, by which model, from which prompt, and who accepted it. Works with any editor, any AI tool, any team.
+LineageLens is an AI code provenance platform. It captures every significant code insertion — what was generated, by which model, from which prompt, and who accepted it. Works directly in VS Code via the extension, and with any AI tool that supports a configurable API base URL or HTTP proxy (Cursor, Aider, Claude Code, Continue, Codeium, GitHub Copilot, and more).
 
 ---
 
@@ -73,7 +73,7 @@ Shared backend with full governance. No graph complexity.
 - FastAPI backend with semantic search, full governance dashboard, and team management
 - PostgreSQL + pgvector storage. No Neo4j dependency.
 - GitHub Actions PR annotation and provenance review bot
-- MCP server with 7 tools for in-context provenance queries
+- MCP server with 8 tools for in-context provenance queries
 - Quickstart: `bash lineagelens-scripts/quickstart-plus.sh`
 - Deploy: `lineagelens-deploy/docker-compose.plus.yml`
 
@@ -117,6 +117,11 @@ export ANTHROPIC_BASE_URL=http://localhost:8788
 
 # OpenAI SDK / any compatible tool
 export OPENAI_BASE_URL=http://localhost:8788
+```
+
+**Step 4 — Open the dashboard**
+```
+http://localhost:8787/dashboard
 ```
 
 ### Plus / Max
@@ -246,6 +251,7 @@ Add to `~/.claude/settings.json` (global) or `.claude/settings.json` (project):
 | `list_recent` | Most recently captured AI insertions |
 | `check_file_risk` | Risk breakdown and model usage for a specific file |
 | `usage_report` | AI usage summary — lines, models, risk, developers (date-range filterable) |
+| `list_workspaces` | List all workspaces accessible to the authenticated user |
 
 ---
 
@@ -382,11 +388,15 @@ See [lineagelens-docs/lightweight-adapters.md](lineagelens-docs/lightweight-adap
 
 ## GitHub Actions Integration
 
-Two workflows included (Plus/Max):
+Four workflows included (Plus/Max):
 
-**PR Annotation** — Annotates every pull request with which lines are AI-generated, which model produced them, and who accepted them.
+**PR Annotation** (`lineagelens-annotate.yml`) — Annotates every pull request with which lines are AI-generated, which model produced them, and who accepted them.
 
-**Provenance Review Bot** — Posts a structured AI lineage report as a PR comment, grouping touched blocks by file with risk scores and prompt previews.
+**Risk Check** (`lineagelens-risk-check.yml`) — Blocks or warns on PRs that exceed a configurable AI risk threshold.
+
+**Policy Check** (`pr-policy-check.yml`) — Enforces provenance policy rules (e.g., prompt capture rate, model allow/block lists) on every PR.
+
+**Provenance Review Bot** (`provenance-review.yml`) — Posts a structured AI lineage report as a PR comment, grouping touched blocks by file with risk scores and prompt previews.
 
 See [.github/workflows/](.github/workflows/) for setup.
 

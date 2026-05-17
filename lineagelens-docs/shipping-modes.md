@@ -1,16 +1,30 @@
 # Shipping Modes
 
-LineageLens ships from one codebase in three release modes.
+LineageLens ships from one codebase in four release modes.
 
 ## LineageLens Base
 
-- Proxy capture layer with local-only storage. No backend required.
-- Records are stored as a JSON file on disk; no services to run.
-- Best for single-user and offline workflows.
+- VS Code extension only. No proxy, no backend, no services required.
+- Records stored locally as JSON in VS Code global state.
+- Best for individual developers and offline/air-gapped environments.
 
 Artifact target:
 
-- `lineagelens-base-<version>.zip`
+- `lineagelens-base-<version>.vsix` (VS Code extension)
+
+## LineageLens Lite
+
+- Single Docker container, SQLite storage. No Postgres required.
+- First-boot setup wizard — admin account created in the browser.
+- Transparent proxy capture at `localhost:8788` with all 11 adapter detectors.
+- Best for small teams on a $5 VPS or a spare laptop.
+
+Artifacts:
+
+- `lineagelens-lite-<version>.zip`
+- `lineagelens-deploy/docker-compose.lite.yml`
+- `lineagelens-deploy/.env.lite.example`
+- `lineagelens-scripts/quickstart-lite.sh`
 
 ## LineageLens Plus
 
@@ -46,8 +60,10 @@ Artifacts:
 PowerShell helpers:
 
 - `lineagelens-scripts/package-base.ps1`
+- `lineagelens-scripts/package-lite.ps1`
 - `lineagelens-scripts/package-plus.ps1`
 - `lineagelens-scripts/package-max.ps1`
+- `lineagelens-scripts/release.ps1` (all four in sequence)
 
 NPM wrappers:
 
