@@ -11,13 +11,13 @@ pyarrow>=14.0.0
 # Lite mode (SQLite) — zero external DB deps
 aiosqlite>=0.20.0
 
-# Postgres mode — install when DATABASE_URL is postgresql+asyncpg://
-# asyncpg==0.30.0
-# alembic==1.14.0
-# pgvector==0.3.6
+# Postgres mode
+asyncpg==0.30.0
+alembic==1.14.0
+pgvector==0.3.6
 
-# Graph lineage — install when NEO4J_ENABLED=true
-# neo4j==5.26.0
+# Graph lineage (Max mode) — import is lazy; safe to install in all modes
+neo4j==5.26.0
 
 # Redis — rate limiter and shared KV store (export jobs, webhooks)
 redis[asyncio]>=5.0.0

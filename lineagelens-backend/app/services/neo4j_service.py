@@ -3,13 +3,17 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from neo4j import AsyncGraphDatabase
-
 from app.core.config import Settings
 
 
 class Neo4jLineageService:
     def __init__(self, settings: Settings) -> None:
+        try:
+            from neo4j import AsyncGraphDatabase
+        except ImportError as exc:
+            raise RuntimeError(
+                "neo4j package is not installed. Max mode requires neo4j==5.26.0."
+            ) from exc
         self._driver = AsyncGraphDatabase.driver(
             settings.neo4j_uri,
             auth=(settings.neo4j_username, settings.neo4j_password),
