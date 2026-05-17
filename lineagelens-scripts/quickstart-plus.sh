@@ -12,7 +12,7 @@ CYAN='\033[0;36m'
 RESET='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEPLOY_DIR="$SCRIPT_DIR/deploy"
+DEPLOY_DIR="$SCRIPT_DIR/lineagelens-deploy"
 ENV_FILE="$DEPLOY_DIR/.env"
 COMPOSE_FILE="$DEPLOY_DIR/docker-compose.plus.yml"
 PROJECT_NAME="lineagelens-plus"
