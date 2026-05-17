@@ -49,6 +49,8 @@ PROXY_CA_KEY_PATH     = os.environ.get("PROXY_CA_KEY_PATH", "")
 
 _background_tasks: set[asyncio.Task] = set()
 # Cache of per-host generated certs: hostname -> (cert_pem, key_pem)
+# Capped at 500 entries (ordered dict evicts oldest on overflow).
+_HOST_CERT_CACHE_MAX = 500
 _host_cert_cache: dict[str, tuple[bytes, bytes]] = {}
 
 MAX_RESPONSE_BODY_BYTES = MAX_BODY_BYTES  # reuse same limit for response pre-flight check
@@ -608,6 +610,9 @@ def _generate_host_cert(hostname: str) -> tuple[bytes, bytes]:
         serialization.PrivateFormat.TraditionalOpenSSL,
         serialization.NoEncryption(),
     )
+    if len(_host_cert_cache) >= _HOST_CERT_CACHE_MAX:
+        # Evict oldest entry (dict is insertion-ordered in Python 3.7+)
+        _host_cert_cache.pop(next(iter(_host_cert_cache)))
     _host_cert_cache[hostname] = (cert_pem, key_pem)
     return cert_pem, key_pem
 
@@ -844,6 +849,16 @@ if __name__ == "__main__":
 
         if not INGEST_TOKEN:
             logger.warning("BACKEND_INGEST_TOKEN is not set — all AI captures will be skipped.")
+
+        # Validate CA cert/key files exist before the first CONNECT arrives.
+        if PROXY_CA_CERT_PATH or PROXY_CA_KEY_PATH:
+            missing = [p for p in (PROXY_CA_CERT_PATH, PROXY_CA_KEY_PATH) if not os.path.exists(p)]
+            if missing:
+                logger.error(
+                    "MITM mode requested but CA file(s) missing: %s — CONNECT interception will fail. "
+                    "Provide valid PROXY_CA_CERT_PATH and PROXY_CA_KEY_PATH or unset both.",
+                    ", ".join(missing),
+                )
 
         await asyncio.gather(server.serve(), _run_connect_server())
 

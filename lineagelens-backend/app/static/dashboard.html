@@ -846,6 +846,7 @@ async function doLogin() {
   if (!ws||!un||!pw) { setAl('al-login','All fields required.'); return; }
   try {
     const d = await req('POST', '/auth/login', {username:un, password:pw, workspaceId:ws}, true);
+    if (!d.accessToken || !d.refreshToken || !d.user) { setAl('al-login', 'Invalid server response.'); return; }
     setTok(d.accessToken, d.refreshToken, d.expiresInSeconds);
     _user = d.user;
     await initApp();
@@ -858,6 +859,7 @@ async function doRegister() {
   if (!ws||!un||!pw) { setAl('al-reg','All fields required.'); return; }
   try {
     const d = await req('POST', '/auth/register', {username:un, password:pw, workspaceId:ws}, true);
+    if (!d.accessToken || !d.refreshToken || !d.user) { setAl('al-reg', 'Invalid server response.'); return; }
     setTok(d.accessToken, d.refreshToken, d.expiresInSeconds);
     _user = d.user;
     await initApp();
@@ -2206,17 +2208,18 @@ async function loadDigests() {
   const out = document.getElementById('digests-body');
   try {
     const d = await req('GET', '/scheduled-reports');
-    if (!d.length) { out.innerHTML = '<p style="color:var(--muted)">No digests configured.</p>'; return; }
+    const items = d.results || (Array.isArray(d) ? d : []);
+    if (!items.length) { out.innerHTML = '<p style="color:var(--muted)">No digests configured.</p>'; return; }
     out.innerHTML = `<table class="tbl"><thead><tr><th>Name</th><th>Type</th><th>Frequency</th><th>Recipients</th><th>Enabled</th><th></th></tr></thead>
-    <tbody>${d.map(r=>`<tr>
+    <tbody>${items.map(r=>`<tr>
       <td>${esc(r.name)}</td>
-      <td>${r.report_type}</td>
-      <td>${r.frequency}</td>
-      <td>${(r.recipients||[]).join(', ')}</td>
+      <td>${esc(r.report_type)}</td>
+      <td>${esc(r.frequency)}</td>
+      <td>${(r.recipients||[]).map(e=>esc(e)).join(', ')}</td>
       <td>${r.enabled?'Yes':'No'}</td>
-      <td><button style="font-size:11px;padding:3px 8px" onclick="runDigest('${r.id}')">Run now</button></td>
+      <td><button style="font-size:11px;padding:3px 8px" onclick="runDigest('${esc(r.id)}')">Run now</button></td>
     </tr>`).join('')}</tbody></table>`;
-  } catch(e) { out.innerHTML = `<span style="color:var(--err)">${e.message||'Error'}</span>`; }
+  } catch(e) { out.innerHTML = `<span style="color:var(--err)">${esc(e.message||'Error')}</span>`; }
 }
 function showCreateDigest() {
   const el = document.getElementById('digests-create');
@@ -2228,6 +2231,7 @@ async function createDigest() {
   const frequency = document.getElementById('dig-freq').value;
   const recipients = document.getElementById('dig-recipients').value.split(',').map(s=>s.trim()).filter(Boolean);
   const msg = document.getElementById('dig-msg');
+  if (!name) { msg.textContent = 'Name is required.'; msg.style.color = 'var(--err)'; return; }
   try {
     await req('POST', '/scheduled-reports', {name, report_type, frequency, recipients, enabled: true});
     msg.textContent = 'Digest created.'; msg.style.color = 'var(--ok)';
@@ -2254,7 +2258,7 @@ async function loadSsoProviders() {
       <td>${esc(p.issuer)}</td>
       <td><code style="font-size:11px">${esc(p.client_id)}</code></td>
       <td>${p.enabled?'Yes':'No'}</td>
-      <td><button style="font-size:11px;padding:3px 8px;color:var(--err)" onclick="deleteSsoProvider('${p.id}')">Delete</button></td>
+      <td><button style="font-size:11px;padding:3px 8px;color:var(--err)" onclick="deleteSsoProvider('${esc(p.id)}')">Delete</button></td>
     </tr>`).join('')}</tbody></table>`;
   } catch(e) { out.innerHTML = `<span style="color:var(--err)">${e.message||'Error'}</span>`; }
 }
@@ -2268,6 +2272,7 @@ async function createSsoProvider() {
   const client_id = document.getElementById('sso-client-id').value.trim();
   const client_secret = document.getElementById('sso-client-secret').value.trim();
   const msg = document.getElementById('sso-msg');
+  if (!name || !issuer || !client_id || !client_secret) { msg.textContent = 'All fields are required.'; msg.style.color = 'var(--err)'; return; }
   try {
     await req('POST', '/auth/sso/providers', {name, issuer, client_id, client_secret, scopes: ['openid','email','profile'], enabled: true});
     msg.textContent = 'Provider added.'; msg.style.color = 'var(--ok)';
@@ -2325,6 +2330,7 @@ async function createWorkspace() {
   const id = document.getElementById('ws-new-id').value.trim();
   const name = document.getElementById('ws-new-name').value.trim();
   const msg = document.getElementById('ws-msg');
+  if (!id || !name) { msg.textContent = 'Workspace ID and name are required.'; msg.style.color = 'var(--err)'; return; }
   try {
     await req('POST', '/workspaces', {id, name});
     msg.textContent = 'Workspace created.'; msg.style.color = 'var(--ok)';

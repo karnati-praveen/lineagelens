@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid as uuid_pkg
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +20,16 @@ router = APIRouter(prefix="/scheduled-reports", tags=["scheduled-reports"])
 logger = logging.getLogger(__name__)
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _validate_recipients(v: list[str]) -> list[str]:
+    for addr in v:
+        if not _EMAIL_RE.match(addr):
+            raise ValueError(f"Invalid email address: {addr!r}")
+    return v
+
+
 class ScheduledReportCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=256)
     report_type: str = Field(..., pattern="^(usage|risk_summary|team_activity)$")
@@ -29,6 +40,11 @@ class ScheduledReportCreate(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+    @field_validator("recipients")
+    @classmethod
+    def validate_recipients(cls, v: list[str]) -> list[str]:
+        return _validate_recipients(v)
+
 
 class ScheduledReportUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=256)
@@ -38,6 +54,13 @@ class ScheduledReportUpdate(BaseModel):
     enabled: bool | None = None
 
     model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("recipients")
+    @classmethod
+    def validate_recipients(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        return _validate_recipients(v)
 
 
 def _next_run(frequency: str) -> datetime:

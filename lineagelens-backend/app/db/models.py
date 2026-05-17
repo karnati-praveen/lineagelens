@@ -132,6 +132,11 @@ class SavedQuery(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
+    __table_args__ = (
+        Index("ix_saved_query_workspace_user", "workspace_id", "user_id"),
+        Index("ix_saved_query_workspace_created", "workspace_id", "created_at"),
+    )
+
 
 class ProvenanceTag(Base):
     __tablename__ = "provenance_tags"
@@ -145,7 +150,10 @@ class ProvenanceTag(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    __table_args__ = (Index("ix_tag_record_tag", "record_uuid", "tag"),)
+    __table_args__ = (
+        Index("ix_tag_record_tag", "record_uuid", "tag"),
+        Index("ix_tag_workspace_created", "workspace_id", "created_at"),
+    )
 
 
 class ProvenanceComment(Base):
@@ -161,6 +169,10 @@ class ProvenanceComment(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_comment_record_created", "workspace_id", "record_uuid", "created_at"),
     )
 
 
