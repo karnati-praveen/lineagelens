@@ -131,7 +131,8 @@ def _build_upstream_url(safe_path: str, raw_query: str) -> str:
     upstream_path = parsed.path.rstrip("/") + "/" + safe_path if safe_path else parsed.path
     return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, upstream_path, "", raw_query, ""))
 
-_DROP_REQ  = {"host", "content-length", "transfer-encoding", "connection"}
+_DROP_REQ  = {"host", "content-length", "transfer-encoding", "connection",
+              "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "upgrade"}
 _DROP_RESP = {"content-encoding", "transfer-encoding", "connection", "content-length"}
 
 app = FastAPI(title="LineageLens Universal Proxy", docs_url=None, redoc_url=None)
@@ -388,7 +389,7 @@ async def _handle_streaming(
     except Exception as exc:
         await client.aclose()
         logger.exception("upstream error: %s", exc)
-        return Response(content=f"Upstream error: {exc}", status_code=502)
+        return Response(content="Bad gateway", status_code=502)
 
     # Pre-flight Content-Length check: if upstream declares a body that is too
     # large we still forward it transparently but skip provenance capture.
@@ -463,7 +464,7 @@ async def _handle_non_streaming(
             upstream = await client.request(method, url, headers=headers, content=body)
     except Exception as exc:
         logger.exception("upstream error: %s", exc)
-        return Response(content=f"Upstream error: {exc}", status_code=502)
+        return Response(content="Bad gateway", status_code=502)
 
     # Pre-flight Content-Length check on the upstream response.
     resp_content_length = upstream.headers.get("content-length")

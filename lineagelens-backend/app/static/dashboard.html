@@ -809,14 +809,20 @@ async function req(method, path, body, noRefresh) {
   return res;
 }
 
+let _refreshPromise = null;
 async function tryRefresh() {
   if (!_ref) return false;
-  try {
-    const d = await req('POST', '/auth/refresh', {refreshToken: _ref}, true);
-    if (!d) return false;
-    setTok(d.accessToken, d.refreshToken, d.expiresInSeconds);
-    return true;
-  } catch { return false; }
+  if (_refreshPromise) return _refreshPromise;
+  _refreshPromise = (async () => {
+    try {
+      const d = await req('POST', '/auth/refresh', {refreshToken: _ref}, true);
+      if (!d) return false;
+      setTok(d.accessToken, d.refreshToken, d.expiresInSeconds);
+      return true;
+    } catch { return false; }
+    finally { _refreshPromise = null; }
+  })();
+  return _refreshPromise;
 }
 
 function setTok(tok, ref, exp) {
@@ -871,6 +877,7 @@ async function doLogout() {
   if (_mcpTimer) { clearInterval(_mcpTimer); _mcpTimer = null; }
   if (_lastUpdatedTimer) { clearInterval(_lastUpdatedTimer); _lastUpdatedTimer = null; }
   if (_alertPoll) { clearInterval(_alertPoll); _alertPoll = null; }
+  if (_asyncPollTimer) { clearInterval(_asyncPollTimer); _asyncPollTimer = null; }
   clearTok(); showLogin();
 }
 
@@ -919,11 +926,11 @@ function go(name) {
   if (name==='graph') loadGraph();
   if (name==='developers') loadDeveloperActivity();
   if (name==='reviews') loadReviews();
-  if (name==='alerts') { clearAlertBadge(); loadAlerts(); }
+  if (name==='alerts') { window._currentPage = 0; clearAlertBadge(); loadAlerts(); }
   if (name==='team') loadTeam();
   if (name==='record') loadRec();
   if (name==='quality') loadQuality();
-  if (name==='search') document.getElementById('s-kw').focus();
+  if (name==='search') { window._currentPage = 0; document.getElementById('s-kw').focus(); }
   if (name==='github') loadGithubConfig();
   if (name==='scheduled-reports') loadDigests();
   if (name==='sso') loadSsoProviders();
@@ -1830,7 +1837,7 @@ async function pollAlerts() {
 }
 
 // ── HELPERS ──────────────────────────────────────────────────────────────────
-function currentWorkspaceId() { return window._workspaceId || _user?.workspaceId || localStorage.getItem('ll_workspace_id') || ''; }
+function currentWorkspaceId() { return window._workspaceId || _user?.workspaceId || _user?.workspace_id || ''; }
 
 function riskBadge(score) {
   if (score >= 70) return `<span class="rsk critical">${score}</span>`;
@@ -2304,18 +2311,22 @@ async function loadWorkspace() {
       <div id="ws-msg" style="margin-top:10px;font-size:13px"></div>
     </div>`;
   } catch(e) {
-    const defaultId = _user?.workspace_id || '';
-    out.innerHTML = `<div class="card" style="max-width:480px">
-      <h4 style="margin:0 0 14px">Create Workspace</h4>
-      <label style="display:block;margin-bottom:8px;font-size:13px">Workspace ID (slug)
-        <input id="ws-new-id" type="text" placeholder="my-org" value="${esc(defaultId)}" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
-      </label>
-      <label style="display:block;margin-bottom:14px;font-size:13px">Display Name
-        <input id="ws-new-name" type="text" placeholder="My Organisation" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
-      </label>
-      <button class="p" onclick="createWorkspace()">Create Workspace</button>
-      <div id="ws-msg" style="margin-top:10px;font-size:13px"></div>
-    </div>`;
+    if (e.message && e.message.includes('404')) {
+      const defaultId = _user?.workspace_id || '';
+      out.innerHTML = `<div class="card" style="max-width:480px">
+        <h4 style="margin:0 0 14px">Create Workspace</h4>
+        <label style="display:block;margin-bottom:8px;font-size:13px">Workspace ID (slug)
+          <input id="ws-new-id" type="text" placeholder="my-org" value="${esc(defaultId)}" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
+        </label>
+        <label style="display:block;margin-bottom:14px;font-size:13px">Display Name
+          <input id="ws-new-name" type="text" placeholder="My Organisation" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
+        </label>
+        <button class="p" onclick="createWorkspace()">Create Workspace</button>
+        <div id="ws-msg" style="margin-top:10px;font-size:13px"></div>
+      </div>`;
+    } else {
+      out.innerHTML = `<div class="al err">Failed to load workspace: ${esc(e.message || 'Server error')}</div>`;
+    }
   }
 }
 async function saveWorkspaceName(id) {

@@ -119,6 +119,9 @@ async def update_alert_config(
     if payload.config is not None:
         ac.config = payload.config
     if payload.trigger_on is not None:
+        invalid_triggers = set(payload.trigger_on) - VALID_TRIGGERS
+        if invalid_triggers:
+            raise HTTPException(status_code=400, detail=f"Invalid trigger_on values: {sorted(invalid_triggers)}")
         ac.trigger_on = payload.trigger_on
     if payload.enabled is not None:
         ac.enabled = payload.enabled

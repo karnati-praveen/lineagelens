@@ -26,6 +26,7 @@ class WorkspaceCreateRequest(BaseModel):
         default=None,
         min_length=1,
         max_length=128,
+        pattern=r"^[a-zA-Z0-9_-]+$",
         validation_alias=AliasChoices("workspace_id", "workspaceId", "id"),
     )
 
@@ -157,7 +158,7 @@ async def get_my_workspace(
 
     user_result = await session.execute(
         select(UserAccount.username, UserAccount.role, UserAccount.created_at, UserAccount.is_active)
-        .where(UserAccount.id == user_id)
+        .where(UserAccount.id == user_id, UserAccount.workspace_id == auth.workspace_id)
     )
     user_row = user_result.one_or_none()
     if user_row is None or not user_row.is_active:

@@ -4,7 +4,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import log_audit_event
@@ -26,6 +26,12 @@ class RetentionPolicyUpdate(BaseModel):
     enabled: bool = False
 
     model_config = ConfigDict(populate_by_name=True)
+
+    @model_validator(mode="after")
+    def redact_before_retain(self) -> "RetentionPolicyUpdate":
+        if self.redact_after_days is not None and self.redact_after_days >= self.retain_days:
+            raise ValueError("redact_after_days must be less than retain_days")
+        return self
 
 
 @router.get("/retention")

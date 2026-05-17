@@ -19,6 +19,7 @@ router = APIRouter(tags=["api-keys"])
 logger = logging.getLogger(__name__)
 
 KEY_PREFIX = "llk_"  # lineagelens key prefix
+ALLOWED_SCOPES = {"read", "write", "provenance:read", "provenance:write"}
 
 
 def _generate_api_key() -> tuple[str, str, str]:
@@ -61,6 +62,10 @@ async def create_api_key(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> dict:
     """Create a new API key for the authenticated user. The full key is shown ONCE."""
+    invalid_scopes = set(payload.scopes) - ALLOWED_SCOPES
+    if invalid_scopes:
+        raise HTTPException(status_code=400, detail=f"Invalid scopes: {sorted(invalid_scopes)}. Allowed: {sorted(ALLOWED_SCOPES)}")
+
     full_key, prefix, key_hash = _generate_api_key()
 
     expires_at = None

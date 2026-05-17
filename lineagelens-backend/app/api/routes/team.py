@@ -72,7 +72,10 @@ async def invite_team_member(
             detail="Invalid authentication subject.",
         )
 
-    caller_stmt = select(UserAccount).where(UserAccount.id == caller_id)
+    caller_stmt = select(UserAccount).where(
+        UserAccount.id == caller_id,
+        UserAccount.workspace_id == auth.workspace_id,
+    )
     caller_result = await session.execute(caller_stmt)
     caller = caller_result.scalar_one_or_none()
 
@@ -85,7 +88,12 @@ async def invite_team_member(
     username = normalize_username(payload.username)
     validate_password_strength(payload.password, settings)
 
-    existing = await session.execute(select(UserAccount).where(UserAccount.username == username))
+    existing = await session.execute(
+        select(UserAccount).where(
+            UserAccount.username == username,
+            UserAccount.workspace_id == auth.workspace_id,
+        )
+    )
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

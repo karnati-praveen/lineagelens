@@ -33,7 +33,7 @@ def get_client_ip(request: Request, settings: Settings | None = None) -> str | N
 
     peer_ip = request.client.host if request.client else None
     forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded and (not trusted_ips or peer_ip in trusted_ips):
+    if forwarded and trusted_ips and peer_ip in trusted_ips:
         return forwarded.split(",")[0].strip()
     return peer_ip
 

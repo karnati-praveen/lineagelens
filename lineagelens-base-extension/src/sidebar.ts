@@ -25,7 +25,7 @@ export class CaptureTreeItem extends vscode.TreeItem {
   }
 }
 
-export class CaptureTreeProvider implements vscode.TreeDataProvider<CaptureTreeItem> {
+export class CaptureTreeProvider implements vscode.TreeDataProvider<CaptureTreeItem>, vscode.Disposable {
   private _onDidChangeTreeData = new vscode.EventEmitter<CaptureTreeItem | undefined | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
@@ -41,6 +41,10 @@ export class CaptureTreeProvider implements vscode.TreeDataProvider<CaptureTreeI
 
   getChildren(): CaptureTreeItem[] {
     return this.store.getAll().map(r => new CaptureTreeItem(r));
+  }
+
+  dispose(): void {
+    this._onDidChangeTreeData.dispose();
   }
 }
 

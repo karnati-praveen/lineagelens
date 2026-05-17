@@ -42,6 +42,20 @@ spec:
             limits:
               cpu: "500m"
               memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /proxy-health
+              port: 8788
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /proxy-health
+              port: 8788
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 5
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

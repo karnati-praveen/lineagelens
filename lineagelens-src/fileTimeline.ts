@@ -37,7 +37,7 @@ class TimelineItem extends vscode.TreeItem {
     }
 }
 
-export class FileTimelineProvider implements vscode.TreeDataProvider<TimelineItem> {
+export class FileTimelineProvider implements vscode.TreeDataProvider<TimelineItem>, vscode.Disposable {
     private _onDidChangeTreeData = new vscode.EventEmitter<void>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
     private _currentFile: string | undefined;
@@ -46,6 +46,10 @@ export class FileTimelineProvider implements vscode.TreeDataProvider<TimelineIte
         private readonly _getStorage: () => ProvenanceStorageService,
         private readonly _log: (message: string) => void
     ) {}
+
+    dispose(): void {
+        this._onDidChangeTreeData.dispose();
+    }
 
     refresh(filePath?: string): void {
         this._currentFile = filePath;

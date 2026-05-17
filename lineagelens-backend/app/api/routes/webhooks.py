@@ -30,6 +30,16 @@ class WebhookConfig(BaseModel):
     created_at: str
 
 
+class WebhookConfigPublic(BaseModel):
+    """Safe view of a webhook — secret omitted."""
+    id: str
+    workspace_id: str
+    url: str
+    risk_threshold: int = 70
+    active: bool = True
+    created_at: str
+
+
 class WebhookRegisterRequest(BaseModel):
     url: str
     secret: str
@@ -98,9 +108,10 @@ async def register_webhook(
 async def list_webhooks(
     request: Request,
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
-) -> list[WebhookConfig]:
-    """List all webhooks for the authenticated workspace."""
-    return await _get_workspace_webhooks(request.app.state, auth.workspace_id)
+) -> list[WebhookConfigPublic]:
+    """List all webhooks for the authenticated workspace (secret not returned)."""
+    configs = await _get_workspace_webhooks(request.app.state, auth.workspace_id)
+    return [WebhookConfigPublic(**{k: v for k, v in c.model_dump().items() if k != "secret"}) for c in configs]
 
 
 @router.delete("/{webhook_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)

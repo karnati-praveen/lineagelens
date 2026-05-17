@@ -42,14 +42,14 @@ async def list_audit_log(
             dt_from = datetime.fromisoformat(date_from.replace("Z", "+00:00"))
             filters.append(AuditLog.created_at >= dt_from)
         except ValueError:
-            pass
+            raise HTTPException(status_code=400, detail=f"Invalid date_from format: {date_from!r}. Use ISO 8601.")
 
     if date_to:
         try:
             dt_to = datetime.fromisoformat(date_to.replace("Z", "+00:00"))
             filters.append(AuditLog.created_at <= dt_to)
         except ValueError:
-            pass
+            raise HTTPException(status_code=400, detail=f"Invalid date_to format: {date_to!r}. Use ISO 8601.")
 
     from sqlalchemy import func
 
