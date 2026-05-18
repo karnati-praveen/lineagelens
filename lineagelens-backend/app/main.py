@@ -217,7 +217,7 @@ class RequestGuardsMiddleware(BaseHTTPMiddleware):
         client_ip = get_client_ip(request)
         key = f"http:{client_ip}"
 
-        decision = limiter.acheck(
+        decision = await limiter.acheck(
             key=key,
             limit=current_settings.rate_limit_max_requests,
             window_seconds=current_settings.rate_limit_window_seconds,
