@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import uuid as uuid_pkg
@@ -82,6 +83,16 @@ async def register_webhook(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Webhook URL must be a valid http:// or https:// URL.",
         )
+    _host = parsed_url.hostname or ""
+    try:
+        _addr = ipaddress.ip_address(_host)
+        if _addr.is_private or _addr.is_loopback or _addr.is_link_local or _addr.is_multicast:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Webhook URL must not target private, loopback, or multicast addresses.",
+            )
+    except ValueError:
+        pass  # hostname is a domain name, not a bare IP — allow it
     config = WebhookConfig(
         id=str(uuid_pkg.uuid4()),
         workspace_id=auth.workspace_id,

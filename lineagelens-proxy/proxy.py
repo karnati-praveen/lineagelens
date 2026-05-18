@@ -42,7 +42,14 @@ PROXY_HOST        = os.environ.get("PROXY_HOST", "0.0.0.0")
 MAX_BODY_BYTES    = int(os.environ.get("PROXY_MAX_BODY_BYTES", "2000000"))
 # Comma-separated regex patterns to redact from captured content before ingest.
 # Example: PROXY_REDACT_PATTERNS="Bearer [A-Za-z0-9._-]+,sk-[A-Za-z0-9]+"
-REDACT_PATTERNS       = [re.compile(p.strip()) for p in os.environ.get("PROXY_REDACT_PATTERNS", "").split(",") if p.strip()]
+_REDACT_PATTERNS_RAW  = [p.strip() for p in os.environ.get("PROXY_REDACT_PATTERNS", "").split(",") if p.strip()]
+REDACT_PATTERNS: list[re.Pattern] = []
+for _rp in _REDACT_PATTERNS_RAW:
+    try:
+        REDACT_PATTERNS.append(re.compile(_rp))
+    except re.error as _rp_err:
+        import sys as _sys
+        print(f"[lineagelens-proxy] WARNING: ignoring invalid PROXY_REDACT_PATTERNS entry {_rp!r}: {_rp_err}", file=_sys.stderr)
 # CONNECT tunnel server (for tools that use HTTPS_PROXY / HTTP_PROXY)
 PROXY_CONNECT_PORT    = int(os.environ.get("PROXY_CONNECT_PORT", "8789"))
 # Optional CA cert for HTTPS CONNECT MITM. When unset, CONNECT falls back to transparent relay.
