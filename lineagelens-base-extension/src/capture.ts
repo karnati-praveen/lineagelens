@@ -13,6 +13,7 @@ export class CaptureService {
   private statusBar: vscode.StatusBarItem;
   private onCapture: (record: ReturnType<CaptureStore['getById']>) => void;
   private store: CaptureStore;
+  private _disposed = false;
 
   constructor(
     store: CaptureStore,
@@ -32,43 +33,44 @@ export class CaptureService {
   }
 
   private handleChange(event: vscode.TextDocumentChangeEvent): void {
-    const cfg = vscode.workspace.getConfiguration('lineagelensBase');
-    if (!cfg.get('captureEnabled', true)) return;
+    try {
+      if (this._disposed) return;
 
-    const doc = event.document;
-    if (doc.uri.scheme !== 'file') return;
+      const cfg = vscode.workspace.getConfiguration('lineagelensBase');
+      if (!cfg.get('captureEnabled', true)) return;
 
-    const excludePatterns: string[] = cfg.get('excludePatterns', []);
-    const filePath = doc.uri.fsPath;
-    if (excludePatterns.some(p => minimatch(filePath, p, { matchBase: true }))) return;
+      const doc = event.document;
+      if (doc.uri.scheme !== 'file') return;
 
-    const minLines: number = cfg.get('minInsertionLines', 4);
+      const excludePatterns: string[] = cfg.get('excludePatterns', []);
+      const filePath = doc.uri.fsPath;
+      if (excludePatterns.some(p => minimatch(filePath, p, { matchBase: true }))) return;
 
-    for (const change of event.contentChanges) {
-      const addedText = change.text;
-      if (!addedText) continue;
+      const minLines: number = cfg.get('minInsertionLines', 4);
 
-      const newLines = (addedText.match(/\n/g) || []).length;
-      if (newLines < minLines - 1) continue;
+      for (const change of event.contentChanges) {
+        const addedText = change.text;
+        if (!addedText) continue;
 
-      // Heuristic: multi-line insertions that start at the beginning of a line
-      // are likely AI completions (not manual typing which adds one char at a time)
-      const isLikelyAI = change.rangeLength === 0 && newLines >= minLines - 1;
-      if (!isLikelyAI) continue;
+        const newLines = (addedText.match(/\n/g) || []).length;
+        if (newLines < minLines - 1) continue;
 
-      const workspaceFolder = vscode.workspace.getWorkspaceFolder(doc.uri);
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(doc.uri);
 
-      const record = this.store.add({
-        filePath: doc.uri.fsPath,
-        fileName: doc.fileName.split(/[\\/]/).pop() || doc.fileName,
-        language: doc.languageId,
-        insertedCode: addedText,
-        linesAdded: newLines + 1,
-        workspaceFolder: workspaceFolder?.name ?? null,
-      });
+        const record = this.store.add({
+          filePath: doc.uri.fsPath,
+          fileName: doc.fileName.split(/[\\/]/).filter(Boolean).pop() || doc.fileName,
+          language: doc.languageId,
+          insertedCode: addedText,
+          linesAdded: newLines + 1,
+          workspaceFolder: workspaceFolder?.name ?? null,
+        });
 
-      this.updateStatusBar();
-      this.onCapture(record);
+        this.updateStatusBar();
+        this.onCapture(record);
+      }
+    } catch (error) {
+      console.error('LineageLens Base capture failed:', error);
     }
   }
 
@@ -83,6 +85,17 @@ export class CaptureService {
   }
 
   dispose(): void {
-    this.disposables.forEach(d => d.dispose());
+    if (this._disposed) return;
+    this._disposed = true;
+
+    for (const disposable of this.disposables) {
+      try {
+        disposable.dispose();
+      } catch (error) {
+        console.error('LineageLens Base disposable cleanup failed:', error);
+      }
+    }
+
+    this.disposables = [];
   }
 }

@@ -149,15 +149,30 @@ _DROP_REQ  = {"host", "content-length", "transfer-encoding", "connection",
               "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "upgrade"}
 _DROP_RESP = {"content-encoding", "transfer-encoding", "connection", "content-length"}
 
-app = FastAPI(title="LineageLens Universal Proxy", docs_url=None, redoc_url=None)
+from contextlib import asynccontextmanager
 
 
-@app.on_event("startup")
-async def _on_startup() -> None:
-    """Launch background tasks (pending-edit TTL cleanup)."""
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Startup/shutdown context for FastAPI (replaces deprecated on_event)."""
+    # Startup: launch pending-edit TTL cleanup.
     task = asyncio.create_task(_cleanup_pending_edits_loop())
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
+    try:
+        yield
+    finally:
+        # Shutdown: cancel background tasks so the event loop can close cleanly.
+        for t in list(_background_tasks):
+            t.cancel()
+
+
+app = FastAPI(
+    title="LineageLens Universal Proxy",
+    docs_url=None,
+    redoc_url=None,
+    lifespan=_lifespan,
+)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -677,7 +692,10 @@ def _parse_apply_patch_dsl(patch: str) -> list[dict]:
     if not isinstance(patch, str) or not patch.strip():
         return []
 
-    lines = patch.split("\n")
+    # splitlines() handles LF / CRLF / CR uniformly and strips the line
+    # terminator, so content lines won't carry a trailing \r on Windows-
+    # generated patches.
+    lines = patch.splitlines()
     files: list[dict] = []
     current: dict | None = None
 

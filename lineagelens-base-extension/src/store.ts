@@ -43,7 +43,18 @@ export class CaptureStore {
   }
 
   private save(): void {
-    fs.writeFileSync(this.storePath, JSON.stringify(this.records, null, 2), 'utf-8');
+    const tmp = this.storePath + '.tmp';
+    try {
+      fs.writeFileSync(tmp, JSON.stringify(this.records, null, 2), 'utf-8');
+      fs.renameSync(tmp, this.storePath);
+    } catch (error) {
+      try {
+        if (fs.existsSync(tmp)) { fs.unlinkSync(tmp); }
+      } catch {
+        // best-effort cleanup; ignore secondary failure
+      }
+      console.error('LineageLens Base: failed to persist captures:', error);
+    }
   }
 
   add(data: Omit<CaptureRecord, 'id' | 'timestamp'>): CaptureRecord {
@@ -53,8 +64,12 @@ export class CaptureStore {
       ...data,
     };
     this.records.unshift(record);
-    if (this.records.length > this.maxCaptures) {
-      this.records = this.records.slice(0, this.maxCaptures);
+    // Re-read the cap on each insert so a user changing the setting takes
+    // effect immediately instead of requiring an extension reload.
+    const cap = vscode.workspace.getConfiguration('lineagelensBase').get<number>('maxStoredCaptures', 1000);
+    this.maxCaptures = cap;
+    if (this.records.length > cap) {
+      this.records = this.records.slice(0, cap);
     }
     this.save();
     return record;
