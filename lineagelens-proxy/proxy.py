@@ -620,6 +620,369 @@ async def _cleanup_pending_edits_loop() -> None:
             logger.exception("pending edits cleanup loop error")
 
 
+# ── OpenAI Codex CLI adapter (Responses API function_call/function_call_output) ─
+
+def _is_codex_responses_path(url: str) -> bool:
+    """Return True iff the upstream URL targets OpenAI's Responses API."""
+    try:
+        return "/v1/responses" in urllib.parse.urlparse(url).path
+    except Exception:
+        return False
+
+
+def _codex_session_key(body_dict: dict, headers: dict) -> str:
+    """Stable session fingerprint for OpenAI Responses API.
+
+    Uses the `instructions` field (the Responses API equivalent of system
+    prompt) and falls back to any system/developer role message in input[].
+    """
+    instructions = body_dict.get("instructions", "")
+    if not isinstance(instructions, str):
+        instructions = ""
+
+    if not instructions:
+        for item in (body_dict.get("input") or []):
+            if not isinstance(item, dict):
+                continue
+            role = item.get("role", "")
+            if role in ("system", "developer"):
+                content = item.get("content", "")
+                if isinstance(content, list):
+                    parts = []
+                    for c in content:
+                        if isinstance(c, dict):
+                            parts.append(c.get("text", "") or "")
+                    instructions = "".join(parts)
+                elif isinstance(content, str):
+                    instructions = content
+                break
+
+    auth = ""
+    for header_name in ("authorization", "x-api-key", "Authorization", "X-Api-Key"):
+        v = headers.get(header_name)
+        if v:
+            auth = v[:24]
+            break
+
+    raw = f"codex|{instructions[:4096]}|{auth}"
+    return hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+
+def _parse_apply_patch_dsl(patch: str) -> list[dict]:
+    """Parse Codex CLI's apply_patch DSL into per-file edit records.
+
+    Supports the four verbs (Add File, Update File, Delete File, Move to)
+    and the unified-diff-ish hunk format (@@, +, -, space-prefixed context).
+    """
+    if not isinstance(patch, str) or not patch.strip():
+        return []
+
+    lines = patch.split("\n")
+    files: list[dict] = []
+    current: dict | None = None
+
+    def _flush() -> None:
+        nonlocal current
+        if current is not None:
+            files.append(current)
+            current = None
+
+    for line in lines:
+        if line.startswith("*** Begin Patch") or line.startswith("*** End Patch"):
+            continue
+
+        if line.startswith("*** Add File:"):
+            _flush()
+            current = {
+                "verb": "add",
+                "file_path": line[len("*** Add File:"):].strip(),
+                "moved_to": "",
+                "old_lines": [],
+                "new_lines": [],
+            }
+        elif line.startswith("*** Update File:"):
+            _flush()
+            current = {
+                "verb": "update",
+                "file_path": line[len("*** Update File:"):].strip(),
+                "moved_to": "",
+                "old_lines": [],
+                "new_lines": [],
+            }
+        elif line.startswith("*** Delete File:"):
+            _flush()
+            current = {
+                "verb": "delete",
+                "file_path": line[len("*** Delete File:"):].strip(),
+                "moved_to": "",
+                "old_lines": [],
+                "new_lines": [],
+            }
+        elif line.startswith("*** Move to:") and current is not None:
+            current["moved_to"] = line[len("*** Move to:"):].strip()
+        elif current is not None:
+            if line.startswith("@@"):
+                continue  # hunk header; we don't need the context for now
+            if line.startswith("+"):
+                current["new_lines"].append(line[1:])
+            elif line.startswith("-"):
+                current["old_lines"].append(line[1:])
+            elif line.startswith(" "):
+                # context line — present in both old and new
+                current["old_lines"].append(line[1:])
+                current["new_lines"].append(line[1:])
+            # any other line is silently ignored
+
+    _flush()
+
+    edits: list[dict] = []
+    for f in files:
+        edits.append({
+            "verb": f["verb"],
+            "file_path": f["file_path"],
+            "moved_to": f["moved_to"],
+            "old_string": "\n".join(f["old_lines"]),
+            "new_string": "\n".join(f["new_lines"]),
+        })
+    return edits
+
+
+def _parse_codex_function_call_to_edits(function_call: dict) -> list[dict]:
+    """Convert one Codex function_call item into edit records.
+
+    Only `apply_patch` produces records in v1. `shell` is logged-and-skipped
+    (heredoc edits are detectable but the expert recommends not attributing
+    them until a v2). All other tools (read-only) produce no records.
+    """
+    name = function_call.get("name", "")
+    if name == "shell":
+        logger.debug(
+            "codex: shell tool detected, not attributed (call_id=%s)",
+            function_call.get("call_id", ""),
+        )
+        return []
+    if name != "apply_patch":
+        return []
+
+    call_id = function_call.get("call_id", "") or function_call.get("id", "")
+    args_raw = function_call.get("arguments", "")
+
+    if isinstance(args_raw, str):
+        try:
+            args = json.loads(args_raw) if args_raw else {}
+        except json.JSONDecodeError:
+            logger.debug("codex: failed to parse apply_patch arguments JSON")
+            return []
+    elif isinstance(args_raw, dict):
+        args = args_raw
+    else:
+        return []
+
+    if not isinstance(args, dict):
+        return []
+    patch = args.get("input", "")
+    if not isinstance(patch, str):
+        return []
+
+    file_edits = _parse_apply_patch_dsl(patch)
+    records: list[dict] = []
+    for idx, e in enumerate(file_edits):
+        records.append({
+            "tool_use_id": call_id,
+            "tool_name": "apply_patch",
+            "edit_index": idx,
+            "file_path": e["file_path"],
+            "old_string": e["old_string"],
+            "new_string": e["new_string"],
+            "verb": e["verb"],
+            "moved_to": e["moved_to"],
+        })
+    return records
+
+
+def _extract_codex_function_calls_from_body(body: bytes) -> list[dict]:
+    """Extract function_call items from a non-streaming Responses API body."""
+    try:
+        data = json.loads(body)
+    except Exception:
+        return []
+    output = data.get("output")
+    if not isinstance(output, list):
+        return []
+    return [
+        item for item in output
+        if isinstance(item, dict) and item.get("type") == "function_call"
+    ]
+
+
+def _extract_codex_function_calls_from_sse(chunks: list[bytes]) -> list[dict]:
+    """Assemble function_call items from a Responses API SSE stream.
+
+    Tracks items by output_index. Accumulates `response.function_call_arguments.delta`
+    fragments. On `response.function_call_arguments.done` and `response.output_item.done`,
+    prefers the authoritative full arguments string if provided, otherwise uses
+    the accumulated delta fragments.
+    """
+    calls_by_index: dict[int, dict] = {}
+    args_deltas_by_index: dict[int, list[str]] = {}
+
+    raw = "".join(c.decode("utf-8", errors="replace") for c in chunks)
+    for line in raw.split("\n"):
+        line = line.rstrip("\r")
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if payload in ("", "[DONE]"):
+            continue
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+
+        etype = event.get("type", "")
+        idx = event.get("output_index", 0)
+
+        if etype == "response.output_item.added":
+            item = event.get("item") or {}
+            if isinstance(item, dict) and item.get("type") == "function_call":
+                calls_by_index[idx] = {
+                    "type": "function_call",
+                    "id": item.get("id", ""),
+                    "call_id": item.get("call_id", "") or item.get("id", ""),
+                    "name": item.get("name", ""),
+                    "arguments": item.get("arguments", "") or "",
+                }
+                args_deltas_by_index[idx] = []
+
+        elif etype == "response.function_call_arguments.delta":
+            if idx in args_deltas_by_index:
+                d = event.get("delta", "")
+                if isinstance(d, str) and d:
+                    args_deltas_by_index[idx].append(d)
+
+        elif etype == "response.function_call_arguments.done":
+            if idx in calls_by_index:
+                final = event.get("arguments", "")
+                if isinstance(final, str) and final:
+                    calls_by_index[idx]["arguments"] = final
+                    args_deltas_by_index[idx] = []
+
+        elif etype == "response.output_item.done":
+            if idx in calls_by_index:
+                item = event.get("item") or {}
+                if isinstance(item, dict):
+                    a = item.get("arguments", "")
+                    if isinstance(a, str) and a:
+                        calls_by_index[idx]["arguments"] = a
+                if not calls_by_index[idx]["arguments"] and args_deltas_by_index.get(idx):
+                    calls_by_index[idx]["arguments"] = "".join(args_deltas_by_index[idx])
+
+    # Anything still without arguments — use accumulated deltas.
+    for idx, call in calls_by_index.items():
+        if not call["arguments"] and args_deltas_by_index.get(idx):
+            call["arguments"] = "".join(args_deltas_by_index[idx])
+
+    return list(calls_by_index.values())
+
+
+def _extract_codex_function_call_outputs(body: bytes) -> list[dict]:
+    """Extract function_call_output items from a Responses API request body."""
+    try:
+        data = json.loads(body)
+    except Exception:
+        return []
+    inputs = data.get("input")
+    if not isinstance(inputs, list):
+        return []
+    return [
+        item for item in inputs
+        if isinstance(item, dict) and item.get("type") == "function_call_output"
+    ]
+
+
+def _classify_codex_function_call_output(item: dict) -> tuple[str, str]:
+    """Map a Codex function_call_output to (status, error_message).
+
+    Codex doesn't carry an is_error flag — use text heuristics on the output.
+    """
+    output = item.get("output", "")
+    if isinstance(output, dict):
+        if "error" in output:
+            return ("errored", str(output["error"])[:500])
+        output = output.get("text", "") or output.get("content", "") or ""
+    if not isinstance(output, str):
+        output = str(output) if output else ""
+
+    lower = output.lower()
+    if "reject" in lower or "deni" in lower or "declined" in lower or "user " in lower:
+        return ("rejected", output[:500])
+    if (
+        lower.startswith("error")
+        or "failed" in lower
+        or "could not" in lower
+        or "no such file" in lower
+        or "not found" in lower
+        or "did not match" in lower
+    ):
+        return ("errored", output[:500])
+    return ("applied", "")
+
+
+async def _store_codex_pending_edits(
+    session_key: str,
+    function_calls: list[dict],
+) -> None:
+    """Parse Codex function_calls into edit records and store as pending."""
+    now = time.time()
+    async with _pending_edits_lock:
+        if len(_pending_edits) >= _PENDING_EDITS_MAX:
+            to_drop = len(_pending_edits) - _PENDING_EDITS_MAX + len(function_calls) + 1
+            for key in list(_pending_edits.keys())[:to_drop]:
+                _pending_edits.pop(key, None)
+
+        for fc in function_calls:
+            edits = _parse_codex_function_call_to_edits(fc)
+            if not edits:
+                continue
+            call_id = fc.get("call_id", "") or fc.get("id", "")
+            if not call_id:
+                continue
+            for edit in edits:
+                edit["_proposed_at"] = now
+            _pending_edits[(session_key, call_id)] = edits
+            logger.debug(
+                "pending codex edit: call_id=%s verb=%s file=%s",
+                call_id, edits[0].get("verb", ""), edits[0].get("file_path", ""),
+            )
+
+
+async def _resolve_codex_pending_edits(
+    session_key: str,
+    function_call_outputs: list[dict],
+    provider: str,
+) -> None:
+    """Match function_call_outputs to pending edits and flush to backend."""
+    resolved: list[tuple[dict, str, str]] = []
+    async with _pending_edits_lock:
+        for output_item in function_call_outputs:
+            call_id = output_item.get("call_id", "")
+            if not call_id:
+                continue
+            key = (session_key, call_id)
+            if key not in _pending_edits:
+                continue
+            status, error_message = _classify_codex_function_call_output(output_item)
+            for edit in _pending_edits.pop(key):
+                resolved.append((edit, status, error_message))
+
+    for edit, status, error_message in resolved:
+        task = asyncio.create_task(
+            _ingest_edit(edit, session_key, status, error_message, provider)
+        )
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
+
 # ── ingest ────────────────────────────────────────────────────────────────────
 
 async def _ingest_edit(
@@ -652,6 +1015,8 @@ async def _ingest_edit(
             "toolName": edit.get("tool_name", ""),
             "editIndex": edit.get("edit_index", 0),
             "oldString": old_string,
+            "verb": edit.get("verb", ""),
+            "movedTo": edit.get("moved_to", ""),
             "status": status,
             "errorMessage": error_message,
             "sessionKey": session_key,
@@ -748,6 +1113,8 @@ async def _handle_streaming(
     provider: str = "unknown",
     file_path: str = "proxy-capture",
     session_key: str = "",
+    codex_session_key: str = "",
+    is_codex: bool = False,
 ) -> Response:
     # URL base is from UPSTREAM_URL (env-configured, trusted); only path is from request.
     # Scheme and host are pinned by _build_upstream_url — never sourced from user input.
@@ -800,12 +1167,17 @@ async def _handle_streaming(
             elif upstream.status_code >= 400:
                 logger.debug("skipping capture: upstream status %d", upstream.status_code)
             elif not _capture_overflow:
-                # Anthropic adapter: try structured tool_use capture first.
+                # Try structured capture first (Anthropic tool_use or Codex function_call).
                 structured_captured = False
                 if provider == "anthropic" and session_key:
                     tool_uses = _extract_anthropic_tool_uses_from_sse(collected)
                     if tool_uses:
                         await _store_pending_edits(session_key, tool_uses)
+                        structured_captured = True
+                elif is_codex and codex_session_key:
+                    function_calls = _extract_codex_function_calls_from_sse(collected)
+                    if function_calls:
+                        await _store_codex_pending_edits(codex_session_key, function_calls)
                         structured_captured = True
 
                 if not structured_captured:
@@ -838,6 +1210,8 @@ async def _handle_non_streaming(
     provider: str = "unknown",
     file_path: str = "proxy-capture",
     session_key: str = "",
+    codex_session_key: str = "",
+    is_codex: bool = False,
 ) -> Response:
     # URL base is from UPSTREAM_URL (env-configured, trusted); only path is from request.
     # Scheme and host are pinned by _build_upstream_url — never sourced from user input.
@@ -864,14 +1238,18 @@ async def _handle_non_streaming(
 
     if not skip_capture and upstream.status_code < 400:
         if len(upstream.content) <= MAX_BODY_BYTES:
-            # Anthropic adapter: prefer structured tool_use capture over text scraping.
-            # If the response contains any tool_use blocks, store them as pending edits
-            # (resolved later when the client returns tool_result), and skip text capture.
+            # Prefer structured edit capture over text scraping when available
+            # (Anthropic tool_use or Codex Responses API function_call).
             structured_captured = False
             if provider == "anthropic" and session_key:
                 tool_uses = _extract_anthropic_tool_uses_from_body(upstream.content)
                 if tool_uses:
                     await _store_pending_edits(session_key, tool_uses)
+                    structured_captured = True
+            elif is_codex and codex_session_key:
+                function_calls = _extract_codex_function_calls_from_body(upstream.content)
+                if function_calls:
+                    await _store_codex_pending_edits(codex_session_key, function_calls)
                     structured_captured = True
 
             if not structured_captured:
@@ -955,6 +1333,21 @@ async def proxy_request(request: Request, path: str) -> Response:
         except Exception:
             logger.debug("anthropic adapter: request body parse failed", exc_info=True)
 
+    # Codex CLI adapter: same pattern but for OpenAI Responses API.
+    # Distinguished from regular Chat Completions by path /v1/responses.
+    is_codex = provider == "openai" and _is_codex_responses_path(url)
+    codex_session_key = ""
+    if is_codex and body:
+        try:
+            req_body_dict = json.loads(body)
+            if isinstance(req_body_dict, dict):
+                codex_session_key = _codex_session_key(req_body_dict, dict(request.headers))
+                fc_outputs = _extract_codex_function_call_outputs(body)
+                if fc_outputs:
+                    await _resolve_codex_pending_edits(codex_session_key, fc_outputs, provider)
+        except Exception:
+            logger.debug("codex adapter: request body parse failed", exc_info=True)
+
     # Extract the best available file path from request metadata.
     try:
         req_body_dict = json.loads(body) if body else None
@@ -967,11 +1360,15 @@ async def proxy_request(request: Request, path: str) -> Response:
             request.method, url, headers, body, safe_path,
             provider=provider, file_path=file_path,
             session_key=anthropic_session_key,
+            codex_session_key=codex_session_key,
+            is_codex=is_codex,
         )
     return await _handle_non_streaming(
         request.method, url, headers, body, safe_path,
         provider=provider, file_path=file_path,
         session_key=anthropic_session_key,
+        codex_session_key=codex_session_key,
+        is_codex=is_codex,
     )
 
 
