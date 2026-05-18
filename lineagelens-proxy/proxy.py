@@ -983,6 +983,366 @@ async def _resolve_codex_pending_edits(
         task.add_done_callback(_background_tasks.discard)
 
 
+# ── Google Gemini CLI adapter (functionCall/functionResponse) ─────────────────
+
+# Gemini file-mutating tool names. Both snake_case (current Gemini CLI) and
+# PascalCase (older variants) are accepted.
+_GEMINI_FILE_MUTATING_TOOLS = {
+    "write_file", "WriteFile",
+    "create_file", "CreateFile",
+    "replace", "Replace",
+    "edit", "Edit",
+    "edit_file", "EditFile",
+}
+
+
+def _gemini_session_key(body_dict: dict, headers: dict) -> str:
+    """Stable session fingerprint for Gemini API.
+
+    Reads from systemInstruction (Gemini's system prompt slot) and supports
+    both the parts-list shape and a plain text fallback. Prefixed with
+    'gemini|' so the hash cannot collide with Anthropic or Codex.
+    """
+    si = body_dict.get("systemInstruction") or body_dict.get("system_instruction") or {}
+    instructions = ""
+    if isinstance(si, dict):
+        parts = si.get("parts", [])
+        if isinstance(parts, list):
+            for p in parts:
+                if isinstance(p, dict):
+                    instructions += p.get("text", "") or ""
+        elif isinstance(si.get("text"), str):
+            instructions = si["text"]
+    elif isinstance(si, str):
+        instructions = si
+
+    auth = ""
+    for header_name in (
+        "x-goog-api-key", "X-Goog-Api-Key",
+        "authorization", "Authorization",
+        "x-api-key", "X-Api-Key",
+    ):
+        v = headers.get(header_name)
+        if v:
+            auth = v[:24]
+            break
+
+    raw = f"gemini|{instructions[:4096]}|{auth}"
+    return hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+
+def _parse_gemini_function_call_to_edits(function_call: dict) -> list[dict]:
+    """Convert one Gemini functionCall into one or more edit records.
+
+    Gemini's `args` is a JSON object (NOT a JSON string like OpenAI). The
+    optional `id` field on the call is used as tool_use_id when present;
+    otherwise a random uuid is assigned (correlation falls back to FIFO
+    name matching at resolution time).
+    """
+    name = function_call.get("name", "")
+    if name not in _GEMINI_FILE_MUTATING_TOOLS:
+        return []
+
+    args = function_call.get("args") or {}
+    if not isinstance(args, dict):
+        return []
+
+    file_path = (
+        args.get("file_path", "")
+        or args.get("filePath", "")
+        or args.get("path", "")
+    )
+    if not file_path or not isinstance(file_path, str):
+        return []
+
+    # Prefer explicit id (newer Gemini versions); otherwise random — resolution
+    # will fall back to FIFO matching by tool name.
+    explicit_id = function_call.get("id", "")
+    if explicit_id and isinstance(explicit_id, str):
+        synthetic_id = explicit_id
+    else:
+        synthetic_id = f"gemini_{uuid.uuid4().hex[:16]}"
+
+    name_lower = name.lower()
+
+    if name_lower in ("write_file", "writefile", "create_file", "createfile"):
+        content = (
+            args.get("content", "")
+            or args.get("file_content", "")
+            or args.get("text", "")
+            or ""
+        )
+        return [{
+            "tool_use_id": synthetic_id,
+            "tool_name": name,
+            "edit_index": 0,
+            "file_path": file_path,
+            "old_string": "",
+            "new_string": content if isinstance(content, str) else str(content),
+            "verb": "create" if "create" in name_lower else "write",
+            "moved_to": "",
+        }]
+
+    if name_lower in ("replace", "edit", "edit_file", "editfile"):
+        old_s = (
+            args.get("old_string", "")
+            or args.get("oldString", "")
+            or args.get("old", "")
+            or ""
+        )
+        new_s = (
+            args.get("new_string", "")
+            or args.get("newString", "")
+            or args.get("new", "")
+            or ""
+        )
+        return [{
+            "tool_use_id": synthetic_id,
+            "tool_name": name,
+            "edit_index": 0,
+            "file_path": file_path,
+            "old_string": old_s if isinstance(old_s, str) else str(old_s),
+            "new_string": new_s if isinstance(new_s, str) else str(new_s),
+            "verb": "replace",
+            "moved_to": "",
+        }]
+
+    return []
+
+
+def _extract_gemini_function_calls_from_body(body: bytes) -> list[dict]:
+    """Extract all functionCall parts from a non-streaming Gemini response."""
+    try:
+        data = json.loads(body)
+    except Exception:
+        return []
+    candidates = data.get("candidates")
+    if not isinstance(candidates, list):
+        return []
+
+    fcs: list[dict] = []
+    for cand in candidates:
+        if not isinstance(cand, dict):
+            continue
+        content = cand.get("content")
+        if not isinstance(content, dict):
+            continue
+        parts = content.get("parts")
+        if not isinstance(parts, list):
+            continue
+        for part in parts:
+            if isinstance(part, dict) and isinstance(part.get("functionCall"), dict):
+                fcs.append(part["functionCall"])
+    return fcs
+
+
+def _extract_gemini_function_calls_from_sse(chunks: list[bytes]) -> list[dict]:
+    """Extract functionCall parts from a Gemini SSE stream.
+
+    Each SSE data: line is a complete partial GenerateContentResponse.
+    Unlike Anthropic, Gemini does NOT split functionCall arguments across
+    delta events — each functionCall arrives complete in one chunk.
+    """
+    fcs: list[dict] = []
+    raw = "".join(c.decode("utf-8", errors="replace") for c in chunks)
+    for line in raw.split("\n"):
+        line = line.rstrip("\r")
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if payload in ("", "[DONE]"):
+            continue
+        try:
+            chunk = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+
+        candidates = chunk.get("candidates")
+        if not isinstance(candidates, list):
+            continue
+        for cand in candidates:
+            if not isinstance(cand, dict):
+                continue
+            content = cand.get("content")
+            if not isinstance(content, dict):
+                continue
+            parts = content.get("parts")
+            if not isinstance(parts, list):
+                continue
+            for part in parts:
+                if isinstance(part, dict) and isinstance(part.get("functionCall"), dict):
+                    fcs.append(part["functionCall"])
+    return fcs
+
+
+def _extract_gemini_function_responses(body: bytes) -> list[dict]:
+    """Extract functionResponses from the LAST response-bearing message.
+
+    Walks contents[] in reverse, returns all functionResponses from the most
+    recent message that contains any. Earlier responses were resolved on
+    prior requests (and resolve is idempotent — re-lookup finds no pending,
+    silently skips).
+    """
+    try:
+        data = json.loads(body)
+    except Exception:
+        return []
+    contents = data.get("contents")
+    if not isinstance(contents, list):
+        return []
+
+    for msg in reversed(contents):
+        if not isinstance(msg, dict):
+            continue
+        # Gemini puts functionResponses under role "user" (common) or "function" (newer).
+        role = msg.get("role", "")
+        if role not in ("user", "function"):
+            continue
+        parts = msg.get("parts")
+        if not isinstance(parts, list):
+            continue
+        msg_responses: list[dict] = []
+        for part in parts:
+            if isinstance(part, dict) and isinstance(part.get("functionResponse"), dict):
+                msg_responses.append(part["functionResponse"])
+        if msg_responses:
+            return msg_responses
+    return []
+
+
+def _classify_gemini_function_response(fr: dict) -> tuple[str, str]:
+    """Map a Gemini functionResponse to (status, error_message)."""
+    response = fr.get("response", {})
+
+    if isinstance(response, dict):
+        if "error" in response:
+            err = response["error"]
+            if isinstance(err, dict):
+                msg = err.get("message", "") or json.dumps(err)
+            else:
+                msg = str(err)
+            return ("errored", str(msg)[:500])
+
+        # Pull a representative output string for keyword scanning.
+        output_text = ""
+        for k in ("output", "result", "content", "text", "message"):
+            if k in response:
+                v = response[k]
+                output_text = v if isinstance(v, str) else json.dumps(v)
+                break
+        if not output_text:
+            try:
+                output_text = json.dumps(response)
+            except Exception:
+                output_text = str(response)
+
+        lower = output_text.lower()
+        if "reject" in lower or "deni" in lower or "declined" in lower:
+            return ("rejected", output_text[:500])
+        if (
+            lower.startswith("error")
+            or "failed" in lower
+            or "could not" in lower
+            or "no such file" in lower
+        ):
+            return ("errored", output_text[:500])
+        return ("applied", "")
+
+    if isinstance(response, str):
+        lower = response.lower()
+        if "error" in lower or "failed" in lower:
+            return ("errored", response[:500])
+        if "reject" in lower or "deni" in lower:
+            return ("rejected", response[:500])
+        return ("applied", "")
+
+    return ("applied", "")
+
+
+async def _store_gemini_pending_edits(
+    session_key: str,
+    function_calls: list[dict],
+) -> None:
+    """Parse Gemini functionCalls into edit records and store as pending.
+
+    Edits are stored in `_pending_edits` keyed by (session_key, synthetic_id).
+    Python dict insertion order is preserved (3.7+), so resolution by FIFO
+    iteration is deterministic.
+    """
+    now = time.time()
+    async with _pending_edits_lock:
+        if len(_pending_edits) >= _PENDING_EDITS_MAX:
+            to_drop = len(_pending_edits) - _PENDING_EDITS_MAX + len(function_calls) + 1
+            for key in list(_pending_edits.keys())[:to_drop]:
+                _pending_edits.pop(key, None)
+
+        for fc in function_calls:
+            edits = _parse_gemini_function_call_to_edits(fc)
+            if not edits:
+                continue
+            synthetic_id = edits[0]["tool_use_id"]
+            for edit in edits:
+                edit["_proposed_at"] = now
+            _pending_edits[(session_key, synthetic_id)] = edits
+            logger.debug(
+                "pending gemini edit: id=%s tool=%s file=%s",
+                synthetic_id, edits[0].get("tool_name", ""), edits[0].get("file_path", ""),
+            )
+
+
+async def _resolve_gemini_pending_edits(
+    session_key: str,
+    function_responses: list[dict],
+    provider: str,
+) -> None:
+    """Match functionResponses to pending edits and flush to backend.
+
+    Resolution strategy:
+      1. If the functionResponse has an `id` field (newer Gemini versions),
+         look up the pending entry by that exact synthetic_id.
+      2. Otherwise, do FIFO name-matching: find the oldest pending entry in
+         this session whose tool_name equals the response's name. Python
+         dict insertion order makes this deterministic and matches Google's
+         documented preservation of call/response order within a turn.
+    """
+    resolved: list[tuple[dict, str, str]] = []
+    async with _pending_edits_lock:
+        for fr in function_responses:
+            response_name = fr.get("name", "")
+            response_id = fr.get("id", "")
+
+            matched_key: tuple[str, str] | None = None
+
+            if response_id and isinstance(response_id, str):
+                candidate = (session_key, response_id)
+                if candidate in _pending_edits:
+                    matched_key = candidate
+
+            if matched_key is None:
+                # FIFO by name (relies on Python 3.7+ dict insertion order)
+                for key in _pending_edits.keys():
+                    if key[0] != session_key:
+                        continue
+                    edits = _pending_edits[key]
+                    if edits and edits[0].get("tool_name") == response_name:
+                        matched_key = key
+                        break
+
+            if matched_key is None:
+                continue
+
+            status, error_message = _classify_gemini_function_response(fr)
+            for edit in _pending_edits.pop(matched_key):
+                resolved.append((edit, status, error_message))
+
+    for edit, status, error_message in resolved:
+        task = asyncio.create_task(
+            _ingest_edit(edit, session_key, status, error_message, provider)
+        )
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
+
 # ── ingest ────────────────────────────────────────────────────────────────────
 
 async def _ingest_edit(
@@ -1115,6 +1475,7 @@ async def _handle_streaming(
     session_key: str = "",
     codex_session_key: str = "",
     is_codex: bool = False,
+    gemini_session_key: str = "",
 ) -> Response:
     # URL base is from UPSTREAM_URL (env-configured, trusted); only path is from request.
     # Scheme and host are pinned by _build_upstream_url — never sourced from user input.
@@ -1167,7 +1528,8 @@ async def _handle_streaming(
             elif upstream.status_code >= 400:
                 logger.debug("skipping capture: upstream status %d", upstream.status_code)
             elif not _capture_overflow:
-                # Try structured capture first (Anthropic tool_use or Codex function_call).
+                # Try structured capture first: Anthropic tool_use, Codex
+                # function_call, or Gemini functionCall.
                 structured_captured = False
                 if provider == "anthropic" and session_key:
                     tool_uses = _extract_anthropic_tool_uses_from_sse(collected)
@@ -1178,6 +1540,11 @@ async def _handle_streaming(
                     function_calls = _extract_codex_function_calls_from_sse(collected)
                     if function_calls:
                         await _store_codex_pending_edits(codex_session_key, function_calls)
+                        structured_captured = True
+                elif provider == "gemini" and gemini_session_key:
+                    function_calls = _extract_gemini_function_calls_from_sse(collected)
+                    if function_calls:
+                        await _store_gemini_pending_edits(gemini_session_key, function_calls)
                         structured_captured = True
 
                 if not structured_captured:
@@ -1212,6 +1579,7 @@ async def _handle_non_streaming(
     session_key: str = "",
     codex_session_key: str = "",
     is_codex: bool = False,
+    gemini_session_key: str = "",
 ) -> Response:
     # URL base is from UPSTREAM_URL (env-configured, trusted); only path is from request.
     # Scheme and host are pinned by _build_upstream_url — never sourced from user input.
@@ -1238,8 +1606,9 @@ async def _handle_non_streaming(
 
     if not skip_capture and upstream.status_code < 400:
         if len(upstream.content) <= MAX_BODY_BYTES:
-            # Prefer structured edit capture over text scraping when available
-            # (Anthropic tool_use or Codex Responses API function_call).
+            # Prefer structured edit capture over text scraping when available:
+            # Anthropic tool_use, Codex Responses API function_call, or Gemini
+            # functionCall.
             structured_captured = False
             if provider == "anthropic" and session_key:
                 tool_uses = _extract_anthropic_tool_uses_from_body(upstream.content)
@@ -1250,6 +1619,11 @@ async def _handle_non_streaming(
                 function_calls = _extract_codex_function_calls_from_body(upstream.content)
                 if function_calls:
                     await _store_codex_pending_edits(codex_session_key, function_calls)
+                    structured_captured = True
+            elif provider == "gemini" and gemini_session_key:
+                function_calls = _extract_gemini_function_calls_from_body(upstream.content)
+                if function_calls:
+                    await _store_gemini_pending_edits(gemini_session_key, function_calls)
                     structured_captured = True
 
             if not structured_captured:
@@ -1348,6 +1722,19 @@ async def proxy_request(request: Request, path: str) -> Response:
         except Exception:
             logger.debug("codex adapter: request body parse failed", exc_info=True)
 
+    # Gemini CLI adapter: Google Gemini API functionCall / functionResponse.
+    gemini_session_key = ""
+    if provider == "gemini" and body:
+        try:
+            req_body_dict = json.loads(body)
+            if isinstance(req_body_dict, dict):
+                gemini_session_key = _gemini_session_key(req_body_dict, dict(request.headers))
+                fn_responses = _extract_gemini_function_responses(body)
+                if fn_responses:
+                    await _resolve_gemini_pending_edits(gemini_session_key, fn_responses, provider)
+        except Exception:
+            logger.debug("gemini adapter: request body parse failed", exc_info=True)
+
     # Extract the best available file path from request metadata.
     try:
         req_body_dict = json.loads(body) if body else None
@@ -1362,6 +1749,7 @@ async def proxy_request(request: Request, path: str) -> Response:
             session_key=anthropic_session_key,
             codex_session_key=codex_session_key,
             is_codex=is_codex,
+            gemini_session_key=gemini_session_key,
         )
     return await _handle_non_streaming(
         request.method, url, headers, body, safe_path,
@@ -1369,6 +1757,7 @@ async def proxy_request(request: Request, path: str) -> Response:
         session_key=anthropic_session_key,
         codex_session_key=codex_session_key,
         is_codex=is_codex,
+        gemini_session_key=gemini_session_key,
     )
 
 
