@@ -257,7 +257,7 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
   <div class="login-card">
     <div class="login-logo"><h1>Lineage<span>Lens</span></h1><p>AI Code Provenance Dashboard</p></div>
     <div id="al-login" role="status" aria-live="polite"></div>
-    <div class="field"><label for="l-ws">Workspace ID</label><input id="l-ws" type="text" placeholder="your-workspace" autocomplete="off"></div>
+    <div class="field"><label for="l-ws">Workspace <span style="text-transform:none;font-weight:normal;color:var(--text2)">(optional)</span></label><input id="l-ws" type="text" placeholder="leave blank if unsure" autocomplete="off"></div>
     <div class="field"><label for="l-user">Username</label><input id="l-user" type="text" placeholder="username" autocomplete="username"></div>
     <div class="field"><label for="l-pass">Password</label><input id="l-pass" type="password" placeholder="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
     <button class="p full" onclick="doLogin()">Sign In</button>

@@ -56,8 +56,25 @@ async def run_setup(
     username = _normalize_username(payload.username)
     _validate_password(payload.password, settings)
 
-    workspace_id = f"ws-{re.sub(r'[^a-z0-9]+', '-', username.lower()).strip('-')}-{uuid.uuid4().hex[:8]}"
     workspace_name = (payload.workspace_name or "My Workspace").strip()[:128] or "My Workspace"
+
+    # Derive the workspace_id from the workspace NAME the user just typed,
+    # not from a random hex suffix. This way "testing" stays "testing" and
+    # the user can type the same thing they remember when logging in later.
+    # Fall back to the username slug if the name slug is empty (e.g. all
+    # punctuation), and to a random short id only as last resort.
+    workspace_id = _slugify_workspace_id(workspace_name) \
+        or _slugify_workspace_id(username) \
+        or f"ws-{uuid.uuid4().hex[:12]}"
+
+    # First-time setup only: there should be no existing workspace, but
+    # guard against a collision if somehow one exists (e.g. partial prior
+    # setup that committed the workspace but not the user).
+    existing = await session.execute(
+        select(Workspace).where(Workspace.id == workspace_id)
+    )
+    if existing.scalar_one_or_none() is not None:
+        workspace_id = f"{workspace_id}-{uuid.uuid4().hex[:6]}"
 
     ws = Workspace(id=workspace_id, name=workspace_name, owner_id=None)
     session.add(ws)
@@ -130,3 +147,17 @@ def _validate_password(password: str, settings: Settings) -> None:
     minimum = max(8, settings.auth_password_min_length)
     if len(password) < minimum:
         raise HTTPException(status_code=400, detail=f"Password must be at least {minimum} characters.")
+
+
+def _slugify_workspace_id(raw: str) -> str:
+    """Turn a user-provided string into a stable, memorable workspace_id.
+
+    'My Workspace' -> 'my-workspace'
+    'testing!!!'   -> 'testing'
+    'admin'        -> 'admin'
+    ''             -> ''
+    """
+    if not raw:
+        return ""
+    slug = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")
+    return slug[:120]
