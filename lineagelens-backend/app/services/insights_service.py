@@ -7,8 +7,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import and_, cast, desc, func, select
-from sqlalchemy import Integer as SAInteger
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ProvenanceRecord, UserAccount
@@ -110,10 +109,7 @@ async def build_member_stats(session: AsyncSession, workspace_id: str) -> list[A
             ProvenanceRecord.user_id,
             func.sum(
                 func.coalesce(
-                    cast(
-                        ProvenanceRecord.provenance_payload["netAddedLines"].astext,
-                        SAInteger,
-                    ),
+                    ProvenanceRecord.provenance_payload["netAddedLines"].as_integer(),
                     0,
                 )
             ).label("total_lines"),

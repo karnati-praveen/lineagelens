@@ -631,14 +631,14 @@ def build_workspace_record_filters(search: SearchRequest, workspace_id: str) -> 
     capture_status = getattr(search, "capture_status", None)
     if capture_status:
         filters.append(
-            ProvenanceRecord.provenance_payload["captureStatus"].astext == capture_status
+            ProvenanceRecord.provenance_payload["captureStatus"].as_string() == capture_status
         )
 
     # agent_tool filter — from contextSnapshot->agentTool
     agent_tool = getattr(search, "agent_tool", None)
     if agent_tool:
         filters.append(
-            ProvenanceRecord.context_snapshot["agentTool"].astext == agent_tool
+            ProvenanceRecord.context_snapshot["agentTool"].as_string() == agent_tool
         )
 
     # has_prompt
