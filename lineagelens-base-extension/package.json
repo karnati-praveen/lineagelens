@@ -1,8 +1,8 @@
 {
   "name": "lineagelens",
   "displayName": "LineageLens",
-  "description": "Lightweight AI code provenance — capture and review every AI-generated insertion locally, no server required.",
-  "version": "1.1.0",
+  "description": "Lightweight AI code provenance \u00e2\u20ac\u201d capture and review every AI-generated insertion locally, no server required.",
+  "version": "1.1.1",
   "publisher": "karnatipraveen",
   "license": "MIT",
   "repository": {
@@ -68,7 +68,7 @@
     "viewsWelcome": [
       {
         "view": "lineagelens.captures",
-        "contents": "No AI captures yet.\n\nLineageLens automatically detects when an AI tool inserts 4+ lines of code into your editor.\n\nJust use Copilot, Cursor, Claude, or any AI coding tool — captures will appear here.\n\n[Learn More](https://github.com/karnati-praveen/lineagelens)"
+        "contents": "No AI captures yet.\n\nLineageLens automatically detects when an AI tool inserts 4+ lines of code into your editor.\n\nJust use Copilot, Cursor, Claude, or any AI coding tool \u00e2\u20ac\u201d captures will appear here.\n\n[Learn More](https://github.com/karnati-praveen/lineagelens)"
       }
     ],
     "menus": {
