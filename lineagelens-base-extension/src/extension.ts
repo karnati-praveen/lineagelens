@@ -23,6 +23,7 @@ export function activate(context: vscode.ExtensionContext): void {
     showCollapseAll: false,
   });
   context.subscriptions.push(treeView);
+  context.subscriptions.push(treeProvider);
 
   // Capture service
   const captureService = new CaptureService(store, statusBar, () => {
@@ -44,7 +45,7 @@ export function activate(context: vscode.ExtensionContext): void {
         'lineagelens.captureDetail',
         `Capture: ${record.fileName}`,
         vscode.ViewColumn.Beside,
-        { enableScripts: false },
+        { enableScripts: true },
       );
       buildDetailPanel(panel, record);
     }),
