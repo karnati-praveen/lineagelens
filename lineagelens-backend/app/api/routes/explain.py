@@ -67,10 +67,18 @@ def _assert_record_workspace(record_data: dict, workspace_id: str) -> None:
     record_workspace = (
         record_data.get("workspaceId") or record_data.get("workspace_id") or record_data.get("workspace")
     )
+    # Reject if the record declares a *different* workspace.
     if isinstance(record_workspace, str) and record_workspace and record_workspace != workspace_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Workspace scope mismatch for provided record.",
+        )
+    # Also reject if the record has no workspace field at all — a crafted payload
+    # without any workspace claim must not bypass scope enforcement.
+    if not record_workspace:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Record payload must include a workspace identifier.",
         )
 
 

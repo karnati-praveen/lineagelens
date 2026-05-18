@@ -70,21 +70,27 @@ async def _execute_report(session_factory, report_id) -> None:
         if r is None or not r.enabled:
             return
 
+        now = datetime.now(UTC)
+        # Always advance next_run_at first so a failure doesn't keep the report
+        # selected as "due" on every subsequent scheduler tick.
+        r.last_run_at = now
+        r.next_run_at = _next_run(r.frequency, now)
+        await session.commit()
+
         body = await _build_report_body(session, r)
 
         if r.recipients:
             await _dispatch_email(r, body)
 
-        now = datetime.now(UTC)
-        r.last_run_at = now
-        r.next_run_at = _next_run(r.frequency, now)
-        await session.commit()
         logger.info("Executed scheduled report %s (type=%s)", r.id, r.report_type)
 
 
 async def _build_report_body(session: AsyncSession, report: ScheduledReport) -> str:
     now = datetime.now(UTC)
-    days = int(report.config.get("date_range_days", 7))
+    try:
+        days = max(1, int(report.config.get("date_range_days", 7)))
+    except (TypeError, ValueError):
+        days = 7
     since = now - timedelta(days=days)
     ws = report.workspace_id
 

@@ -189,18 +189,22 @@ export class BackendIngestClient implements vscode.Disposable {
     }
     const queue = [...this._offlineQueue];
     this._offlineQueue = [];
-    for (const item of queue) {
+    let failedAt = queue.length;
+    for (let i = 0; i < queue.length; i++) {
       try {
         const config = getBackendIngestConfig(resource);
         await this.tryHttpIngestWithRetry(
-          item.payload as Record<string, unknown>,
+          queue[i].payload as Record<string, unknown>,
           resource,
           config
         );
       } catch {
-        this._offlineQueue.unshift(item);
+        failedAt = i;
         break;
       }
+    }
+    if (failedAt < queue.length) {
+      this._offlineQueue.unshift(...queue.slice(failedAt));
     }
     if (this._offlineQueue.length === 0) {
       this.log('Offline queue flushed successfully.');

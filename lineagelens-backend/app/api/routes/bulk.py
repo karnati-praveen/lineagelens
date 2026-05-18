@@ -296,11 +296,23 @@ async def bulk_review(
 
     records = await _fetch_records(session, payload.uuids, auth.workspace_id)
     found_uuids = {str(r.uuid) for r in records}
+
+    from sqlalchemy import exists
     queued = 0
     for record in records:
+        record_uuid_str = str(record.uuid)
+        already_exists = await session.scalar(
+            select(exists().where(
+                ReviewQueue.workspace_id == auth.workspace_id,
+                ReviewQueue.record_uuid == record_uuid_str,
+                ReviewQueue.status == "pending",
+            ))
+        )
+        if already_exists:
+            continue
         item = ReviewQueue(
             workspace_id=auth.workspace_id,
-            record_uuid=str(record.uuid),
+            record_uuid=record_uuid_str,
             assigned_to=payload.assigned_to,
             notes=payload.notes,
             created_by=auth.subject,

@@ -88,7 +88,9 @@ async def run_retention_cleanup(
                 session.delete(record)
             deleted_total += len(records_to_delete)
 
-            # Soft redact records older than redact_after_days
+            # Soft redact records older than redact_after_days but not yet queued
+            # for hard deletion — modifying a pending-delete instance in the same
+            # session raises InvalidRequestError.
             if policy.redact_after_days is not None:
                 cutoff_redact = now - timedelta(days=policy.redact_after_days)
                 records_to_redact_result = await session.execute(
@@ -96,6 +98,7 @@ async def run_retention_cleanup(
                         and_(
                             ProvenanceRecord.workspace_id == ws_id,
                             ProvenanceRecord.timestamp_iso < cutoff_redact,
+                            ProvenanceRecord.timestamp_iso >= cutoff_delete,
                             ProvenanceRecord.is_redacted.is_(False),
                         )
                     )

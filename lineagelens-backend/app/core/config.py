@@ -207,6 +207,12 @@ class Settings(BaseSettings):
         if self.jwt_refresh_secret_key is None or self.jwt_refresh_secret_key.strip() == "":
             raise ValueError("JWT_REFRESH_SECRET_KEY must be set explicitly in production.")
 
+        refresh_secret = self.jwt_refresh_secret_key.strip()
+        if refresh_secret.lower() in DISALLOWED_JWT_SECRETS:
+            raise ValueError("JWT_REFRESH_SECRET_KEY must be set to a strong, non-default value.")
+        if len(refresh_secret) < 32:
+            raise ValueError("JWT_REFRESH_SECRET_KEY must be at least 32 characters long.")
+
         if self.jwt_refresh_secret_key == self.jwt_secret_key:
             raise ValueError(
                 "JWT_REFRESH_SECRET_KEY must differ from JWT_SECRET_KEY in production."

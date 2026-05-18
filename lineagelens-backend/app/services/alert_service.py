@@ -68,7 +68,10 @@ async def _send_to_channel(config, *, event: str, payload: dict) -> None:
 
         recipients = cfg.get("recipients") or cfg.get("email")
         smtp_host = cfg.get("smtp_host", "localhost")
-        smtp_port = int(cfg.get("smtp_port", 587))
+        try:
+            smtp_port = int(cfg.get("smtp_port", 587))
+        except (TypeError, ValueError):
+            smtp_port = 587
         from_addr = cfg.get("from_addr", "lineagelens@noreply.local")
         subject = f"[LineageLens Alert] {event} in workspace {config.workspace_id}"
         loop = asyncio.get_running_loop()
