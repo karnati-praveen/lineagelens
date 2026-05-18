@@ -125,6 +125,10 @@ button:disabled{opacity:.45;cursor:not-allowed}
     <div class="success-icon">🎉</div>
     <div class="success-title">All set!</div>
     <div class="success-msg">Your admin account and workspace have been created. Taking you to the dashboard…</div>
+    <div id="ws-id-card" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:20px;display:none">
+      <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Workspace ID — save this</div>
+      <div id="ws-id-value" style="font-family:'SF Mono',Consolas,monospace;font-size:13px;color:var(--text);word-break:break-all"></div>
+    </div>
     <button class="p" onclick="goToDashboard()" id="dash-btn">Open Dashboard</button>
   </div>
 </div>
@@ -213,8 +217,20 @@ async function runSetup() {
     _tokens = data;
     sessionStorage.setItem('ll_access', data.accessToken);
     sessionStorage.setItem('ll_refresh', data.refreshToken);
+    if (data.workspaceId) {
+      sessionStorage.setItem('ll_workspace', data.workspaceId);
+      // Show the workspace ID prominently on the success screen so the user
+      // can copy it if auto-login fails or they need to log in later.
+      const card = document.getElementById('ws-id-card');
+      const val = document.getElementById('ws-id-value');
+      if (card && val) {
+        val.textContent = data.workspaceId;
+        card.style.display = 'block';
+      }
+    }
     setStep(3);
-    setTimeout(goToDashboard, 2200);
+    // Give the user 5 seconds to read/copy the workspace ID before redirecting.
+    setTimeout(goToDashboard, 5000);
   } catch(e) {
     clearTimeout(timer);
     const wasAbort = e && e.name === 'AbortError';
@@ -228,7 +244,10 @@ async function runSetup() {
 }
 
 function goToDashboard() {
-  window.location.href = '/dashboard';
+  // Pass the workspace id along so the dashboard's login form can pre-fill it
+  // (in case sessionStorage was lost or auto-login fails).
+  const ws = sessionStorage.getItem('ll_workspace') || '';
+  window.location.href = ws ? `/dashboard#ws=${encodeURIComponent(ws)}` : '/dashboard';
 }
 
 // Password strength meter

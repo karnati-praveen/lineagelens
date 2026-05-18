@@ -849,9 +849,12 @@ function setAl(id, msg, type='err') {
 async function doLogin() {
   setAl('al-login','');
   const ws=g('l-ws'), un=g('l-user'), pw=g('l-pass');
-  if (!ws||!un||!pw) { setAl('al-login','All fields required.'); return; }
+  // workspace_id is optional — the backend will infer it from the username
+  // if not provided. Don't reject the form just because it's blank.
+  if (!un||!pw) { setAl('al-login','Username and password required.'); return; }
   try {
-    const d = await req('POST', '/auth/login', {username:un, password:pw, workspaceId:ws}, true);
+    const body = ws ? {username:un, password:pw, workspaceId:ws} : {username:un, password:pw};
+    const d = await req('POST', '/auth/login', body, true);
     if (!d.accessToken || !d.refreshToken || !d.user) { setAl('al-login', 'Invalid server response.'); return; }
     setTok(d.accessToken, d.refreshToken, d.expiresInSeconds);
     _user = d.user;
@@ -2352,15 +2355,29 @@ async function createWorkspace() {
 // ── BOOT ─────────────────────────────────────────────────────────────────────
 // Auto-login when arriving from the /setup wizard
 (async function boot() {
+  // Pre-fill workspace ID from URL hash (#ws=...) if present. Lets the user
+  // log in manually if auto-login fails after setup. URL hash is never sent
+  // to the server, only available to JS.
+  try {
+    const hash = window.location.hash || '';
+    const m = hash.match(/[#&]ws=([^&]+)/);
+    if (m && m[1]) {
+      const wsField = document.getElementById('l-ws');
+      if (wsField && !wsField.value) { wsField.value = decodeURIComponent(m[1]); }
+    }
+  } catch(_) { /* ignore malformed hash */ }
+
   const access = sessionStorage.getItem('ll_access');
   const refresh = sessionStorage.getItem('ll_refresh');
   if (access && refresh) {
-    sessionStorage.removeItem('ll_access');
-    sessionStorage.removeItem('ll_refresh');
     try {
       // Validate the token by fetching /auth/me
       const res = await fetch('/auth/me', {headers: {'Authorization': `Bearer ${access}`}});
       if (res.ok) {
+        // Tokens validated — safe to remove from sessionStorage now (one-time use).
+        sessionStorage.removeItem('ll_access');
+        sessionStorage.removeItem('ll_refresh');
+        sessionStorage.removeItem('ll_workspace');
         const user = await res.json();
         _tok = access; _ref = refresh;
         _user = {username: user.username, role: user.role, workspace_id: user.workspaceId};
@@ -2386,6 +2403,13 @@ async function createWorkspace() {
         startAlertPoll();
         _lastUpdatedTimer = setInterval(updateLastUpdatedText, 30000);
         return;
+      } else if (res.status === 401 || res.status === 403) {
+        // Tokens are definitively invalid — clean up so refreshing the page
+        // doesn't loop on the same bad tokens. Transient errors (5xx, network)
+        // leave the tokens in place so the next page load can retry.
+        sessionStorage.removeItem('ll_access');
+        sessionStorage.removeItem('ll_refresh');
+        sessionStorage.removeItem('ll_workspace');
       }
     } catch(e) { showLogin(); return; }
   }
