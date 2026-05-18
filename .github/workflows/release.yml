@@ -219,6 +219,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
+          # Delete any existing release for this tag (e.g. created manually)
+          # so CI artifacts are always the canonical published build.
+          gh release delete "v${VERSION}" --yes 2>/dev/null || true
           gh release create "v${VERSION}" \
             --title "LineageLens v${VERSION}" \
             --generate-notes \
