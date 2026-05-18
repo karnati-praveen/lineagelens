@@ -172,27 +172,58 @@ async function runSetup() {
   const err = document.getElementById('err-2');
   const btn = document.getElementById('submit-btn');
   err.textContent = '';
+  err.style.color = '';
   btn.disabled = true;
   btn.textContent = 'Creating…';
+
+  // Abort after 30s so a hung request can't lock the UI forever.
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 30000);
 
   try {
     const res = await fetch('/setup', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({username, password, workspace_name}),
+      signal: ac.signal,
     });
-    const data = await res.json();
-    if (!res.ok) { err.textContent = data.detail || 'Setup failed.'; btn.disabled = false; btn.textContent = 'Create workspace →'; return; }
+    clearTimeout(timer);
+
+    // 409 means the FIRST attempt actually succeeded on the server even
+    // though the response never got back to us (slow DB commit / dropped
+    // socket). The user already has an account — send them to sign in.
+    if (res.status === 409) {
+      err.style.color = 'var(--ok)';
+      err.textContent = 'Setup already completed — redirecting to sign in…';
+      btn.textContent = 'Going to dashboard';
+      setTimeout(() => { window.location.href = '/dashboard'; }, 1500);
+      return;
+    }
+
+    let data = null;
+    try { data = await res.json(); } catch(_) { /* non-JSON body */ }
+
+    if (!res.ok) {
+      err.textContent = (data && data.detail) || ('Setup failed (HTTP ' + res.status + ').');
+      btn.disabled = false;
+      btn.textContent = 'Create workspace →';
+      return;
+    }
+
     _tokens = data;
-    // Store tokens for auto-login on dashboard
     sessionStorage.setItem('ll_access', data.accessToken);
     sessionStorage.setItem('ll_refresh', data.refreshToken);
     setStep(3);
     setTimeout(goToDashboard, 2200);
   } catch(e) {
-    err.textContent = 'Network error — is the server running?';
+    clearTimeout(timer);
+    const wasAbort = e && e.name === 'AbortError';
+    err.textContent = wasAbort
+      ? 'Server is taking too long — check the Lite container is running, then refresh.'
+      : ('Network error: ' + ((e && e.message) || 'unknown') + '. The server may have still received it — try refreshing.');
     btn.disabled = false;
     btn.textContent = 'Create workspace →';
+    console.error('LineageLens setup error:', e);
   }
 }
 
