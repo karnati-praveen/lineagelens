@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import log_audit_event
 from app.core.security import AuthContext, ensure_workspace_scope, require_role
 from app.db.models import ResourcePermission
 from app.db.session import get_db_session
@@ -118,5 +119,14 @@ async def revoke_permission(
     perm = result.scalar_one_or_none()
     if perm is None:
         raise HTTPException(status_code=404, detail="Permission not found.")
-    await session.delete(perm)
+    session.delete(perm)
+
+    await log_audit_event(
+        session,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        action="permission.revoke",
+        target_uuid=perm.record_uuid,
+        details={"permission_id": str(permission_id), "user_id": perm.user_id},
+    )
     await session.commit()

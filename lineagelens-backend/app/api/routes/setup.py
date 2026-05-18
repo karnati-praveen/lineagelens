@@ -76,9 +76,6 @@ async def run_setup(
     if existing.scalar_one_or_none() is not None:
         workspace_id = f"{workspace_id}-{uuid.uuid4().hex[:6]}"
 
-    ws = Workspace(id=workspace_id, name=workspace_name, owner_id=None)
-    session.add(ws)
-
     refresh_jti = uuid.uuid4().hex
     user = UserAccount(
         username=username,
@@ -91,15 +88,22 @@ async def run_setup(
     session.add(user)
 
     try:
-        await session.commit()
+        # Flush to populate user.id so we can wire it to the workspace as owner
+        # in a SINGLE atomic commit below. The previous two-commit pattern could
+        # leave the workspace with owner_id=NULL if the second commit failed.
+        await session.flush()
         await session.refresh(user)
+
+        ws = Workspace(id=workspace_id, name=workspace_name, owner_id=str(user.id))
+        session.add(ws)
+
+        await session.commit()
     except IntegrityError:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already exists.")
-
-    # Update workspace owner now that we have the user id
-    ws.owner_id = str(user.id)
-    await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username or workspace already exists.",
+        )
 
     # Mark setup complete in app state so the guard skips DB checks
     request.app.state.setup_complete = True

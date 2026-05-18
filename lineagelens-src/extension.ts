@@ -220,6 +220,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     codeLensProvider,
     fileTimelineView,
+    fileTimelineProvider,
     vscode.languages.registerCodeLensProvider({ scheme: 'file' }, codeLensProvider),
     vscode.languages.registerHoverProvider({ scheme: 'file' }, hoverProvider),
     vscode.window.onDidChangeActiveTextEditor((editor) => {

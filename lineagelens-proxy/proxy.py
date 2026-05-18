@@ -1902,8 +1902,12 @@ async def _connect_to_upstream(
             # MITM: connect to real server with TLS so we can forward decrypted traffic.
             # ssl.create_default_context() is already secure (TLS 1.2+ CA-verified).
             server_ctx = _ssl.create_default_context()
+            # server_hostname is required for hostname verification against the
+            # upstream cert's SANs. Without it, a network attacker who can
+            # redirect DNS or routes can present a valid cert for a different
+            # domain and we'd forward the decrypted stream to them.
             up_reader, up_writer = await asyncio.open_connection(
-                host, port, ssl=server_ctx
+                host, port, ssl=server_ctx, server_hostname=host
             )
         else:
             # Plain TCP tunnel: client-side TLS is established within the tunnel

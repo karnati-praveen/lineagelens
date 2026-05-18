@@ -14,6 +14,7 @@ Environment variables:
 import json
 import logging
 import os
+import re
 import urllib.parse
 from typing import Any
 
@@ -199,7 +200,37 @@ async def _req(method: str, path: str, **kwargs: Any) -> Any:
             raise RuntimeError(friendly)
         raise RuntimeError(f"Backend returned {resp.status_code}: {detail}")
 
-    return resp.json()
+    try:
+        return resp.json()
+    except (ValueError, json.JSONDecodeError) as exc:
+        # Backend returned a 2xx but the body isn't valid JSON (e.g. an HTML
+        # error page from a reverse proxy in front of the backend). Surface a
+        # useful error instead of crashing the whole MCP tool call.
+        body_preview = resp.text[:300] if resp.text else ""
+        raise RuntimeError(
+            f"Backend returned non-JSON response. Preview: {body_preview!r}"
+        ) from exc
+
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def _validate_uuid(raw: str) -> str | None:
+    """Return the normalized UUID if valid, else None.
+
+    The backend validates UUIDs server-side, but checking here gives the
+    MCP caller a useful error before a wasted round-trip and prevents
+    weird strings from being concatenated into log/audit fields.
+    """
+    if not isinstance(raw, str):
+        return None
+    cleaned = raw.strip().lower()
+    if not _UUID_RE.match(cleaned):
+        return None
+    return cleaned
 
 
 def _format_tool_error(exc: Exception) -> str:
@@ -278,11 +309,17 @@ async def get_record(uuid: str) -> str:
         uuid: The UUID of the provenance record (from search_provenance or list_recent)
     """
     try:
-        data = await _req("GET", f"/provenance/{uuid.strip()}")
+        normalized = _validate_uuid(uuid)
+        if normalized is None:
+            return f"Error: invalid UUID format. Expected 8-4-4-4-12 hex (e.g. 1a2b3c4d-...), got {uuid!r}."
+        data = await _req("GET", f"/provenance/{normalized}")
         if isinstance(data, str):
             return data
         record = data.get("record", data)
-        return json.dumps(record, indent=2, default=str)
+        try:
+            return json.dumps(record, indent=2, default=str)
+        except (TypeError, ValueError) as exc:
+            return f"Error: record contains non-serializable data: {exc}"
     except Exception as exc:
         return _format_tool_error(exc)
 
@@ -345,7 +382,10 @@ async def explain_record(uuid: str) -> str:
         uuid: The UUID of the provenance record to explain
     """
     try:
-        data = await _req("POST", "/explain", json={"uuid": uuid.strip()})
+        normalized = _validate_uuid(uuid)
+        if normalized is None:
+            return f"Error: invalid UUID format. Expected 8-4-4-4-12 hex, got {uuid!r}."
+        data = await _req("POST", "/explain", json={"uuid": normalized})
         if isinstance(data, str):
             return data
         explanation = data.get("explanation", "No explanation returned.")

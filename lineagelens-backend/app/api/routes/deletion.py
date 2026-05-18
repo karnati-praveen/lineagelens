@@ -37,7 +37,7 @@ async def delete_provenance_record(
             detail="Provenance record not found for this workspace.",
         )
 
-    await session.delete(record)
+    session.delete(record)
 
     await log_audit_event(
         session,
