@@ -155,15 +155,22 @@ async def _dispatch_email(report: ScheduledReport, body: str) -> None:
     subject = f"LineageLens {report.report_type.replace('_', ' ').title()} Report"
 
     def _send() -> None:
+        # Strip recipients containing CR/LF to prevent email header injection.
+        clean_recipients = [
+            r for r in report.recipients
+            if isinstance(r, str) and "\r" not in r and "\n" not in r
+        ]
+        if not clean_recipients:
+            return
         msg = MIMEText(body, "plain")
         msg["Subject"] = subject
         msg["From"] = from_addr
-        msg["To"] = ", ".join(report.recipients)
+        msg["To"] = ", ".join(clean_recipients)
         with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
             server.starttls()
             if smtp_user and smtp_pass:
                 server.login(smtp_user, smtp_pass)
-            server.sendmail(from_addr, report.recipients, msg.as_string())
+            server.sendmail(from_addr, clean_recipients, msg.as_string())
 
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _send)

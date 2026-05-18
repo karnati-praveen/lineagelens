@@ -118,6 +118,12 @@ def _send_email(
     if not recipients:
         return
 
+    # Strip any recipient that contains CR or LF to prevent email header injection.
+    recipients = [r for r in recipients if isinstance(r, str) and "\r" not in r and "\n" not in r]
+    if not recipients:
+        logger.warning("All recipients were rejected due to invalid characters; skipping email send")
+        return
+
     body = json.dumps(message, indent=2)
     msg = MIMEText(body, "plain")
     msg["Subject"] = subject

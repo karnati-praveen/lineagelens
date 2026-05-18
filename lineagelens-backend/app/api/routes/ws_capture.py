@@ -103,7 +103,7 @@ async def _setup_ws_connection(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> Any | None:
     if settings.rate_limit_enabled:
-        decision = rate_limiter.acheck(
+        decision = await rate_limiter.acheck(
             key=f"ws-connect:{client_ip}",
             limit=settings.rate_limit_ws_max_connections,
             window_seconds=settings.rate_limit_ws_window_seconds,
@@ -238,7 +238,7 @@ async def _run_ws_message_loop(
     message_count = 0
     while True:
         if settings.rate_limit_enabled:
-            message_decision = rate_limiter.acheck(
+            message_decision = await rate_limiter.acheck(
                 key=f"ws-message:{auth.workspace_id}:{auth.subject}",
                 limit=settings.rate_limit_ws_max_messages,
                 window_seconds=settings.rate_limit_ws_window_seconds,

@@ -85,9 +85,13 @@ export class ClaudeCodeHookListener {
       }
 
       const fd = fs.openSync(HOOK_EVENTS_FILE, 'r');
-      const buffer = Buffer.alloc(stat.size - this.fileOffset);
-      fs.readSync(fd, buffer, 0, buffer.length, this.fileOffset);
-      fs.closeSync(fd);
+      let buffer: Buffer;
+      try {
+        buffer = Buffer.alloc(stat.size - this.fileOffset);
+        fs.readSync(fd, buffer, 0, buffer.length, this.fileOffset);
+      } finally {
+        fs.closeSync(fd);
+      }
       this.fileOffset = stat.size;
 
       for (const line of buffer.toString('utf8').split('\n')) {

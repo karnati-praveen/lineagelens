@@ -3,12 +3,13 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import AuthContext, ensure_workspace_scope, require_role
+from app.core.audit import log_audit_event
+from app.core.security import AuthContext, ensure_workspace_scope, get_client_ip, require_role
 from app.db.models import AlertConfig
 from app.db.session import get_db_session
 
@@ -56,6 +57,7 @@ def _ser(a: AlertConfig) -> dict:
 @router.post("/alert-configs", status_code=status.HTTP_201_CREATED)
 async def create_alert_config(
     payload: AlertConfigCreate,
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(require_role("admin"))],
 ) -> dict:
@@ -76,6 +78,15 @@ async def create_alert_config(
         created_by=auth.subject,
     )
     session.add(ac)
+    await session.flush()
+    await log_audit_event(
+        session,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        action="alert_config.create",
+        details={"config_id": str(ac.id), "channel": ac.channel, "name": ac.name},
+        ip_address=get_client_ip(request),
+    )
     await session.commit()
     await session.refresh(ac)
     return _ser(ac)
@@ -97,6 +108,7 @@ async def list_alert_configs(
 async def update_alert_config(
     config_id: str,
     payload: AlertConfigUpdate,
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(require_role("admin"))],
 ) -> dict:
@@ -126,6 +138,14 @@ async def update_alert_config(
     if payload.enabled is not None:
         ac.enabled = payload.enabled
 
+    await log_audit_event(
+        session,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        action="alert_config.update",
+        details={"config_id": config_id},
+        ip_address=get_client_ip(request),
+    )
     await session.commit()
     await session.refresh(ac)
     return _ser(ac)
@@ -134,6 +154,7 @@ async def update_alert_config(
 @router.delete("/alert-configs/{config_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_alert_config(
     config_id: str,
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(require_role("admin"))],
 ) -> None:
@@ -151,5 +172,13 @@ async def delete_alert_config(
     if ac is None:
         raise HTTPException(status_code=404, detail="Alert config not found.")
 
+    await log_audit_event(
+        session,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        action="alert_config.delete",
+        details={"config_id": config_id},
+        ip_address=get_client_ip(request),
+    )
     await session.delete(ac)
     await session.commit()
