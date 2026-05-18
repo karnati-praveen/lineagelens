@@ -391,6 +391,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+@app.exception_handler(Exception)
+async def _global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception(
+        "Unhandled exception on %s %s: %s",
+        request.method,
+        request.url.path,
+        exc,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error. Check the server logs."},
+    )
+
+
 _startup_settings = get_settings()
 _allowed_hosts = _startup_settings.trusted_hosts
 _cors_origins = _startup_settings.cors_origins

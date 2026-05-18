@@ -104,6 +104,13 @@ async def run_setup(
             status_code=status.HTTP_409_CONFLICT,
             detail="Username or workspace already exists.",
         )
+    except Exception as exc:
+        await session.rollback()
+        logger.exception("Setup failed during database commit: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Setup failed: {type(exc).__name__}. Check the server logs for details.",
+        ) from exc
 
     # Mark setup complete in app state so the guard skips DB checks
     request.app.state.setup_complete = True
