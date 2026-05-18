@@ -13,12 +13,14 @@ Setup:
     export OPENAI_BASE_URL=http://localhost:8788       # OpenAI SDK / compatible tools
 """
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import posixpath
 import re
 import tempfile
+import time
 import urllib.parse
 import uuid
 from datetime import UTC, datetime
@@ -54,6 +56,18 @@ _HOST_CERT_CACHE_MAX = 500
 _host_cert_cache: dict[str, tuple[bytes, bytes]] = {}
 
 MAX_RESPONSE_BODY_BYTES = MAX_BODY_BYTES  # reuse same limit for response pre-flight check
+
+# ── Anthropic tool_use / tool_result adapter ───────────────────────────────────
+# Pending edits keyed by (session_key, tool_use_id). Each value is the list of
+# edit records derived from that tool_use (MultiEdit produces multiple).
+_pending_edits: dict[tuple[str, str], list[dict]] = {}
+_pending_edits_lock = asyncio.Lock()
+_PENDING_EDITS_TTL_SECONDS = 3600  # drop unresolved proposals after 1 hour
+_PENDING_EDITS_MAX = 5000  # hard cap to prevent unbounded growth
+
+# Claude Code's file-mutating tools. Other tools (Bash, Read, Glob, Grep, etc.)
+# are logged but produce no edit records.
+_FILE_MUTATING_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
 
 def detect_provider_and_format(url: str, headers: dict) -> str:
@@ -136,6 +150,14 @@ _DROP_REQ  = {"host", "content-length", "transfer-encoding", "connection",
 _DROP_RESP = {"content-encoding", "transfer-encoding", "connection", "content-length"}
 
 app = FastAPI(title="LineageLens Universal Proxy", docs_url=None, redoc_url=None)
+
+
+@app.on_event("startup")
+async def _on_startup() -> None:
+    """Launch background tasks (pending-edit TTL cleanup)."""
+    task = asyncio.create_task(_cleanup_pending_edits_loop())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -305,7 +327,355 @@ def _extract_code(text: str) -> str:
     return text.strip()
 
 
+# ── Anthropic tool_use / tool_result parsers ──────────────────────────────────
+
+def _session_key(body_dict: dict, headers: dict) -> str:
+    """Stable per-session fingerprint from system prompt + auth prefix.
+
+    Two concurrent Claude Code sessions through the same proxy must not alias
+    their tool_use_ids. The system prompt is stable within a session and
+    differs between sessions; the auth prefix disambiguates per-user.
+    """
+    system = body_dict.get("system", "")
+    if isinstance(system, list):
+        system = "".join(
+            (s.get("text", "") if isinstance(s, dict) else str(s)) for s in system
+        )
+    elif not isinstance(system, str):
+        system = str(system)
+
+    auth = ""
+    for header_name in ("authorization", "x-api-key", "Authorization", "X-Api-Key"):
+        v = headers.get(header_name)
+        if v:
+            auth = v[:24]
+            break
+
+    raw = f"{system[:4096]}|{auth}"
+    return hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+
+def _parse_anthropic_tool_use_to_edits(tool_use: dict) -> list[dict]:
+    """Convert one Anthropic tool_use block into one or more edit records.
+
+    Returns [] for non-file-mutating tools (Bash, Read, Glob, etc.).
+    MultiEdit produces multiple records sharing the same tool_use_id.
+    """
+    name = tool_use.get("name", "")
+    if name not in _FILE_MUTATING_TOOLS:
+        return []
+
+    tool_use_id = tool_use.get("id", "")
+    inp = tool_use.get("input") or {}
+    if not isinstance(inp, dict):
+        return []
+
+    if name == "Edit":
+        return [{
+            "tool_use_id": tool_use_id,
+            "tool_name": "Edit",
+            "edit_index": 0,
+            "file_path": inp.get("file_path", ""),
+            "old_string": inp.get("old_string", ""),
+            "new_string": inp.get("new_string", ""),
+        }]
+
+    if name == "Write":
+        return [{
+            "tool_use_id": tool_use_id,
+            "tool_name": "Write",
+            "edit_index": 0,
+            "file_path": inp.get("file_path", ""),
+            "old_string": "",
+            "new_string": inp.get("content", ""),
+        }]
+
+    if name == "MultiEdit":
+        edits = inp.get("edits") or []
+        if not isinstance(edits, list):
+            return []
+        records = []
+        for idx, edit in enumerate(edits):
+            if not isinstance(edit, dict):
+                continue
+            records.append({
+                "tool_use_id": tool_use_id,
+                "tool_name": "MultiEdit",
+                "edit_index": idx,
+                "file_path": inp.get("file_path", ""),
+                "old_string": edit.get("old_string", ""),
+                "new_string": edit.get("new_string", ""),
+            })
+        return records
+
+    if name == "NotebookEdit":
+        return [{
+            "tool_use_id": tool_use_id,
+            "tool_name": "NotebookEdit",
+            "edit_index": 0,
+            "file_path": inp.get("notebook_path", "") or inp.get("file_path", ""),
+            "old_string": "",
+            "new_string": inp.get("new_source", ""),
+        }]
+
+    return []
+
+
+def _extract_anthropic_tool_uses_from_body(body: bytes) -> list[dict]:
+    """Extract all tool_use content blocks from a non-streaming Anthropic response."""
+    try:
+        data = json.loads(body)
+    except Exception:
+        return []
+    content = data.get("content")
+    if not isinstance(content, list):
+        return []
+    return [
+        block for block in content
+        if isinstance(block, dict) and block.get("type") == "tool_use"
+    ]
+
+
+def _extract_anthropic_tool_uses_from_sse(chunks: list[bytes]) -> list[dict]:
+    """Assemble tool_use blocks from a stream of Anthropic SSE chunks.
+
+    Anthropic streams tool_use as:
+      content_block_start  (carries id + name, empty input)
+      content_block_delta  (input_json_delta with partial_json fragments)
+      content_block_stop
+    """
+    tool_uses_by_index: dict[int, dict] = {}
+    input_json_by_index: dict[int, list[str]] = {}
+
+    raw = "".join(c.decode("utf-8", errors="replace") for c in chunks)
+    for line in raw.split("\n"):
+        line = line.rstrip("\r")
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if payload in ("", "[DONE]"):
+            continue
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+
+        etype = event.get("type", "")
+
+        if etype == "content_block_start":
+            idx = event.get("index", 0)
+            block = event.get("content_block") or {}
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                tool_uses_by_index[idx] = {
+                    "type": "tool_use",
+                    "id": block.get("id", ""),
+                    "name": block.get("name", ""),
+                    "input": {},
+                }
+                input_json_by_index[idx] = []
+
+        elif etype == "content_block_delta":
+            idx = event.get("index", 0)
+            if idx not in input_json_by_index:
+                continue
+            delta = event.get("delta") or {}
+            if isinstance(delta, dict) and delta.get("type") == "input_json_delta":
+                partial = delta.get("partial_json", "")
+                if partial:
+                    input_json_by_index[idx].append(partial)
+
+        elif etype == "content_block_stop":
+            idx = event.get("index", 0)
+            if idx in tool_uses_by_index:
+                assembled = "".join(input_json_by_index.get(idx, []))
+                if assembled:
+                    try:
+                        tool_uses_by_index[idx]["input"] = json.loads(assembled)
+                    except json.JSONDecodeError:
+                        logger.debug("failed to parse tool_use input JSON: %r", assembled[:200])
+
+    return list(tool_uses_by_index.values())
+
+
+def _extract_anthropic_tool_results(body: bytes) -> list[dict]:
+    """Extract all tool_result blocks from an Anthropic request body's messages."""
+    try:
+        data = json.loads(body)
+    except Exception:
+        return []
+    messages = data.get("messages")
+    if not isinstance(messages, list):
+        return []
+
+    results = []
+    for msg in messages:
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    results.append(block)
+    return results
+
+
+def _classify_tool_result(result: dict) -> tuple[str, str]:
+    """Map a tool_result to (status, error_message).
+
+    Anthropic's is_error=true covers both harness errors and explicit user
+    rejection (e.g. "user denied permission"). We use a simple heuristic on
+    the content string to distinguish rejected from errored.
+    """
+    is_error = bool(result.get("is_error", False))
+    content = result.get("content", "")
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        content_str = "\n".join(parts)
+    else:
+        content_str = str(content) if content else ""
+
+    if not is_error:
+        return ("applied", "")
+
+    lower = content_str.lower()
+    if "reject" in lower or "deni" in lower or "permission" in lower or "user " in lower:
+        return ("rejected", content_str[:500])
+    return ("errored", content_str[:500])
+
+
+async def _store_pending_edits(session_key: str, tool_uses: list[dict]) -> None:
+    """Convert tool_uses to edit records and stash them as pending."""
+    now = time.time()
+    async with _pending_edits_lock:
+        # Hard cap: if we're at the limit, drop the oldest entries.
+        if len(_pending_edits) >= _PENDING_EDITS_MAX:
+            to_drop = len(_pending_edits) - _PENDING_EDITS_MAX + len(tool_uses) + 1
+            for key in list(_pending_edits.keys())[:to_drop]:
+                _pending_edits.pop(key, None)
+
+        for tool_use in tool_uses:
+            edits = _parse_anthropic_tool_use_to_edits(tool_use)
+            if not edits:
+                continue
+            tool_use_id = tool_use.get("id", "")
+            if not tool_use_id:
+                continue
+            for edit in edits:
+                edit["_proposed_at"] = now
+            _pending_edits[(session_key, tool_use_id)] = edits
+            logger.debug(
+                "pending edit: tool=%s file=%s id=%s",
+                edits[0].get("tool_name"), edits[0].get("file_path"), tool_use_id,
+            )
+
+
+async def _resolve_pending_edits(
+    session_key: str,
+    tool_results: list[dict],
+    provider: str,
+) -> None:
+    """Match tool_results to pending edits; flush resolved edits to backend."""
+    resolved: list[tuple[dict, str, str]] = []
+    async with _pending_edits_lock:
+        for result in tool_results:
+            tool_use_id = result.get("tool_use_id", "")
+            if not tool_use_id:
+                continue
+            key = (session_key, tool_use_id)
+            if key not in _pending_edits:
+                continue
+            status, error_message = _classify_tool_result(result)
+            for edit in _pending_edits.pop(key):
+                resolved.append((edit, status, error_message))
+
+    for edit, status, error_message in resolved:
+        task = asyncio.create_task(
+            _ingest_edit(edit, session_key, status, error_message, provider)
+        )
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
+
+async def _cleanup_pending_edits_loop() -> None:
+    """Background task: evict pending edits older than the TTL."""
+    while True:
+        try:
+            await asyncio.sleep(300)
+            now = time.time()
+            async with _pending_edits_lock:
+                expired = [
+                    key for key, edits in _pending_edits.items()
+                    if edits and (now - edits[0].get("_proposed_at", now)) > _PENDING_EDITS_TTL_SECONDS
+                ]
+                for key in expired:
+                    _pending_edits.pop(key, None)
+            if expired:
+                logger.info("evicted %d expired pending edits", len(expired))
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("pending edits cleanup loop error")
+
+
 # ── ingest ────────────────────────────────────────────────────────────────────
+
+async def _ingest_edit(
+    edit: dict,
+    session_key: str,
+    status: str,
+    error_message: str,
+    provider: str,
+) -> None:
+    """Send a resolved structured edit to the backend."""
+    if not INGEST_TOKEN:
+        logger.debug("BACKEND_INGEST_TOKEN not configured — skipping edit capture")
+        return
+
+    new_string = _redact(edit.get("new_string", "") or "")
+    old_string = _redact(edit.get("old_string", "") or "")
+    if not new_string and not old_string:
+        return
+
+    payload = {
+        "id": str(uuid.uuid4()),
+        "timestampIso": datetime.now(tz=UTC).isoformat(),
+        "filePath": edit.get("file_path", "proxy-capture") or "proxy-capture",
+        "insertedText": new_string,
+        "workspaceId": WORKSPACE_ID,
+        "provenance": {
+            "source": "lineagelens-universal-proxy",
+            "provider": provider,
+            "toolUseId": edit.get("tool_use_id", ""),
+            "toolName": edit.get("tool_name", ""),
+            "editIndex": edit.get("edit_index", 0),
+            "oldString": old_string,
+            "status": status,
+            "errorMessage": error_message,
+            "sessionKey": session_key,
+        },
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{BACKEND_URL}/ingest",
+                json=payload,
+                headers={"Authorization": f"Bearer {INGEST_TOKEN}"},
+            )
+            resp.raise_for_status()
+        logger.info(
+            "edit captured: tool=%s file=%s status=%s",
+            edit.get("tool_name"), edit.get("file_path"), status,
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed to deliver edit to backend: %s %s",
+            type(exc).__name__, exc,
+        )
+
 
 async def _ingest(
     text: str,
@@ -377,6 +747,7 @@ async def _handle_streaming(
     safe_path: str,
     provider: str = "unknown",
     file_path: str = "proxy-capture",
+    session_key: str = "",
 ) -> Response:
     # URL base is from UPSTREAM_URL (env-configured, trusted); only path is from request.
     # Scheme and host are pinned by _build_upstream_url — never sourced from user input.
@@ -429,15 +800,24 @@ async def _handle_streaming(
             elif upstream.status_code >= 400:
                 logger.debug("skipping capture: upstream status %d", upstream.status_code)
             elif not _capture_overflow:
-                text = _text_from_sse(collected, provider)
-                _task = asyncio.create_task(
-                    _ingest(
-                        text, f"/{safe_path}", provider=provider, file_path=file_path,
-                        upstream_method=method, upstream_status=upstream.status_code,
+                # Anthropic adapter: try structured tool_use capture first.
+                structured_captured = False
+                if provider == "anthropic" and session_key:
+                    tool_uses = _extract_anthropic_tool_uses_from_sse(collected)
+                    if tool_uses:
+                        await _store_pending_edits(session_key, tool_uses)
+                        structured_captured = True
+
+                if not structured_captured:
+                    text = _text_from_sse(collected, provider)
+                    _task = asyncio.create_task(
+                        _ingest(
+                            text, f"/{safe_path}", provider=provider, file_path=file_path,
+                            upstream_method=method, upstream_status=upstream.status_code,
+                        )
                     )
-                )
-                _background_tasks.add(_task)
-                _task.add_done_callback(_background_tasks.discard)
+                    _background_tasks.add(_task)
+                    _task.add_done_callback(_background_tasks.discard)
             else:
                 logger.warning("streaming response too large, skipping capture")
 
@@ -457,6 +837,7 @@ async def _handle_non_streaming(
     safe_path: str,
     provider: str = "unknown",
     file_path: str = "proxy-capture",
+    session_key: str = "",
 ) -> Response:
     # URL base is from UPSTREAM_URL (env-configured, trusted); only path is from request.
     # Scheme and host are pinned by _build_upstream_url — never sourced from user input.
@@ -483,16 +864,27 @@ async def _handle_non_streaming(
 
     if not skip_capture and upstream.status_code < 400:
         if len(upstream.content) <= MAX_BODY_BYTES:
-            text = _text_from_body(upstream.content, provider=provider)
-            if text:
-                _task = asyncio.create_task(
-                    _ingest(
-                        text, f"/{safe_path}", provider=provider, file_path=file_path,
-                        upstream_method=method, upstream_status=upstream.status_code,
+            # Anthropic adapter: prefer structured tool_use capture over text scraping.
+            # If the response contains any tool_use blocks, store them as pending edits
+            # (resolved later when the client returns tool_result), and skip text capture.
+            structured_captured = False
+            if provider == "anthropic" and session_key:
+                tool_uses = _extract_anthropic_tool_uses_from_body(upstream.content)
+                if tool_uses:
+                    await _store_pending_edits(session_key, tool_uses)
+                    structured_captured = True
+
+            if not structured_captured:
+                text = _text_from_body(upstream.content, provider=provider)
+                if text:
+                    _task = asyncio.create_task(
+                        _ingest(
+                            text, f"/{safe_path}", provider=provider, file_path=file_path,
+                            upstream_method=method, upstream_status=upstream.status_code,
+                        )
                     )
-                )
-                _background_tasks.add(_task)
-                _task.add_done_callback(_background_tasks.discard)
+                    _background_tasks.add(_task)
+                    _task.add_done_callback(_background_tasks.discard)
         else:
             logger.warning(
                 "upstream response too large (%d bytes), skipping capture",
@@ -549,6 +941,20 @@ async def proxy_request(request: Request, path: str) -> Response:
     # Detect provider from the resolved upstream URL and request headers.
     provider = detect_provider_and_format(url, dict(request.headers))
 
+    # Anthropic adapter: resolve pending edits from any tool_result blocks the
+    # client is sending back from a previous turn.
+    anthropic_session_key = ""
+    if provider == "anthropic" and body:
+        try:
+            req_body_dict = json.loads(body)
+            if isinstance(req_body_dict, dict):
+                anthropic_session_key = _session_key(req_body_dict, dict(request.headers))
+                tool_results = _extract_anthropic_tool_results(body)
+                if tool_results:
+                    await _resolve_pending_edits(anthropic_session_key, tool_results, provider)
+        except Exception:
+            logger.debug("anthropic adapter: request body parse failed", exc_info=True)
+
     # Extract the best available file path from request metadata.
     try:
         req_body_dict = json.loads(body) if body else None
@@ -560,10 +966,12 @@ async def proxy_request(request: Request, path: str) -> Response:
         return await _handle_streaming(
             request.method, url, headers, body, safe_path,
             provider=provider, file_path=file_path,
+            session_key=anthropic_session_key,
         )
     return await _handle_non_streaming(
         request.method, url, headers, body, safe_path,
         provider=provider, file_path=file_path,
+        session_key=anthropic_session_key,
     )
 
 
