@@ -23,7 +23,7 @@ class ProvenanceRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     uuid: Mapped[uuid_pkg.UUID] = mapped_column(
-        Uuid(native_uuid=False),
+        Uuid(),
         unique=True,
         index=True,
         nullable=False,
@@ -31,7 +31,7 @@ class ProvenanceRecord(Base):
     workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
 
-    request_uuid: Mapped[uuid_pkg.UUID | None] = mapped_column(Uuid(native_uuid=False), nullable=True)
+    request_uuid: Mapped[uuid_pkg.UUID | None] = mapped_column(Uuid(), nullable=True)
 
     file_path: Mapped[str] = mapped_column(Text, nullable=False)
     file_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -84,7 +84,7 @@ class UserAccount(Base):
     __tablename__ = "user_accounts"
 
     id: Mapped[uuid_pkg.UUID] = mapped_column(
-        Uuid(native_uuid=False),
+        Uuid(),
         primary_key=True,
         default=uuid_pkg.uuid4,
         nullable=False,
@@ -123,7 +123,7 @@ class AuditLog(Base):
 class SavedQuery(Base):
     __tablename__ = "saved_queries"
 
-    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(native_uuid=False), primary_key=True, default=uuid_pkg.uuid4)
+    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid_pkg.uuid4)
     workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     user_id: Mapped[str] = mapped_column(String(128), nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -159,7 +159,7 @@ class ProvenanceTag(Base):
 class ProvenanceComment(Base):
     __tablename__ = "provenance_comments"
 
-    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(native_uuid=False), primary_key=True, default=uuid_pkg.uuid4)
+    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid_pkg.uuid4)
     workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     record_uuid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     user_id: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -195,7 +195,7 @@ class RetentionPolicy(Base):
 class Policy(Base):
     __tablename__ = "policies"
 
-    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(native_uuid=False), primary_key=True, default=uuid_pkg.uuid4)
+    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid_pkg.uuid4)
     workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -227,7 +227,7 @@ class ResourcePermission(Base):
 class ReviewQueue(Base):
     __tablename__ = "review_queue"
 
-    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(native_uuid=False), primary_key=True, default=uuid_pkg.uuid4)
+    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid_pkg.uuid4)
     workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     record_uuid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     assigned_to: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -242,7 +242,7 @@ class ReviewQueue(Base):
 class AlertConfig(Base):
     __tablename__ = "alert_configs"
 
-    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(native_uuid=False), primary_key=True, default=uuid_pkg.uuid4)
+    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid_pkg.uuid4)
     workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     channel: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -257,7 +257,7 @@ class AlertConfig(Base):
 class ApiKey(Base):
     __tablename__ = "api_keys"
 
-    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(native_uuid=False), primary_key=True, default=uuid_pkg.uuid4)
+    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid_pkg.uuid4)
     workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     user_id: Mapped[str] = mapped_column(String(128), nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -273,7 +273,7 @@ class ApiKey(Base):
 class GithubIntegration(Base):
     __tablename__ = "github_integrations"
 
-    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(native_uuid=False), primary_key=True, default=uuid_pkg.uuid4)
+    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid_pkg.uuid4)
     workspace_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
     token: Mapped[str | None] = mapped_column(String(512), nullable=True)
     webhook_secret: Mapped[str | None] = mapped_column(String(256), nullable=True)
@@ -287,7 +287,7 @@ class GithubIntegration(Base):
 class ScheduledReport(Base):
     __tablename__ = "scheduled_reports"
 
-    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(native_uuid=False), primary_key=True, default=uuid_pkg.uuid4)
+    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid_pkg.uuid4)
     workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     report_type: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -305,7 +305,7 @@ class ScheduledReport(Base):
 class OidcProvider(Base):
     __tablename__ = "oidc_providers"
 
-    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(native_uuid=False), primary_key=True, default=uuid_pkg.uuid4)
+    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid_pkg.uuid4)
     workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     issuer: Mapped[str] = mapped_column(String(512), nullable=False)
