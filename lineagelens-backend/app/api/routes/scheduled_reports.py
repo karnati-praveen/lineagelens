@@ -19,6 +19,8 @@ from app.db.session import get_db_session, get_session_factory
 router = APIRouter(prefix="/scheduled-reports", tags=["scheduled-reports"])
 logger = logging.getLogger(__name__)
 
+_REPORT_NOT_FOUND = "Scheduled report not found."
+
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -143,7 +145,7 @@ async def update_scheduled_report(
     try:
         parsed_id = uuid_pkg.UUID(report_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Scheduled report not found.")
+        raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
 
     result = await session.execute(
         select(ScheduledReport).where(
@@ -153,7 +155,7 @@ async def update_scheduled_report(
     )
     r = result.scalar_one_or_none()
     if r is None:
-        raise HTTPException(status_code=404, detail="Scheduled report not found.")
+        raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
 
     if payload.name is not None:
         r.name = payload.name
@@ -189,7 +191,7 @@ async def delete_scheduled_report(
     try:
         parsed_id = uuid_pkg.UUID(report_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Scheduled report not found.")
+        raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
 
     result = await session.execute(
         select(ScheduledReport).where(
@@ -199,7 +201,7 @@ async def delete_scheduled_report(
     )
     r = result.scalar_one_or_none()
     if r is None:
-        raise HTTPException(status_code=404, detail="Scheduled report not found.")
+        raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
 
     await log_audit_event(
         session,
@@ -224,7 +226,7 @@ async def run_scheduled_report_now(
     try:
         parsed_id = uuid_pkg.UUID(report_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Scheduled report not found.")
+        raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
 
     result = await session.execute(
         select(ScheduledReport).where(
@@ -234,7 +236,7 @@ async def run_scheduled_report_now(
     )
     r = result.scalar_one_or_none()
     if r is None:
-        raise HTTPException(status_code=404, detail="Scheduled report not found.")
+        raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
 
     session_factory = get_session_factory(request)
 

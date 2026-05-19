@@ -164,6 +164,9 @@ async def ingest_provenance_event(
         )
 
         await session.refresh(record)
+        from app.services.insights_service import invalidate_insights_cache
+
+        invalidate_insights_cache(record.workspace_id)
 
         if app_state is not None and record.risk_score is not None:
             try:

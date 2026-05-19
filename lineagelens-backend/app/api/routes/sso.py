@@ -36,6 +36,8 @@ from app.services.oidc_service import (
 router = APIRouter(prefix="/auth/sso", tags=["sso"])
 logger = logging.getLogger(__name__)
 
+_PROVIDER_NOT_FOUND = "Provider not found."
+
 
 class OidcProviderCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
@@ -122,7 +124,7 @@ async def delete_oidc_provider(
     try:
         parsed_id = uuid_pkg.UUID(provider_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Provider not found.")
+        raise HTTPException(status_code=404, detail=_PROVIDER_NOT_FOUND)
 
     result = await session.execute(
         select(OidcProvider).where(
@@ -132,7 +134,7 @@ async def delete_oidc_provider(
     )
     p = result.scalar_one_or_none()
     if p is None:
-        raise HTTPException(status_code=404, detail="Provider not found.")
+        raise HTTPException(status_code=404, detail=_PROVIDER_NOT_FOUND)
 
     await log_audit_event(
         session,
@@ -155,7 +157,7 @@ async def sso_login(
     try:
         parsed_id = uuid_pkg.UUID(provider_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Provider not found.")
+        raise HTTPException(status_code=404, detail=_PROVIDER_NOT_FOUND)
 
     result = await session.execute(
         select(OidcProvider).where(

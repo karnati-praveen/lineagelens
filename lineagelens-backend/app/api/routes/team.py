@@ -23,6 +23,8 @@ VALID_ROLES = {"admin", "member", "viewer", "reviewer", "auditor", "data-enginee
 
 router = APIRouter(prefix="/team", tags=["team"])
 
+_MEMBER_NOT_FOUND = "Member not found."
+
 
 class UpdateRoleRequest(BaseModel):
     role: str = Field(..., min_length=1, max_length=32)
@@ -141,7 +143,7 @@ async def get_team_member(
     """Get a single team member by ID (admin only)."""
     parsed = _parse_uuid(user_id)
     if parsed is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_MEMBER_NOT_FOUND)
 
     result = await session.execute(
         select(UserAccount).where(
@@ -151,7 +153,7 @@ async def get_team_member(
     )
     user = result.scalar_one_or_none()
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_MEMBER_NOT_FOUND)
 
     return {
         "id": str(user.id),
@@ -179,7 +181,7 @@ async def update_member_role(
 
     parsed = _parse_uuid(user_id)
     if parsed is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_MEMBER_NOT_FOUND)
 
     result = await session.execute(
         select(UserAccount).where(
@@ -189,7 +191,7 @@ async def update_member_role(
     )
     user = result.scalar_one_or_none()
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_MEMBER_NOT_FOUND)
 
     if str(user.id) == auth.subject and payload.role != "admin":
         raise HTTPException(
@@ -229,7 +231,7 @@ async def deactivate_member(
     """Deactivate a team member (admin only). Revokes all active tokens."""
     parsed = _parse_uuid(user_id)
     if parsed is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_MEMBER_NOT_FOUND)
 
     if user_id == auth.subject:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot deactivate your own account.")
@@ -242,7 +244,7 @@ async def deactivate_member(
     )
     user = result.scalar_one_or_none()
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_MEMBER_NOT_FOUND)
 
     user.is_active = False
     user.token_version = (user.token_version or 0) + 1  # revoke all tokens

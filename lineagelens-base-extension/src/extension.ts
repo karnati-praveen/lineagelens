@@ -113,4 +113,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 }
 
-export function deactivate(): void {}
+export function deactivate(): void {
+  // VS Code extension API requires this export. All cleanup happens via
+  // context.subscriptions disposables registered in activate().
+}

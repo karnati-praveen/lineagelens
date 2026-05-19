@@ -64,6 +64,10 @@ _host_cert_cache: dict[str, tuple[bytes, bytes]] = {}
 
 MAX_RESPONSE_BODY_BYTES = MAX_BODY_BYTES  # reuse same limit for response pre-flight check
 
+# SSE protocol markers — shared across all provider parsers.
+_SSE_DATA_PREFIX = "data:"
+_SSE_DONE_MARKER = "[DONE]"
+
 # ── Anthropic tool_use / tool_result adapter ───────────────────────────────────
 # Pending edits keyed by (session_key, tool_use_id). Each value is the list of
 # edit records derived from that tool_use (MultiEdit produces multiple).
@@ -295,10 +299,10 @@ def _text_from_chunk(chunk: bytes, provider: str = "unknown") -> list[str]:
         return []
     parts: list[str] = []
     for line in raw.splitlines():
-        if not line.startswith("data:"):
+        if not line.startswith(_SSE_DATA_PREFIX):
             continue
         payload = line[5:].strip()
-        if payload in ("", "[DONE]"):
+        if payload in ("", _SSE_DONE_MARKER):
             continue
         delta = _delta_from_sse_payload(payload, provider)
         if delta:
@@ -321,19 +325,19 @@ def _text_from_sse(chunks: list[bytes], provider: str = "unknown") -> str:
         remainder = lines[-1]
         for line in lines[:-1]:
             line = line.rstrip("\r")
-            if not line.startswith("data:"):
+            if not line.startswith(_SSE_DATA_PREFIX):
                 continue
             payload = line[5:].strip()
-            if payload in ("", "[DONE]"):
+            if payload in ("", _SSE_DONE_MARKER):
                 continue
             delta = _delta_from_sse_payload(payload, provider)
             if delta:
                 parts.append(delta)
     if remainder:
         line = remainder.rstrip("\r")
-        if line.startswith("data:"):
+        if line.startswith(_SSE_DATA_PREFIX):
             payload = line[5:].strip()
-            if payload not in ("", "[DONE]"):
+            if payload not in ("", _SSE_DONE_MARKER):
                 delta = _delta_from_sse_payload(payload, provider)
                 if delta:
                     parts.append(delta)
@@ -472,10 +476,10 @@ def _extract_anthropic_tool_uses_from_sse(chunks: list[bytes]) -> list[dict]:
     raw = "".join(c.decode("utf-8", errors="replace") for c in chunks)
     for line in raw.split("\n"):
         line = line.rstrip("\r")
-        if not line.startswith("data:"):
+        if not line.startswith(_SSE_DATA_PREFIX):
             continue
         payload = line[5:].strip()
-        if payload in ("", "[DONE]"):
+        if payload in ("", _SSE_DONE_MARKER):
             continue
         try:
             event = json.loads(payload)
@@ -906,10 +910,10 @@ def _extract_codex_function_calls_from_sse(chunks: list[bytes]) -> list[dict]:
     raw = "".join(c.decode("utf-8", errors="replace") for c in chunks)
     for line in raw.split("\n"):
         line = line.rstrip("\r")
-        if not line.startswith("data:"):
+        if not line.startswith(_SSE_DATA_PREFIX):
             continue
         payload = line[5:].strip()
-        if payload in ("", "[DONE]"):
+        if payload in ("", _SSE_DONE_MARKER):
             continue
         try:
             event = json.loads(payload)
@@ -1263,10 +1267,10 @@ def _extract_gemini_function_calls_from_sse(chunks: list[bytes]) -> list[dict]:
     raw = "".join(c.decode("utf-8", errors="replace") for c in chunks)
     for line in raw.split("\n"):
         line = line.rstrip("\r")
-        if not line.startswith("data:"):
+        if not line.startswith(_SSE_DATA_PREFIX):
             continue
         payload = line[5:].strip()
-        if payload in ("", "[DONE]"):
+        if payload in ("", _SSE_DONE_MARKER):
             continue
         try:
             chunk = json.loads(payload)

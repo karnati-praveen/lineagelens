@@ -28,6 +28,12 @@ _INSIGHTS_CACHE_TTL = 300  # 5 minutes
 _insights_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
+def invalidate_insights_cache(workspace_id: str) -> None:
+    prefix = f"{workspace_id}:"
+    for key in [k for k in _insights_cache if k.startswith(prefix)]:
+        del _insights_cache[key]
+
+
 def _insights_cache_key(workspace_id: str, search: SearchRequest) -> str:
     search_hash = hashlib.md5(
         search.model_dump_json(exclude_none=True).encode(), usedforsecurity=False

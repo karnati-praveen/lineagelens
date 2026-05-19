@@ -71,6 +71,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_APP_TITLE = "AI Provenance Backend"
 DEFAULT_APP_VERSION = "0.1.0"
 
+_HTTP_RESPONSE_START = "http.response.start"
+
 
 def get_runtime_settings(request: Request) -> Settings:
     current_settings = getattr(request.app.state, "settings", None)
@@ -98,7 +100,7 @@ class SecurityHeadersMiddleware:
             return
 
         async def send_with_headers(message):
-            if message["type"] == "http.response.start":
+            if message["type"] == _HTTP_RESPONSE_START:
                 headers = message.setdefault("headers", [])
 
                 def _add_header(name: bytes, value: bytes) -> None:
@@ -183,7 +185,7 @@ class SetupGuardMiddleware:
         # Setup not complete — redirect to /setup
         redirect_body = b""
         await send({
-            "type": "http.response.start",
+            "type": _HTTP_RESPONSE_START,
             "status": 302,
             "headers": [(b"location", b"/setup"), (b"content-length", b"0")],
         })
@@ -280,7 +282,7 @@ class StreamingBodyLimitMiddleware:
             rejection_sent = True
             await send(
                 {
-                    "type": "http.response.start",
+                    "type": _HTTP_RESPONSE_START,
                     "status": 413,
                     "headers": [(b"content-type", b"application/json")],
                 }

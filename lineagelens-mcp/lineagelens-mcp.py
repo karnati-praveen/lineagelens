@@ -101,8 +101,9 @@ async def _get_valid_token(client: httpx.AsyncClient) -> str | None:
         token = await _login(client)
         _cached_token = token
         return token
-    except Exception as exc:
-        logger.error("MCP: Failed to authenticate with backend: %s", exc)
+    except Exception:
+        # exception() includes the traceback automatically.
+        logger.exception("MCP: Failed to authenticate with backend")
         return None
 
 
@@ -176,7 +177,7 @@ async def _req(method: str, path: str, **kwargs: Any) -> Any:
                 token = await _login(client)
                 _cached_token = token
             except Exception as exc:
-                logger.error("MCP: Token refresh failed: %s", exc)
+                logger.exception("MCP: Token refresh failed")
                 raise RuntimeError(_AUTH_ERROR_MSG) from exc
 
             headers["Authorization"] = f"Bearer {token}"

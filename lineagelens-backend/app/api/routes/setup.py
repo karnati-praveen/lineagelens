@@ -21,11 +21,13 @@ _STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "static")
 
 router = APIRouter(tags=["setup"])
 
+_DEFAULT_WORKSPACE_NAME = "My Workspace"
+
 
 class SetupRequest(BaseModel):
     username: str
     password: str
-    workspace_name: str = "My Workspace"
+    workspace_name: str = _DEFAULT_WORKSPACE_NAME
 
 
 async def is_setup_complete(session: AsyncSession) -> bool:
@@ -56,7 +58,7 @@ async def run_setup(
     username = _normalize_username(payload.username)
     _validate_password(payload.password, settings)
 
-    workspace_name = (payload.workspace_name or "My Workspace").strip()[:128] or "My Workspace"
+    workspace_name = (payload.workspace_name or _DEFAULT_WORKSPACE_NAME).strip()[:128] or _DEFAULT_WORKSPACE_NAME
 
     # Derive the workspace_id from the workspace NAME the user just typed,
     # not from a random hex suffix. This way "testing" stays "testing" and

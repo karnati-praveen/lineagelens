@@ -28,6 +28,8 @@ _CANONICAL: dict[str, str] = {
     "llama-3.1-8b-instruct": "Llama 3.1 8B",
 }
 
+_MISTRAL_AI = "Mistral AI"
+
 _PROVIDER_PREFIXES: list[tuple[str, str]] = [
     ("claude", "Anthropic"),
     ("gpt", "OpenAI"),
@@ -35,9 +37,9 @@ _PROVIDER_PREFIXES: list[tuple[str, str]] = [
     ("o3", "OpenAI"),
     ("gemini", "Google"),
     ("llama", "Meta"),
-    ("mistral", "Mistral AI"),
-    ("mixtral", "Mistral AI"),
-    ("codestral", "Mistral AI"),
+    ("mistral", _MISTRAL_AI),
+    ("mixtral", _MISTRAL_AI),
+    ("codestral", _MISTRAL_AI),
     ("deepseek", "DeepSeek"),
     ("qwen", "Alibaba"),
 ]

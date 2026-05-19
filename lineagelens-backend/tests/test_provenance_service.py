@@ -11,6 +11,7 @@ from app.core.security import AuthContext
 from app.schemas.provenance import SearchRequest
 from app.services.ingest_normalizer import NormalizedIngestPayload, normalize_ingest_payload
 from app.services.provenance_service import ingest_provenance_event, search_provenance_records
+import app.services.insights_service as insights_service
 import app.services.provenance_service as provenance_service
 
 
@@ -44,6 +45,7 @@ class FakeSession:
     def __init__(self, records: list[object]):
         self.records = records
         self.statements: list[object] = []
+        self.added_records: list[object] = []
         self.add_calls = 0
         self.flush_calls = 0
         self.commit_calls = 0
@@ -56,6 +58,7 @@ class FakeSession:
 
     def add(self, record: object) -> None:
         self.add_calls += 1
+        self.added_records.append(record)
 
     async def flush(self) -> None:
         self.flush_calls += 1
@@ -186,3 +189,46 @@ def test_ingest_provenance_event_is_idempotent_for_duplicate_request_uuid(monkey
     assert session.flush_calls == 0
     assert session.commit_calls == 0
     assert session.refresh_calls == 0
+
+
+def test_ingest_provenance_event_stores_null_user_for_non_uuid_subject(monkeypatch) -> None:
+    workspace_id = 'workspace-alpha'
+    payload = normalize_ingest_payload(
+        {
+            'id': 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+            'timestampIso': '2026-04-18T10:00:00.000Z',
+            'workspaceId': workspace_id,
+            'filePath': 'src/example.ts',
+            'fileUri': 'file:///workspace/src/example.ts',
+            'insertedText': 'const answer = 42;',
+            'prompt': {
+                'fullMessages': [{'role': 'user', 'content': 'Add an answer constant.'}],
+                'rawModelResponse': 'const answer = 42;'
+            }
+        },
+        workspace_id=workspace_id,
+    )
+    session = FakeSession([])
+
+    async def fake_generate_embedding(*args: object, **kwargs: object) -> list[float]:
+        return [0.0] * 256
+
+    monkeypatch.setattr(provenance_service, 'generate_embedding', fake_generate_embedding)
+    invalidated_workspaces: list[str] = []
+    monkeypatch.setattr(insights_service, 'invalidate_insights_cache', invalidated_workspaces.append)
+
+    outcome = asyncio.run(
+        ingest_provenance_event(
+            session=cast(AsyncSession, session),
+            payload=payload,
+            auth=AuthContext(subject='proxy', workspace_id=workspace_id, scopes=set(), token_type='api_key', token_payload={}),
+            settings=build_settings(VECTOR_SEARCH_ENABLED=False, BACKEND_MODE='basic'),
+            neo4j_service=None,
+        )
+    )
+
+    assert outcome.record.user_id is None
+    assert session.added_records == [outcome.record]
+    assert session.flush_calls == 1
+    assert session.commit_calls == 1
+    assert invalidated_workspaces == [workspace_id]

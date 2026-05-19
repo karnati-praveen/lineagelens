@@ -29,7 +29,7 @@ class ProvenanceRecord(Base):
         nullable=False,
     )
     workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
-    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    user_id: Mapped[uuid_pkg.UUID | None] = mapped_column(Uuid(), nullable=True, index=True)
 
     request_uuid: Mapped[uuid_pkg.UUID | None] = mapped_column(Uuid(), nullable=True)
 

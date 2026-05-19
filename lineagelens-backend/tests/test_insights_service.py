@@ -1,4 +1,9 @@
-from app.services.insights_service import build_insights_dashboard, get_agent_context
+from app.services.insights_service import (
+    _insights_cache,
+    build_insights_dashboard,
+    get_agent_context,
+    invalidate_insights_cache,
+)
 
 
 def test_build_insights_dashboard_summarizes_records_and_sessions() -> None:
@@ -182,3 +187,17 @@ def test_backend_legacy_agent_context_infers_operation_type() -> None:
 
     assert agent_context is not None
     assert agent_context["operationType"] == "refactor"
+
+
+def test_invalidate_insights_cache_only_removes_workspace_entries() -> None:
+    _insights_cache.clear()
+    _insights_cache["admin:empty-dashboard"] = (1.0, {"summary": {"totalRecords": 0}})
+    _insights_cache["admin:filtered-dashboard"] = (1.0, {"summary": {"totalRecords": 0}})
+    _insights_cache["other:empty-dashboard"] = (1.0, {"summary": {"totalRecords": 3}})
+
+    invalidate_insights_cache("admin")
+
+    assert "admin:empty-dashboard" not in _insights_cache
+    assert "admin:filtered-dashboard" not in _insights_cache
+    assert "other:empty-dashboard" in _insights_cache
+    _insights_cache.clear()

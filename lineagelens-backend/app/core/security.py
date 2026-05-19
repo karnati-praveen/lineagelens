@@ -23,6 +23,7 @@ from app.db.session import get_db_session
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 _PBKDF2_SCHEME = "pbkdf2_sha256"
 _PBKDF2_ITERATIONS = 390000
+_INVALID_TOKEN_SUBJECT = "Invalid token subject."
 
 
 def get_client_ip(request: Request, settings: Settings | None = None) -> str | None:
@@ -100,7 +101,7 @@ async def get_current_auth_context(
     try:
         user_id = PyUUID(auth.subject)
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_INVALID_TOKEN_SUBJECT)
 
     result = await session.execute(
         select(UserAccount.token_version, UserAccount.is_active).where(UserAccount.id == user_id)
@@ -402,7 +403,7 @@ def require_role(*roles: str):
         try:
             user_id = PyUUID(auth.subject)
         except ValueError:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_INVALID_TOKEN_SUBJECT)
 
         from sqlalchemy import select as sa_select
         from app.db.models import UserAccount  # local import to avoid circular dependency
@@ -436,7 +437,7 @@ async def require_admin(
     try:
         user_id = PyUUID(auth.subject)
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_INVALID_TOKEN_SUBJECT)
 
     from sqlalchemy import select as sa_select
     from app.db.models import UserAccount  # local import to avoid circular dependency

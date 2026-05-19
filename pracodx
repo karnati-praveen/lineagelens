@@ -1,0 +1,649 @@
+# LineageLens Practical Launch Plan v2
+
+**Last updated:** 2026-05-18 — after v1.0.0 ship, marketplace publish, Tier 1 proxy adapters.
+
+Purpose: make LineageLens look real, understandable, and testable for buyers, users, Product Hunt visitors, and GitHub readers. Written for a solo founder (one person, no team, no ad budget).
+
+---
+
+## 0. Reality Check (What's Actually True Today)
+
+Before any marketing decision, the honest state:
+
+**What works:**
+- Base VS Code extension published on VS Code Marketplace (`karnatipraveen.lineagelens`, v1.1.0) and Open VSX (under review). Installs in VS Code, Cursor, Windsurf, VSCodium.
+- v1.0.0 GitHub release shipped with 4 downloadable artifacts: Base VSIX, Lite zip, Plus zip, Max zip.
+- Proxy now does **structured edit capture** (not text scraping) for Tier 1 agents: Claude Code (Anthropic tool_use), Codex CLI (OpenAI Responses API + apply_patch DSL), Gemini CLI (Google functionCall). 74 unit tests passing.
+- Backend dashboard, MCP server, governance routes all functional.
+- 23 backend tests passing; CI green on every push.
+
+**What doesn't work yet:**
+- No real-world end-to-end test of Lite quickstart with a fresh user.
+- No demo video, no screenshots in README, no real user feedback.
+- Cursor/Windsurf agent-mode capture is editor-only (no prompt/model — those tools route through proprietary backends).
+- No Aider, Cline, Roo Code adapters yet (Tier 2 not started).
+- Zero installs from cold inbound — installs to date are author/test installs only.
+
+**What is overpromise risk:**
+- "Captures every AI tool" — false. Captures Tier 1 cleanly, Cursor/Windsurf editor-only, Copilot CLI not at all.
+- "Self-hosted with full audit trail" — true, but team features (RBAC, SSO) need polish before enterprise demos.
+- "Risk scoring per insertion" — heuristic only; not a replacement for SAST.
+
+The core promise that holds up under scrutiny:
+
+> **A self-hosted provenance layer for AI-generated code. For agentic CLI tools (Claude Code, Codex CLI, Gemini CLI), it captures the prompt, model, tool, file, old/new content, and accept/reject status. For VS Code editor tools, it captures the file changes locally. All data stays on your hardware.**
+
+Do not claim more than that.
+
+---
+
+## 1. Naming and Mode Consistency
+
+**Status:** Mostly resolved. User decided to handle CLI/README mismatch in the demo video rather than touching code.
+
+**What's left:**
+- Update `lineagelens-docs/shipping-modes.md` to say four modes (Base/Lite/Plus/Max).
+- Ensure the README's "Quick Start" section uses `bash lineagelens-scripts/quickstart-lite.sh` (which works) not `lineagelens start --mode lite` (which doesn't).
+- One canonical mode table reused everywhere.
+
+Skip the code-level CLI fix until a user actually asks for the `start --mode` flow.
+
+---
+
+## 2. Demo Paths (Three, By User Type)
+
+The original "one demo for everyone" plan was wrong. Different users care about different things. Three demos:
+
+### Demo A — Solo Developer (60 seconds)
+
+The fastest possible path to "I see my AI code captured."
+
+```
+1. Install LineageLens VS Code extension from marketplace.
+2. Open any project, open the LineageLens sidebar.
+3. Use Copilot / Cursor / Claude to generate 4+ lines of code.
+4. Watch the capture appear in the sidebar.
+```
+
+No backend, no Docker, no terminal. Works in Cursor and Windsurf too because they're VS Code forks.
+
+**Marketing angle:** "free, local, no setup, see your AI code history."
+
+### Demo B — CLI Developer (5 minutes)
+
+The proxy + structured capture demo for Claude Code / Codex CLI / Aider users.
+
+```
+1. bash lineagelens-scripts/quickstart-lite.sh
+2. Open http://localhost:8787/setup, create admin.
+3. export ANTHROPIC_BASE_URL=http://localhost:8788
+4. claude "build a JWT auth middleware in Express"
+5. Open http://localhost:8787/dashboard
+6. See: prompt, model, file path, old/new content, applied status.
+```
+
+This is the demo that actually proves the structured-capture story. With Tier 1 adapters, the dashboard shows `Edit toolu_xxx applied src/auth.ts` not "captured 47 chars."
+
+**Marketing angle:** "Git blame for Claude Code. Every edit, every prompt, every model."
+
+### Demo C — Engineering Manager (3 minutes)
+
+The governance/dashboard demo. No live AI tool — pre-populated data.
+
+```
+1. Open the dashboard screenshot/recording.
+2. Show: model usage chart, risk score distribution, file hotspots, developer activity table.
+3. Show MCP query: "Which Claude-generated code touched auth/ this month?"
+4. Show: CSV export, GitHub Actions PR risk check.
+```
+
+**Marketing angle:** "Answer 'who used AI for what, and where is the risk' without buying a SaaS."
+
+---
+
+## 3. Asset Checklist
+
+Required before any wider promotion:
+
+| Asset | Status | Priority |
+|---|---|---|
+| Base extension marketplace listing screenshot | Done | — |
+| `01-extension-sidebar.png` — VS Code sidebar with 3+ captures | Missing | P0 |
+| `02-extension-detail-panel.png` — webview detail showing inserted code | Missing | P0 |
+| `03-proxy-config.png` — terminal showing `ANTHROPIC_BASE_URL=...` | Missing | P0 |
+| `04-claude-code-capture.png` — actual Claude Code session being captured | Missing | P0 |
+| `05-dashboard-overview.png` — governance dashboard with real data | Missing | P0 |
+| `06-mcp-query.png` — MCP client asking about provenance | Missing | P1 |
+| `07-risk-check-pr.png` — GitHub Actions PR comment | Missing | P1 |
+| 30-second GIF for README above-the-fold | Missing | P0 |
+| 90-second YouTube demo | Missing | P1 |
+| Architecture diagram (one image) | Missing | P2 |
+
+The README image placeholder at `lineagelens-docs/assets/dashboard-demo.png` currently 404s on the marketplace — either remove the image reference or generate it before any further promotion.
+
+---
+
+## 4. 90-Second Demo Video Script (Revised)
+
+Title: **LineageLens — Self-hosted provenance for AI-generated code**
+
+```
+0:00–0:08  Problem
+"I've used Claude Code, Cursor, and Copilot to write half my code this week.
+Git blame says I wrote it. There's no record of what I prompted, which
+model wrote it, or whether it touched auth code."
+
+0:08–0:20  Solution
+"LineageLens is a self-hosted provenance layer. Free Base extension for
+VS Code/Cursor. Lite/Plus/Max backends for teams. Universal proxy that
+captures structured edits from Claude Code, Codex CLI, Gemini CLI."
+
+0:20–0:45  Live capture (the proof)
+[Screen: terminal] bash quickstart-lite.sh
+[Screen: browser] http://localhost:8787/setup → create admin
+[Screen: terminal] export ANTHROPIC_BASE_URL=http://localhost:8788
+[Screen: terminal] claude "write a JWT verify middleware"
+[Claude writes the file, accepts changes]
+[Screen: browser] http://localhost:8787/dashboard
+[Show: a record with prompt, model=claude-sonnet-4.6, tool=Edit,
+       file=src/auth.ts, status=applied]
+
+0:45–1:05  Why it matters
+"This isn't text scraped from API responses. The proxy reads Claude Code's
+tool_use blocks and Codex's apply_patch DSL directly. You see exactly
+what was proposed and whether it was applied — ground truth attribution."
+
+1:05–1:25  Operating modes
+"Base is free, marketplace install, captures locally. Lite is one Docker
+command. Plus adds Postgres + team dashboard + MCP. Max adds Neo4j lineage
+graph for compliance-heavy teams."
+
+1:25–1:30  CTA
+"Open source. Self-hosted. Free Base extension on the marketplace.
+GitHub link in description. Feedback welcome."
+```
+
+Rules:
+- No slide deck. Terminal + dashboard only.
+- One real generated code example, not stock footage.
+- Capture native VS Code dark theme — looks more credible.
+- Under 90 seconds. Hard cap.
+
+---
+
+## 5. Product Hunt Maker Comment (Revised for v1.0.0)
+
+```
+Hey Product Hunt,
+
+I'm a solo developer who built LineageLens because every week I'm using
+Claude Code, Cursor, and Copilot to write production code, and the
+provenance disappears the moment I accept the suggestion. Git blame
+says I wrote it.
+
+LineageLens is a self-hosted provenance layer:
+
+- Free VS Code extension (works in Cursor and Windsurf too) captures every
+  4+ line AI insertion locally. No backend needed.
+- Universal proxy captures structured edits from Claude Code (tool_use),
+  Codex CLI (apply_patch DSL), and Gemini CLI (functionCall). Not text-
+  grep — the proxy parses each provider's native tool format.
+- Self-hosted backend (SQLite for solo, Postgres for teams, Neo4j for
+  compliance-heavy teams) gives you a dashboard, search, risk scoring,
+  CSV export, and an MCP server so your AI assistant can query its own
+  provenance history.
+
+What's honest about it:
+- Cursor agent mode and Copilot CLI route through proprietary backends,
+  so capture is editor-only (no prompt/model). Tools that respect
+  ANTHROPIC_BASE_URL / OPENAI_BASE_URL are fully captured.
+- Risk scoring is heuristic, not a SAST replacement.
+- It is one person's project. Expect rough edges.
+
+Looking for feedback on:
+1. Is the 5-minute Lite demo clear?
+2. Which provenance fields actually matter in your review/audit workflow?
+3. Self-hosted vs. SaaS — what would your team trust?
+4. Which CLI agents should I support next? (Aider and Cline are next.)
+
+Free Base extension: search "LineageLens" in VS Code marketplace.
+Full bundles: github.com/karnati-praveen/lineagelens/releases
+
+Thanks for testing it.
+```
+
+Do not ask for upvotes. Ask for testing.
+
+---
+
+## 6. Outreach Messages (Revised)
+
+### Individual developer (DM-able)
+
+```
+Hey — I'm a solo dev who built a free VS Code extension called
+LineageLens. It captures every AI insertion in your editor (Copilot,
+Cursor, Claude, etc.) and shows them in a sidebar. Works in VS Code,
+Cursor, and Windsurf.
+
+Free, local, no backend. Just curious if it solves a real annoyance:
+"I have no record of what AI generated that function I shipped last
+week." Install link: marketplace.visualstudio.com/items?itemName=karnatipraveen.lineagelens
+
+If you try it, brutal feedback welcome.
+```
+
+### Engineering manager (LinkedIn / cold email)
+
+```
+Hi {name},
+
+I built LineageLens as an open-source self-hosted answer to: "which code
+in our repo was AI-generated, by which model, with what prompt, and where
+is the risk?"
+
+It runs in your environment (SQLite single container or Postgres for
+teams), captures from Claude Code / Codex CLI / Gemini CLI via a proxy,
+and gives an MCP server so engineering teams can query AI provenance
+from their own tools.
+
+Not pitching anything — open source, self-hosted, MIT licensed. I'm
+gathering feedback from engineering leaders before deciding whether to
+sell a managed version.
+
+Would you spend 10 minutes on a 90-second demo and tell me whether this
+solves a real audit / compliance problem for your team? Demo: {video link}
+```
+
+### r/programming / r/devops / r/cybersecurity Show HN-style
+
+```
+Show HN: LineageLens — self-hosted provenance layer for AI-generated code
+
+I shipped v1.0.0 of LineageLens this week. It captures structured edits
+from Claude Code (tool_use), Codex CLI (apply_patch), and Gemini CLI
+(functionCall) through a local proxy, plus has a free VS Code extension
+for editor-level capture in Cursor / Windsurf / VS Code.
+
+Why I built it: I've been writing half my code with AI tools and there's
+no audit trail. Git blame says I wrote it. Wanted to know — for me, for
+teammates, for security — what was actually AI-generated.
+
+Honest scope:
+- Captures Tier 1 agentic CLI tools properly (prompt + model + edit + status).
+- Cursor agent mode and Copilot CLI are proprietary-backend, so editor
+  capture only (no prompt/model).
+- Risk score is heuristic, not SAST.
+- Solo project, one person, expect rough edges.
+
+What's interesting technically: the proxy doesn't text-grep API responses.
+It walks Anthropic tool_use blocks, OpenAI Responses output[], and Gemini
+candidates[] parts, then correlates each call_id/tool_use_id with the next
+turn's tool_result to mark applied/rejected/errored.
+
+GitHub: github.com/karnati-praveen/lineagelens
+VS Code: marketplace.visualstudio.com/items?itemName=karnatipraveen.lineagelens
+
+Feedback / bug reports / "this is dumb because X" all welcome.
+```
+
+---
+
+## 7. README Top Section (Update for v1.0.0)
+
+Current README is generic. Replace top section with:
+
+```markdown
+# LineageLens
+
+**Self-hosted provenance layer for AI-generated code.**
+
+LineageLens captures what AI tools wrote, what you prompted, which model
+produced it, and whether you accepted it — across VS Code editors and
+agentic CLI tools, in your own infrastructure.
+
+![demo](lineagelens-docs/assets/demo.gif)  ← generate this asset first
+
+## Install (Base, free)
+
+VS Code Marketplace: search **LineageLens** or run
+
+```bash
+code --install-extension karnatipraveen.lineagelens
+```
+
+Also works in Cursor, Windsurf, and any VS Code fork via the same VSIX.
+
+## Run the full backend (Lite, one command)
+
+```bash
+git clone https://github.com/karnati-praveen/lineagelens
+cd lineagelens
+bash lineagelens-scripts/quickstart-lite.sh
+```
+
+Then route any AI CLI tool through the proxy:
+
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:8788
+export OPENAI_BASE_URL=http://localhost:8788
+```
+
+Open `http://localhost:8787/dashboard` and see your captures.
+
+## Supported tools
+
+| Tool | Capture | Quality |
+|---|---|---|
+| Claude Code (terminal) | Proxy + tool_use parsing | Full (prompt + model + edit + applied/rejected) |
+| Codex CLI | Proxy + apply_patch DSL | Full |
+| Gemini CLI | Proxy + functionCall parsing | Full |
+| Goose | Proxy (via Anthropic / OpenAI) | Full |
+| VS Code Copilot | Free extension | Editor-only (no prompt/model) |
+| Cursor (agent mode) | Free extension | Editor-only (proprietary backend) |
+| Windsurf | Free extension | Editor-only (proprietary backend) |
+| GitHub Copilot CLI | Not supported | Proprietary, no public route |
+| Amazon Q | Not supported | Proprietary, no public route |
+
+## Operating modes
+
+| Mode | Best for | Storage | Setup |
+|---|---|---|---|
+| Base | Solo developers | Local JSON | `code --install-extension karnatipraveen.lineagelens` |
+| Lite | Small teams (≤10) | SQLite single container | `bash quickstart-lite.sh` |
+| Plus | Teams (10–100) | PostgreSQL + pgvector | `bash quickstart-plus.sh` |
+| Max | Compliance-heavy teams | PostgreSQL + Neo4j graph lineage | `bash quickstart-max.sh` |
+
+## What it isn't
+
+- Not a SAST or vulnerability scanner. Risk score is heuristic.
+- Not a Copilot CLI replacement. We capture, we don't generate.
+- Not enterprise-ready in v1.0.0. RBAC and SSO exist but haven't been
+  validated against compliance frameworks like SOC 2.
+```
+
+---
+
+## 8. Buyer / Proof Checklist (Honest)
+
+What's done vs. what's missing for serious credibility:
+
+| Item | Status |
+|---|---|
+| GitHub repo public | ✓ |
+| MIT license | ✓ |
+| Release artifacts (VSIX + 3 bundles) | ✓ |
+| CI passing on every push | ✓ |
+| Test suite (74 proxy + 23 backend) | ✓ |
+| VS Code Marketplace listing | ✓ |
+| Open VSX listing | Under review |
+| README with one screenshot above fold | **Missing** |
+| Demo video | **Missing** |
+| Lite quickstart verified on fresh Docker | **Untested** |
+| At least 5 real external users | **0** |
+| 2 quotable testimonials | **0** |
+| Architecture diagram | **Missing** |
+| Security advisory / disclosure policy | **Missing (just add SECURITY.md)** |
+| CHANGELOG.md in repo root | **Missing (exists only in extension)** |
+
+The critical missing items are not features — they're proof. Screenshots and a fresh-Docker test of Lite are the next priority, in that order.
+
+---
+
+## 9. Positioning Against the 2026 Competitive Landscape
+
+The market changed since the original plan. Update:
+
+**New entrants since 2025:**
+- GitHub Copilot Audit Log (rolled out Q4 2025) — captures Copilot prompts/completions for org admins. Hosted on GitHub. Closed source.
+- Cursor team dashboard — usage stats, no edit-level provenance.
+- Continue.dev — open source, captures via its own extension, file-watcher style.
+- Anthropic MCP introspection — Claude Code's PostToolUse hook is a built-in alternative to our proxy capture for that one agent.
+- Snyk AI Code Detection — security-first framing, scans for AI patterns in committed code.
+
+**LineageLens' honest position vs. each:**
+
+| Competitor | Their strength | LineageLens edge |
+|---|---|---|
+| GitHub Copilot Audit Log | Free for Copilot Business users, integrated | Only captures Copilot. We capture Claude Code, Codex, Gemini, Goose, Aider (soon), and Copilot-in-editor. |
+| Cursor team dashboard | Built-in, no setup | No prompts, no other tools, hosted by Cursor. We are self-hosted, multi-tool, edit-level. |
+| Continue.dev | Open source, good extension | We have proxy + backend + MCP + tiered deployment. Continue is extension-only. |
+| Anthropic MCP / Claude hooks | Native, simplest possible setup | We capture Codex and Gemini too. They only capture Claude. |
+| Snyk AI Code Detection | Security buyer relationship | We're provenance-first (audit trail), they're security-first (scan). Complementary, not competing. |
+
+**The defensible position in one sentence:**
+
+> LineageLens is the only **self-hosted, multi-agent, structured-edit-level** provenance backend with **MCP query access** and **four deployment tiers** from solo-laptop to graph-backed compliance.
+
+Don't say "first." Say "only self-hosted X with Y."
+
+---
+
+## 10. Pricing Model (To Decide)
+
+Currently the entire project is free / MIT. Three realistic monetization paths:
+
+### Path A — Pure Open Source (no revenue)
+
+Treat as a portfolio project. Build resume / job pipeline / consulting leads.
+- Pro: zero infrastructure to maintain, no payment processing, no support SLAs.
+- Con: no income from the work.
+- Best for: if the goal is to land a senior dev role at a company doing AI tooling.
+
+### Path B — Open Core (paid Plus/Max features)
+
+Keep Base + Lite free. Charge for Plus/Max features.
+- Free: Base extension, Lite single-container.
+- Paid Plus ($30/dev/mo or $300/team-of-10/mo): Postgres, team dashboard, MCP, GitHub Actions integrations.
+- Paid Max ($1000/year self-host + support): Neo4j lineage, compliance export, priority support.
+- Pro: real revenue if 10+ teams adopt.
+- Con: requires Stripe, billing, support email, license keys.
+- Best for: if willing to commit 6 months past launch.
+
+### Path C — Hosted SaaS (cloud Plus/Max)
+
+LineageLens.cloud with a hosted Plus/Max tier.
+- $15/dev/mo cloud Plus, $50/dev/mo cloud Max.
+- Pro: subscription revenue, easier onboarding (no Docker required).
+- Con: full SaaS ops burden — uptime, security, customer data, single-tenant infra.
+- Best for: not yet. Wait until 10+ teams use the self-hosted version first.
+
+**Recommendation for the next 90 days:** Path A (pure free). Build user base. Decide on B vs. C only after seeing real adoption signals (not vanity metrics — actual usage logs from people who aren't you).
+
+---
+
+## 11. Distribution Channel Strategy (Ranked by Solo-Founder ROI)
+
+What actually works for a solo founder shipping a dev tool in 2026:
+
+### Tier 1 — Do these first (high ROI, days of effort)
+
+1. **VS Code Marketplace listing optimization.**
+   Done at v1.1.0. Watch install counts weekly. A README with screenshots will roughly 3x install conversion on the marketplace.
+
+2. **Show HN on Hacker News.**
+   "Show HN: LineageLens — self-hosted provenance for AI-generated code"
+   Post Tuesday 10am EST. Reply to every comment for the first 4 hours. HN is still the best dev-tool launch channel for technical-credibility products. One good HN post can drive 1000+ GitHub stars in 24 hours.
+
+3. **r/programming (300k subs) and r/devops (450k subs).**
+   Same content, different audience. r/cybersecurity less effective for this product.
+
+4. **YouTube demo (90 seconds).**
+   Upload, tag with "Claude Code", "Cursor", "AI code provenance". Even a small channel ranks for niche dev-tool keywords. The video also embeds in the README and Product Hunt page.
+
+### Tier 2 — Do after Tier 1 (medium ROI)
+
+5. **dev.to / Hashnode technical post.**
+   Title: "Building a proxy that parses Anthropic tool_use, OpenAI apply_patch, and Gemini functionCall — what each provider's tool format actually looks like."
+   This is genuinely interesting technical content. Will draw the right audience (devs working on agent tooling).
+
+6. **Open VSX listing**
+   Done (under review). Listing in Open VSX makes the extension discoverable in Cursor/Windsurf/VSCodium without separate work.
+
+7. **Product Hunt.**
+   Lower priority than HN. PH's audience is more "founders/PMs" than "developers." But the maker comment template above is ready when you launch there.
+
+### Tier 3 — Probably skip (low ROI for solo)
+
+8. **Twitter / X.**
+   Without an existing dev audience (1k+ followers), tweets disappear. Skip unless you already have followers.
+
+9. **LinkedIn for B2B outreach.**
+   Engineering managers don't buy from cold LinkedIn DMs in 2026. They might respond to one specifically-written email after seeing your HN post.
+
+10. **Paid ads (Google, Meta, LinkedIn).**
+    No. Don't burn money. The audience is too niche.
+
+11. **Conference talks.**
+    Without traction, no conference will accept your talk. Apply after 1k+ stars.
+
+---
+
+## 12. Content Strategy (What to Write About)
+
+Three blog posts / threads that double as marketing and credibility:
+
+### Post 1: "What Claude Code's tool_use protocol actually looks like"
+
+Technical deep-dive on the Anthropic native tool-calling format. Walk through the SSE stream, the `content_block_start` / `input_json_delta` / `content_block_stop` events, the `tool_use_id` correlation pattern. End with: "this is how LineageLens captures Claude Code edits with 95%+ fidelity."
+
+Audience: developers building AI tooling. Will share well in technical circles. Drives "this person knows what they're doing" credibility.
+
+### Post 2: "Why git blame doesn't work for AI-generated code"
+
+Less technical, more positioning. The 700-word argument for why provenance matters. Reference: Copilot Audit Log launch, Cursor's team dashboard, the broader trend. End with: "here's what a self-hosted answer looks like."
+
+Audience: engineering managers, security/compliance leads.
+
+### Post 3: "Four AI coding tools, four different tool-call formats, one proxy"
+
+Comparison of Anthropic tool_use vs. OpenAI Responses output[] vs. Gemini candidates[] vs. Aider's git-marker approach. Show the format differences side-by-side. End with: "LineageLens parses all four."
+
+Audience: devs evaluating AI tools. Establishes "they know the whole landscape."
+
+Schedule: one post per month. Cross-post to dev.to, Hashnode, personal blog if any.
+
+---
+
+## 13. 30 / 60 / 90 Day Plan
+
+### Next 30 days (now → mid-June 2026)
+
+**Goal:** ship credible launch assets.
+
+- [ ] Generate the 7 required screenshots.
+- [ ] Record 90-second demo video, upload to YouTube.
+- [ ] Update README top section with image and four-mode table.
+- [ ] Add 30-second GIF above the fold in README.
+- [ ] Test Lite quickstart on a fresh Docker host (or fresh Windows install) end-to-end. Document any friction.
+- [ ] Add `SECURITY.md` and root `CHANGELOG.md`.
+- [ ] Get 2 real users to install Base extension and give feedback (DM developer friends).
+
+### Next 60 days (mid-June → mid-July)
+
+**Goal:** the launch.
+
+- [ ] Show HN post (Tuesday morning EST).
+- [ ] r/programming + r/devops posts within 48 hours of HN.
+- [ ] Reply to every comment for 4+ hours after each post.
+- [ ] Open VSX should be approved by now.
+- [ ] Watch GitHub stars, marketplace installs, dashboard analytics if any.
+- [ ] Collect quotes from anyone who liked it.
+- [ ] First technical blog post (Anthropic tool_use deep-dive).
+
+### Next 90 days (mid-July → mid-August)
+
+**Goal:** decide on monetization.
+
+- [ ] Tier 2 adapters: Aider (L4 git-marker watcher), Cline (L2 XML parser).
+- [ ] Second technical post.
+- [ ] If installs > 500 and at least 3 teams running Plus/Max self-hosted: explore Path B pricing.
+- [ ] If installs < 100: keep as Path A portfolio project. Still valuable.
+- [ ] Apply to AI dev tool meetups / conferences for fall season.
+
+---
+
+## 14. Metrics That Matter (And Ones That Don't)
+
+**Real signal:**
+- Weekly installs from VS Code Marketplace (not cumulative).
+- GitHub stars trend (3-day moving average).
+- Issues opened by people who are not the author.
+- Discussion threads in repo Discussions.
+- Cold inbound emails / DMs asking about the project.
+
+**Vanity metrics — ignore:**
+- Total GitHub stars (look at the slope, not the total).
+- HN frontpage position (only useful for the 24 hours it lasts).
+- Twitter likes.
+- "Time on page" or any analytics on the landing page.
+
+**Real failure signals (act on these):**
+- People install the Base extension, open the sidebar, see "no captures yet" forever, uninstall within 5 minutes. Reason: capture heuristic is too strict. Drop minInsertionLines to 2 and watch retention.
+- Lite quickstart fails on Windows / WSL2 because of Docker compose v1 vs v2 differences. Fix the script.
+- People email asking how to make it work with Cursor's agent mode. Answer: it can't, here's why. Don't promise what you can't deliver.
+
+---
+
+## 15. What NOT To Do (Important)
+
+- **Do not** add a payment page before 100 paying-curious users have asked about pricing.
+- **Do not** add a SaaS hosted version before the self-hosted version has 10+ real teams running it.
+- **Do not** chase Cursor or Windsurf full capture. Their protocols are proprietary and the work is endless.
+- **Do not** rewrite the proxy in Rust or Go for performance. Python is fine until 1000+ req/s.
+- **Do not** add SSO/SAML before someone with a budget asks for it in writing.
+- **Do not** spend money on ads.
+- **Do not** apply to YC or accelerators in 2026 unless there's product-market fit evidence first.
+- **Do not** call it "enterprise-ready" or "SOC 2 compliant" — it's neither, and saying so is fraud.
+
+---
+
+## 16. Honest Weaknesses to Acknowledge in Public
+
+The kind of weaknesses you should disclose before someone discovers them:
+
+1. **No real-world battle testing.** The proxy works on fixtures and unit tests, not against production Claude Code sessions yet. Beta users may hit edge cases.
+
+2. **Risk scoring is keyword-based.** Real SAST integration is roadmap, not present.
+
+3. **Single-tenant only.** No multi-tenant isolation if you host this for multiple orgs. Self-host or run separate instances.
+
+4. **The proxy is a single point of failure.** If it goes down, the AI tool still works (proxy is transparent passthrough) but captures stop. No HA setup.
+
+5. **Cursor and Windsurf are partially supported.** Editor capture only. Document this prominently to avoid bad-faith reviews.
+
+6. **Solo project.** One person. Bus factor of 1. If you're an enterprise considering this, factor that in.
+
+Being upfront about all six builds far more trust than hiding them.
+
+---
+
+## 17. The One-Sentence Pitch
+
+After all of this:
+
+> **LineageLens is a self-hosted, free, open-source provenance layer that captures AI-generated code from Claude Code, Codex CLI, Gemini CLI, Goose, Copilot, Cursor, and Windsurf — with structured edit-level capture for agentic CLI tools and editor-level capture for VS Code editors — so teams can answer "who used AI for what, and where is the risk" without sending their code to a SaaS.**
+
+If you can't shorten that further while keeping the honest scope, that's the pitch.
+
+---
+
+## Appendix A — Removed from v1
+
+The original plan had these. They're done or no longer relevant:
+
+- ~~CLI mode-name fix~~ — punted to video-only workaround per founder decision.
+- ~~Decide on three vs four release modes~~ — settled on four (Base/Lite/Plus/Max).
+- ~~Verify quickstart command exists~~ — `quickstart-lite.sh` exists and ships in the Lite bundle.
+- ~~v0.2.x release prep~~ — superseded by v1.0.0 ship.
+
+## Appendix B — Open Questions
+
+Things only the founder can decide:
+
+1. Open Core vs. pure OSS — depends on willingness to do support work for 6+ months.
+2. Whether to add a "LineageLens Cloud" hosted offering — depends on whether 10+ teams adopt self-hosted first.
+3. Whether to seek seed funding or stay bootstrapped — depends on whether you want to make this a company or a portfolio project.
+4. Whether to write a paper / submit to academia — there's a real research angle (provenance protocols for agentic AI) that could land at an ML systems conference.
+
+These can wait until after the launch.
