@@ -260,7 +260,7 @@ def decode_token(
         raise AuthError("Malformed token payload.")
 
     subject = str(payload.get("sub", "")).strip()
-    workspace_id = str(payload.get("workspace_id") or payload.get("workspace") or "").strip()
+    workspace_id = str(payload.get("workspace_id") or payload.get("workspaceId") or payload.get("workspace") or "").strip()
     token_type = str(payload.get("token_type") or "access").strip().lower()
 
     if not subject:
