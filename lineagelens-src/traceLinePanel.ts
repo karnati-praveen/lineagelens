@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { randomBytes } from 'node:crypto';
 import type { ProvenanceSearchResultItem, ProvenanceStorageService } from './storage/StorageService';
 
 const DEFAULT_LINE_THRESHOLD = 4;
@@ -83,10 +84,9 @@ function escHtml(s: string): string {
 }
 
 function createNonce(): string {
-  let text = '';
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  for (let i = 0; i < 32; i++) text += chars.charAt(Math.floor(Math.random() * chars.length));
-  return text;
+  // CSP nonce must be cryptographically random — Math.random() is predictable
+  // and would let an attacker bypass the CSP by guessing the nonce.
+  return randomBytes(16).toString('hex');
 }
 
 function buildSessionGraphHtml(sessionRecords: TraceRecord[], currentUuid: string): string {

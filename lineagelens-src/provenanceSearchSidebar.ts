@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { randomBytes } from 'node:crypto';
 import { extractUuidFromText } from './provenanceSidebar';
 import {
   ProvenanceSearchFilters,
@@ -624,12 +625,7 @@ function toErrorMessage(error: unknown): string {
 }
 
 function createNonce(): string {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let nonce = '';
-
-  for (let index = 0; index < 32; index += 1) {
-    nonce += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
-  }
-
-  return nonce;
+  // CSP nonce must be cryptographically random — Math.random() is predictable
+  // and would let an attacker bypass the CSP by guessing the nonce.
+  return randomBytes(16).toString('hex');
 }
