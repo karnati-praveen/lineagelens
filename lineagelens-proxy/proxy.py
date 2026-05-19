@@ -541,6 +541,45 @@ def _extract_anthropic_tool_results(body: bytes) -> list[dict]:
     return results
 
 
+def _extract_anthropic_prompt_context(body_dict: dict) -> dict:
+    """Pull model + system + messages out of an Anthropic request body.
+
+    Returned dict feeds the backend's promptMessages/modelName fields so the
+    dashboard can display 'what was asked and which model answered it'.
+    """
+    if not isinstance(body_dict, dict):
+        return {}
+    model = body_dict.get("model", "")
+    if not isinstance(model, str):
+        model = ""
+
+    system = body_dict.get("system", "")
+    if isinstance(system, list):
+        # system can also be a list of content blocks in Anthropic
+        parts = []
+        for s in system:
+            if isinstance(s, dict):
+                parts.append(s.get("text", "") or "")
+            elif isinstance(s, str):
+                parts.append(s)
+        system = "\n".join(p for p in parts if p)
+    elif not isinstance(system, str):
+        system = ""
+
+    messages = body_dict.get("messages")
+    safe_messages: list[dict] = []
+    if isinstance(messages, list):
+        for msg in messages:
+            if isinstance(msg, dict):
+                safe_messages.append(msg)
+
+    return {
+        "model": model,
+        "system": system,
+        "messages": safe_messages,
+    }
+
+
 def _classify_tool_result(result: dict) -> tuple[str, str]:
     """Map a tool_result to (status, error_message).
 
@@ -568,9 +607,19 @@ def _classify_tool_result(result: dict) -> tuple[str, str]:
     return ("errored", content_str[:500])
 
 
-async def _store_pending_edits(session_key: str, tool_uses: list[dict]) -> None:
-    """Convert tool_uses to edit records and stash them as pending."""
+async def _store_pending_edits(
+    session_key: str,
+    tool_uses: list[dict],
+    prompt_context: dict | None = None,
+) -> None:
+    """Convert tool_uses to edit records and stash them as pending.
+
+    `prompt_context` carries model + system + messages from the triggering
+    request body so they can be attached to the ingest payload at resolve
+    time. Without this, the dashboard has no prompt or model to display.
+    """
     now = time.time()
+    ctx = prompt_context or {}
     async with _pending_edits_lock:
         # Hard cap: if we're at the limit, drop the oldest entries.
         if len(_pending_edits) >= _PENDING_EDITS_MAX:
@@ -587,6 +636,9 @@ async def _store_pending_edits(session_key: str, tool_uses: list[dict]) -> None:
                 continue
             for edit in edits:
                 edit["_proposed_at"] = now
+                edit["_model"] = ctx.get("model", "")
+                edit["_system"] = ctx.get("system", "")
+                edit["_messages"] = ctx.get("messages", [])
             _pending_edits[(session_key, tool_use_id)] = edits
             logger.debug(
                 "pending edit: tool=%s file=%s id=%s",
@@ -925,6 +977,40 @@ def _extract_codex_function_call_outputs(body: bytes) -> list[dict]:
     ]
 
 
+def _extract_codex_prompt_context(body_dict: dict) -> dict:
+    """Pull model + instructions + user messages out of a Codex request body."""
+    if not isinstance(body_dict, dict):
+        return {}
+    model = body_dict.get("model", "")
+    if not isinstance(model, str):
+        model = ""
+
+    instructions = body_dict.get("instructions", "")
+    if not isinstance(instructions, str):
+        instructions = ""
+
+    # The Responses API stores all input items in `input[]`. Capture every
+    # non-tool item so the dashboard can show the full conversation, not
+    # just the latest user turn.
+    inputs = body_dict.get("input")
+    safe_messages: list[dict] = []
+    if isinstance(inputs, list):
+        for item in inputs:
+            if not isinstance(item, dict):
+                continue
+            item_type = item.get("type", "")
+            # Skip the tool plumbing items — they're not user-visible content.
+            if item_type in ("function_call", "function_call_output"):
+                continue
+            safe_messages.append(item)
+
+    return {
+        "model": model,
+        "system": instructions,
+        "messages": safe_messages,
+    }
+
+
 def _classify_codex_function_call_output(item: dict) -> tuple[str, str]:
     """Map a Codex function_call_output to (status, error_message).
 
@@ -956,9 +1042,11 @@ def _classify_codex_function_call_output(item: dict) -> tuple[str, str]:
 async def _store_codex_pending_edits(
     session_key: str,
     function_calls: list[dict],
+    prompt_context: dict | None = None,
 ) -> None:
     """Parse Codex function_calls into edit records and store as pending."""
     now = time.time()
+    ctx = prompt_context or {}
     async with _pending_edits_lock:
         if len(_pending_edits) >= _PENDING_EDITS_MAX:
             to_drop = len(_pending_edits) - _PENDING_EDITS_MAX + len(function_calls) + 1
@@ -974,6 +1062,9 @@ async def _store_codex_pending_edits(
                 continue
             for edit in edits:
                 edit["_proposed_at"] = now
+                edit["_model"] = ctx.get("model", "")
+                edit["_system"] = ctx.get("system", "")
+                edit["_messages"] = ctx.get("messages", [])
             _pending_edits[(session_key, call_id)] = edits
             logger.debug(
                 "pending codex edit: call_id=%s verb=%s file=%s",
@@ -1235,6 +1326,56 @@ def _extract_gemini_function_responses(body: bytes) -> list[dict]:
     return []
 
 
+def _extract_gemini_prompt_context(body_dict: dict, url: str) -> dict:
+    """Pull model + systemInstruction + contents out of a Gemini request.
+
+    Model comes from the URL path (e.g. /v1/models/gemini-1.5-pro:generateContent)
+    since the body doesn't include it. systemInstruction.parts becomes the
+    system prompt. contents[] becomes the messages.
+    """
+    model = ""
+    try:
+        path = urllib.parse.urlparse(url).path or ""
+        # Path looks like: /v1/models/<model>:generateContent or :streamGenerateContent
+        m = re.search(r"/models/([^:/]+)", path)
+        if m:
+            model = m.group(1)
+    except Exception:
+        pass
+
+    if not isinstance(body_dict, dict):
+        return {"model": model, "system": "", "messages": []}
+
+    # systemInstruction can be a dict with parts[] or a string
+    si = body_dict.get("systemInstruction") or body_dict.get("system_instruction") or ""
+    system = ""
+    if isinstance(si, dict):
+        parts = si.get("parts", [])
+        if isinstance(parts, list):
+            chunks = []
+            for p in parts:
+                if isinstance(p, dict):
+                    chunks.append(p.get("text", "") or "")
+            system = "\n".join(c for c in chunks if c)
+        elif isinstance(si.get("text"), str):
+            system = si["text"]
+    elif isinstance(si, str):
+        system = si
+
+    contents = body_dict.get("contents")
+    safe_messages: list[dict] = []
+    if isinstance(contents, list):
+        for msg in contents:
+            if isinstance(msg, dict):
+                safe_messages.append(msg)
+
+    return {
+        "model": model,
+        "system": system,
+        "messages": safe_messages,
+    }
+
+
 def _classify_gemini_function_response(fr: dict) -> tuple[str, str]:
     """Map a Gemini functionResponse to (status, error_message)."""
     response = fr.get("response", {})
@@ -1287,6 +1428,7 @@ def _classify_gemini_function_response(fr: dict) -> tuple[str, str]:
 async def _store_gemini_pending_edits(
     session_key: str,
     function_calls: list[dict],
+    prompt_context: dict | None = None,
 ) -> None:
     """Parse Gemini functionCalls into edit records and store as pending.
 
@@ -1295,6 +1437,7 @@ async def _store_gemini_pending_edits(
     iteration is deterministic.
     """
     now = time.time()
+    ctx = prompt_context or {}
     async with _pending_edits_lock:
         if len(_pending_edits) >= _PENDING_EDITS_MAX:
             to_drop = len(_pending_edits) - _PENDING_EDITS_MAX + len(function_calls) + 1
@@ -1308,6 +1451,9 @@ async def _store_gemini_pending_edits(
             synthetic_id = edits[0]["tool_use_id"]
             for edit in edits:
                 edit["_proposed_at"] = now
+                edit["_model"] = ctx.get("model", "")
+                edit["_system"] = ctx.get("system", "")
+                edit["_messages"] = ctx.get("messages", [])
             _pending_edits[(session_key, synthetic_id)] = edits
             logger.debug(
                 "pending gemini edit: id=%s tool=%s file=%s",
@@ -1393,6 +1539,13 @@ async def _ingest_edit(
         "filePath": edit.get("file_path", "proxy-capture") or "proxy-capture",
         "insertedText": new_string,
         "workspaceId": WORKSPACE_ID,
+        # Top-level model + promptMessages are what the backend's ingest
+        # normalizer reads (see ingest_normalizer._resolve_model_name and
+        # _resolve_prompt_messages). Without these the dashboard has no
+        # prompt or model to display, even though we captured them.
+        "modelName": edit.get("_model", "") or "",
+        "promptMessages": edit.get("_messages", []) or [],
+        "systemPrompt": edit.get("_system", "") or "",
         "provenance": {
             "source": "lineagelens-universal-proxy",
             "provider": provider,
@@ -1405,6 +1558,7 @@ async def _ingest_edit(
             "status": status,
             "errorMessage": error_message,
             "sessionKey": session_key,
+            "modelName": edit.get("_model", "") or "",
         },
     }
 
@@ -1501,6 +1655,9 @@ async def _handle_streaming(
     codex_session_key: str = "",
     is_codex: bool = False,
     gemini_session_key: str = "",
+    anthropic_prompt_context: dict | None = None,
+    codex_prompt_context: dict | None = None,
+    gemini_prompt_context: dict | None = None,
 ) -> Response:
     # URL base is from UPSTREAM_URL (env-configured, trusted); only path is from request.
     # Scheme and host are pinned by _build_upstream_url — never sourced from user input.
@@ -1559,17 +1716,17 @@ async def _handle_streaming(
                 if provider == "anthropic" and session_key:
                     tool_uses = _extract_anthropic_tool_uses_from_sse(collected)
                     if tool_uses:
-                        await _store_pending_edits(session_key, tool_uses)
+                        await _store_pending_edits(session_key, tool_uses, anthropic_prompt_context)
                         structured_captured = True
                 elif is_codex and codex_session_key:
                     function_calls = _extract_codex_function_calls_from_sse(collected)
                     if function_calls:
-                        await _store_codex_pending_edits(codex_session_key, function_calls)
+                        await _store_codex_pending_edits(codex_session_key, function_calls, codex_prompt_context)
                         structured_captured = True
                 elif provider == "gemini" and gemini_session_key:
                     function_calls = _extract_gemini_function_calls_from_sse(collected)
                     if function_calls:
-                        await _store_gemini_pending_edits(gemini_session_key, function_calls)
+                        await _store_gemini_pending_edits(gemini_session_key, function_calls, gemini_prompt_context)
                         structured_captured = True
 
                 if not structured_captured:
@@ -1605,6 +1762,9 @@ async def _handle_non_streaming(
     codex_session_key: str = "",
     is_codex: bool = False,
     gemini_session_key: str = "",
+    anthropic_prompt_context: dict | None = None,
+    codex_prompt_context: dict | None = None,
+    gemini_prompt_context: dict | None = None,
 ) -> Response:
     # URL base is from UPSTREAM_URL (env-configured, trusted); only path is from request.
     # Scheme and host are pinned by _build_upstream_url — never sourced from user input.
@@ -1638,17 +1798,17 @@ async def _handle_non_streaming(
             if provider == "anthropic" and session_key:
                 tool_uses = _extract_anthropic_tool_uses_from_body(upstream.content)
                 if tool_uses:
-                    await _store_pending_edits(session_key, tool_uses)
+                    await _store_pending_edits(session_key, tool_uses, anthropic_prompt_context)
                     structured_captured = True
             elif is_codex and codex_session_key:
                 function_calls = _extract_codex_function_calls_from_body(upstream.content)
                 if function_calls:
-                    await _store_codex_pending_edits(codex_session_key, function_calls)
+                    await _store_codex_pending_edits(codex_session_key, function_calls, codex_prompt_context)
                     structured_captured = True
             elif provider == "gemini" and gemini_session_key:
                 function_calls = _extract_gemini_function_calls_from_body(upstream.content)
                 if function_calls:
-                    await _store_gemini_pending_edits(gemini_session_key, function_calls)
+                    await _store_gemini_pending_edits(gemini_session_key, function_calls, gemini_prompt_context)
                     structured_captured = True
 
             if not structured_captured:
@@ -1719,13 +1879,17 @@ async def proxy_request(request: Request, path: str) -> Response:
     provider = detect_provider_and_format(url, dict(request.headers))
 
     # Anthropic adapter: resolve pending edits from any tool_result blocks the
-    # client is sending back from a previous turn.
+    # client is sending back from a previous turn, and extract the prompt
+    # context for the new turn (model + messages) so it can be attached to
+    # the next response's pending edits.
     anthropic_session_key = ""
+    anthropic_prompt_context: dict = {}
     if provider == "anthropic" and body:
         try:
             req_body_dict = json.loads(body)
             if isinstance(req_body_dict, dict):
                 anthropic_session_key = _session_key(req_body_dict, dict(request.headers))
+                anthropic_prompt_context = _extract_anthropic_prompt_context(req_body_dict)
                 tool_results = _extract_anthropic_tool_results(body)
                 if tool_results:
                     await _resolve_pending_edits(anthropic_session_key, tool_results, provider)
@@ -1733,14 +1897,15 @@ async def proxy_request(request: Request, path: str) -> Response:
             logger.debug("anthropic adapter: request body parse failed", exc_info=True)
 
     # Codex CLI adapter: same pattern but for OpenAI Responses API.
-    # Distinguished from regular Chat Completions by path /v1/responses.
     is_codex = provider == "openai" and _is_codex_responses_path(url)
     codex_session_key = ""
+    codex_prompt_context: dict = {}
     if is_codex and body:
         try:
             req_body_dict = json.loads(body)
             if isinstance(req_body_dict, dict):
                 codex_session_key = _codex_session_key(req_body_dict, dict(request.headers))
+                codex_prompt_context = _extract_codex_prompt_context(req_body_dict)
                 fc_outputs = _extract_codex_function_call_outputs(body)
                 if fc_outputs:
                     await _resolve_codex_pending_edits(codex_session_key, fc_outputs, provider)
@@ -1749,11 +1914,13 @@ async def proxy_request(request: Request, path: str) -> Response:
 
     # Gemini CLI adapter: Google Gemini API functionCall / functionResponse.
     gemini_session_key = ""
+    gemini_prompt_context: dict = {}
     if provider == "gemini" and body:
         try:
             req_body_dict = json.loads(body)
             if isinstance(req_body_dict, dict):
                 gemini_session_key = _gemini_session_key(req_body_dict, dict(request.headers))
+                gemini_prompt_context = _extract_gemini_prompt_context(req_body_dict, url)
                 fn_responses = _extract_gemini_function_responses(body)
                 if fn_responses:
                     await _resolve_gemini_pending_edits(gemini_session_key, fn_responses, provider)
@@ -1775,6 +1942,9 @@ async def proxy_request(request: Request, path: str) -> Response:
             codex_session_key=codex_session_key,
             is_codex=is_codex,
             gemini_session_key=gemini_session_key,
+            anthropic_prompt_context=anthropic_prompt_context,
+            codex_prompt_context=codex_prompt_context,
+            gemini_prompt_context=gemini_prompt_context,
         )
     return await _handle_non_streaming(
         request.method, url, headers, body, safe_path,
@@ -1783,6 +1953,9 @@ async def proxy_request(request: Request, path: str) -> Response:
         codex_session_key=codex_session_key,
         is_codex=is_codex,
         gemini_session_key=gemini_session_key,
+        anthropic_prompt_context=anthropic_prompt_context,
+        codex_prompt_context=codex_prompt_context,
+        gemini_prompt_context=gemini_prompt_context,
     )
 
 

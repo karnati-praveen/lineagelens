@@ -216,6 +216,55 @@ def test_cross_session_isolation():
     asyncio.run(run())
 
 
+def test_prompt_context_extracted_and_attached_to_ingest():
+    """End-to-end: prompt + model from request body must reach _ingest_edit."""
+    import asyncio
+
+    captured = []
+    original = proxy._ingest_edit
+
+    async def fake(edit, session_key, status, error_message, provider):
+        captured.append(edit)
+
+    proxy._ingest_edit = fake
+    proxy._pending_edits.clear()
+
+    try:
+        async def run():
+            # Simulate the prompt context we'd extract from a Claude Code
+            # request body: model + system + user message.
+            ctx = proxy._extract_anthropic_prompt_context({
+                "model": "claude-sonnet-4.6",
+                "system": "You are Claude Code, Anthropic's CLI.",
+                "messages": [
+                    {"role": "user", "content": "Fix the off-by-one bug in foo.py"},
+                ],
+            })
+            assert ctx["model"] == "claude-sonnet-4.6"
+            assert ctx["system"].startswith("You are Claude Code")
+            assert len(ctx["messages"]) == 1
+
+            tool_use = {
+                "type": "tool_use", "id": "toolu_x", "name": "Edit",
+                "input": {"file_path": "foo.py", "old_string": "<=", "new_string": "<"},
+            }
+            await proxy._store_pending_edits("sess_x", [tool_use], prompt_context=ctx)
+            results = [{"type": "tool_result", "tool_use_id": "toolu_x",
+                        "content": "Edited", "is_error": False}]
+            await proxy._resolve_pending_edits("sess_x", results, "anthropic")
+            await asyncio.sleep(0.05)
+
+            assert len(captured) == 1
+            edit = captured[0]
+            assert edit["_model"] == "claude-sonnet-4.6"
+            assert "Claude Code" in edit["_system"]
+            assert edit["_messages"][0]["content"] == "Fix the off-by-one bug in foo.py"
+
+        asyncio.run(run())
+    finally:
+        proxy._ingest_edit = original
+
+
 if __name__ == "__main__":
     import inspect
     tests = [(n, f) for n, f in globals().items() if n.startswith("test_") and callable(f)]
