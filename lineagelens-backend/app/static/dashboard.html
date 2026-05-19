@@ -294,6 +294,7 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
       <button class="tab adm-tab" data-t="developers" onclick="go('developers')" style="display:none">Developers</button>
       <button class="tab adm-tab" data-t="reviews" onclick="go('reviews')" style="display:none">Reviews</button>
       <button class="tab adm-tab" data-t="github" onclick="go('github')" style="display:none">GitHub CI</button>
+      <button class="tab" data-t="mcp" onclick="go('mcp')">MCP Server</button>
       <button class="tab" data-t="quality" onclick="go('quality')">Quality</button>
       <button class="tab adm-tab" data-t="scheduled-reports" onclick="go('scheduled-reports')" style="display:none">Digests</button>
       <button class="tab adm-tab" data-t="sso" onclick="go('sso')" style="display:none">SSO</button>
@@ -663,6 +664,114 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
       </div>
     </div>
 
+    <!-- MCP SERVER -->
+    <div id="t-mcp" class="view">
+      <div class="stitle" style="margin-bottom:18px">MCP Server — Connect AI Assistants</div>
+
+      <div class="card" style="max-width:760px;margin-bottom:18px">
+        <h4 style="margin:0 0 10px">What this is</h4>
+        <p style="font-size:13px;color:var(--text);margin:0 0 8px">The Model Context Protocol (MCP) server lets your AI assistants — Claude Code, Cursor, Continue, and any other MCP-capable client — query LineageLens's provenance history directly. Once configured, you can ask your assistant questions like:</p>
+        <ul style="font-size:13px;color:var(--text);margin:0 0 8px 18px;padding:0">
+          <li>"What AI-generated code touched <code>auth/</code> this week?"</li>
+          <li>"Show me every Claude Sonnet 4.6 insertion in <code>payments.py</code>."</li>
+          <li>"Which model produced the highest-risk edits in the last 7 days?"</li>
+          <li>"Explain provenance record <code>7a3e9b2c-...</code> in plain English."</li>
+        </ul>
+        <p style="font-size:13px;color:var(--muted);margin:0">All queries are scoped to your current workspace. Nothing leaves your network.</p>
+      </div>
+
+      <div class="card" style="max-width:760px;margin-bottom:18px">
+        <h4 style="margin:0 0 10px">Step 1 — Your backend URL</h4>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 8px">The MCP server connects to this LineageLens backend. Make sure it's reachable from wherever the MCP client runs (usually your local machine).</p>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="mcp-backend-url" readonly style="flex:1;padding:8px 10px;font-size:13px;font-family:var(--mono,monospace)">
+          <button class="s" onclick="mcpCopyBackendUrl()" style="padding:7px 14px;font-size:12px">Copy</button>
+        </div>
+      </div>
+
+      <div class="card" style="max-width:760px;margin-bottom:18px">
+        <h4 style="margin:0 0 10px">Step 2 — Generate an API key</h4>
+        <p style="font-size:13px;margin:0 0 8px">The MCP server authenticates to the backend using an API key. Generate one with the scopes <code>provenance:read</code> at minimum.</p>
+        <p style="font-size:13px;margin:0 0 8px">Admins: open the <strong>Team</strong> tab → <em>API Keys</em> section → <em>Generate API Key</em>. Copy the key once shown — it cannot be retrieved later.</p>
+        <p style="font-size:12px;color:var(--muted);margin:0">Non-admins can also use their personal access token (set <code>LINEAGELENS_USERNAME</code> + <code>LINEAGELENS_PASSWORD</code> in the MCP env instead).</p>
+      </div>
+
+      <div class="card" style="max-width:760px;margin-bottom:18px">
+        <h4 style="margin:0 0 10px">Step 3 — Paste this into your AI client's config</h4>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 12px">Replace <code>YOUR_API_KEY_HERE</code> with the key you generated. Replace the script path with where you cloned LineageLens.</p>
+
+        <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+          <button class="s mcp-config-tab on" data-mcp="claude" onclick="mcpShowConfig('claude')" style="padding:6px 14px;font-size:12px">Claude Code</button>
+          <button class="s mcp-config-tab" data-mcp="cursor" onclick="mcpShowConfig('cursor')" style="padding:6px 14px;font-size:12px">Cursor</button>
+          <button class="s mcp-config-tab" data-mcp="continue" onclick="mcpShowConfig('continue')" style="padding:6px 14px;font-size:12px">Continue</button>
+          <button class="s mcp-config-tab" data-mcp="windsurf" onclick="mcpShowConfig('windsurf')" style="padding:6px 14px;font-size:12px">Windsurf</button>
+        </div>
+
+        <div id="mcp-config-claude" class="mcp-config-block">
+          <p style="font-size:12px;color:var(--muted);margin:0 0 4px">File: <code>~/.claude/settings.json</code> (or <code>.claude/settings.json</code> in a project)</p>
+          <pre id="mcp-snippet-claude" style="background:var(--bg);padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre;margin:0"></pre>
+        </div>
+
+        <div id="mcp-config-cursor" class="mcp-config-block" style="display:none">
+          <p style="font-size:12px;color:var(--muted);margin:0 0 4px">File: <code>~/.cursor/mcp.json</code> (or <code>.cursor/mcp.json</code> in a project)</p>
+          <pre id="mcp-snippet-cursor" style="background:var(--bg);padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre;margin:0"></pre>
+        </div>
+
+        <div id="mcp-config-continue" class="mcp-config-block" style="display:none">
+          <p style="font-size:12px;color:var(--muted);margin:0 0 4px">File: <code>~/.continue/config.json</code> (under <code>experimental.modelContextProtocolServers</code>)</p>
+          <pre id="mcp-snippet-continue" style="background:var(--bg);padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre;margin:0"></pre>
+        </div>
+
+        <div id="mcp-config-windsurf" class="mcp-config-block" style="display:none">
+          <p style="font-size:12px;color:var(--muted);margin:0 0 4px">File: <code>~/.codeium/windsurf/mcp_config.json</code></p>
+          <pre id="mcp-snippet-windsurf" style="background:var(--bg);padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre;margin:0"></pre>
+        </div>
+
+        <button class="p" onclick="mcpCopyActiveSnippet()" style="margin-top:10px;padding:8px 16px;font-size:13px">Copy Config</button>
+        <span id="mcp-copy-msg" style="margin-left:10px;font-size:12px;color:var(--ok)"></span>
+      </div>
+
+      <div class="card" style="max-width:760px;margin-bottom:18px">
+        <h4 style="margin:0 0 10px">Available tools</h4>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 10px">Your AI client can call any of these once connected:</p>
+        <table class="tbl" style="font-size:12px">
+          <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td><code>search_provenance</code></td><td>Find AI-generated code by keyword, model, file path, or date range. Returns up to 50 records per call.</td></tr>
+            <tr><td><code>get_record</code></td><td>Fetch the full provenance record for a UUID — prompt, model, file, edit, status, risk score, and metadata.</td></tr>
+            <tr><td><code>list_recent</code></td><td>Recent AI insertions (newest first). Useful for "what did AI do today" queries.</td></tr>
+            <tr><td><code>check_file_risk</code></td><td>Risk profile for a specific file — distribution of critical / high / medium / low insertions.</td></tr>
+            <tr><td><code>get_insights</code></td><td>Workspace governance summary — total records, prompt-capture rate, top models, top files.</td></tr>
+            <tr><td><code>explain_record</code></td><td>Plain-English explanation of a record. Uses the backend's configured explainer LLM.</td></tr>
+            <tr><td><code>list_workspaces</code></td><td>Lists workspaces your token can access. Useful when one user belongs to multiple teams.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card" style="max-width:760px;margin-bottom:18px">
+        <h4 style="margin:0 0 10px">Step 4 — Verify it works</h4>
+        <p style="font-size:13px;margin:0 0 8px">Restart your AI client after pasting the config. Then ask it:</p>
+        <pre style="background:var(--bg);padding:12px;border-radius:6px;font-size:12px;margin:0 0 8px"><code>Using LineageLens, list my 5 most recent AI-generated code insertions.</code></pre>
+        <p style="font-size:13px;margin:0 0 8px">If it works, you'll see real captures pulled from this dashboard. If you see "MCP server not found" or "tool not available", check that:</p>
+        <ul style="font-size:12px;color:var(--muted);margin:0 0 0 18px;padding:0">
+          <li>The script path in the config is correct (it must be the absolute path to <code>lineagelens-mcp/lineagelens-mcp.py</code>)</li>
+          <li>Your client was fully restarted, not just reloaded</li>
+          <li>The API key has at least <code>provenance:read</code> scope</li>
+          <li>The backend at the URL above is reachable from the client's machine</li>
+        </ul>
+      </div>
+
+      <div class="card" style="max-width:760px">
+        <h4 style="margin:0 0 10px">Privacy &amp; data flow</h4>
+        <ul style="font-size:13px;margin:0 0 0 18px;padding:0">
+          <li>The MCP server is a local subprocess spawned by your AI client. It does not open a network listener.</li>
+          <li>All queries are scoped to your workspace via the API key.</li>
+          <li>The MCP server connects to <em>your</em> LineageLens backend. Nothing is sent to Anthropic, OpenAI, Google, or any third party.</li>
+          <li>If you remove an API key (Team → API Keys → Revoke), the MCP server returns 401 within its next request and your AI client loses access.</li>
+        </ul>
+      </div>
+    </div>
+
     <!-- QUALITY METRICS -->
     <div id="t-quality" class="view">
       <div class="stitle" style="margin-bottom:18px">Code Quality Metrics</div>
@@ -935,6 +1044,7 @@ function go(name) {
   if (name==='quality') loadQuality();
   if (name==='search') { window._currentPage = 0; document.getElementById('s-kw').focus(); }
   if (name==='github') loadGithubConfig();
+  if (name==='mcp') loadMcp();
   if (name==='scheduled-reports') loadDigests();
   if (name==='sso') loadSsoProviders();
   if (name==='workspace') loadWorkspace();
@@ -1547,6 +1657,127 @@ async function checkMcp() {
     dot.style.background = 'var(--danger)';
     dot.title = 'Backend unreachable';
   }
+}
+
+// ── MCP SETUP PANEL ──────────────────────────────────────────────────────────
+function _mcpBackendUrl() {
+  // Use the current page origin so the config works whether the user is on
+  // localhost, a LAN IP, or a public hostname.
+  return window.location.origin || 'http://localhost:8787';
+}
+
+function _mcpScriptPath() {
+  // Best-effort guess at where the MCP server script lives relative to the
+  // user's repo checkout. The user must edit this in the config anyway.
+  return '/absolute/path/to/lineagelens/lineagelens-mcp/lineagelens-mcp.py';
+}
+
+function _mcpSnippetClaude(backendUrl, scriptPath) {
+  return JSON.stringify({
+    mcpServers: {
+      lineagelens: {
+        command: 'python',
+        args: [scriptPath],
+        env: {
+          LINEAGELENS_BACKEND_URL: backendUrl,
+          LINEAGELENS_ACCESS_TOKEN: 'YOUR_API_KEY_HERE'
+        }
+      }
+    }
+  }, null, 2);
+}
+
+function _mcpSnippetCursor(backendUrl, scriptPath) {
+  return JSON.stringify({
+    mcpServers: {
+      lineagelens: {
+        command: 'python',
+        args: [scriptPath],
+        env: {
+          LINEAGELENS_BACKEND_URL: backendUrl,
+          LINEAGELENS_ACCESS_TOKEN: 'YOUR_API_KEY_HERE'
+        }
+      }
+    }
+  }, null, 2);
+}
+
+function _mcpSnippetContinue(backendUrl, scriptPath) {
+  return JSON.stringify({
+    experimental: {
+      modelContextProtocolServers: [
+        {
+          transport: {
+            type: 'stdio',
+            command: 'python',
+            args: [scriptPath]
+          },
+          env: {
+            LINEAGELENS_BACKEND_URL: backendUrl,
+            LINEAGELENS_ACCESS_TOKEN: 'YOUR_API_KEY_HERE'
+          }
+        }
+      ]
+    }
+  }, null, 2);
+}
+
+function _mcpSnippetWindsurf(backendUrl, scriptPath) {
+  return JSON.stringify({
+    mcpServers: {
+      lineagelens: {
+        command: 'python',
+        args: [scriptPath],
+        env: {
+          LINEAGELENS_BACKEND_URL: backendUrl,
+          LINEAGELENS_ACCESS_TOKEN: 'YOUR_API_KEY_HERE'
+        }
+      }
+    }
+  }, null, 2);
+}
+
+function loadMcp() {
+  const backendUrl = _mcpBackendUrl();
+  const scriptPath = _mcpScriptPath();
+  const urlField = document.getElementById('mcp-backend-url');
+  if (urlField) urlField.value = backendUrl;
+  const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+  set('mcp-snippet-claude',   _mcpSnippetClaude(backendUrl, scriptPath));
+  set('mcp-snippet-cursor',   _mcpSnippetCursor(backendUrl, scriptPath));
+  set('mcp-snippet-continue', _mcpSnippetContinue(backendUrl, scriptPath));
+  set('mcp-snippet-windsurf', _mcpSnippetWindsurf(backendUrl, scriptPath));
+}
+
+function mcpShowConfig(which) {
+  document.querySelectorAll('.mcp-config-tab').forEach(b => {
+    b.classList.toggle('on', b.dataset.mcp === which);
+  });
+  document.querySelectorAll('.mcp-config-block').forEach(d => {
+    d.style.display = d.id === `mcp-config-${which}` ? 'block' : 'none';
+  });
+}
+
+function mcpCopyBackendUrl() {
+  const field = document.getElementById('mcp-backend-url');
+  if (!field || !navigator.clipboard) return;
+  navigator.clipboard.writeText(field.value).catch(() => {});
+}
+
+function mcpCopyActiveSnippet() {
+  const active = document.querySelector('.mcp-config-tab.on');
+  const which = active ? active.dataset.mcp : 'claude';
+  const pre = document.getElementById(`mcp-snippet-${which}`);
+  const msg = document.getElementById('mcp-copy-msg');
+  if (!pre || !navigator.clipboard) return;
+  navigator.clipboard.writeText(pre.textContent || '').then(() => {
+    if (msg) {
+      msg.textContent = `Copied ${which} config.`;
+      setTimeout(() => { msg.textContent = ''; }, 1800);
+    }
+  }).catch(() => {
+    if (msg) msg.textContent = 'Copy failed.';
+  });
 }
 
 // ── TIMELINE ─────────────────────────────────────────────────────────────────
