@@ -133,7 +133,7 @@ class SecurityHeadersMiddleware:
         await self.app(scope, receive, send_with_headers)
 
 
-_SETUP_BYPASS_PREFIXES = {"/setup", "/health", "/auth/sso/callback"}
+_SETUP_BYPASS_PREFIXES = {"/setup", "/health", "/auth/login", "/auth/register", "/auth/sso/callback"}
 
 
 class SetupGuardMiddleware:

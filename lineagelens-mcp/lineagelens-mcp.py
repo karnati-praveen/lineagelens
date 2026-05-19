@@ -50,6 +50,7 @@ mcp = FastMCP(
 )
 
 _cached_token: str | None = None
+_cached_refresh_token: str | None = None
 _backend_discovered: bool = False
 
 
@@ -78,6 +79,7 @@ async def _ensure_backend_url(client: httpx.AsyncClient) -> None:
 
 
 async def _login(client: httpx.AsyncClient) -> str:
+    global _cached_refresh_token
     if not _USERNAME or not _PASSWORD:
         raise RuntimeError(
             "Authentication required. Set LINEAGELENS_ACCESS_TOKEN or "
@@ -88,7 +90,39 @@ async def _login(client: httpx.AsyncClient) -> str:
         json={"username": _USERNAME, "password": _PASSWORD},
     )
     resp.raise_for_status()
-    return resp.json()["accessToken"]
+    body = resp.json()
+    _cached_refresh_token = body.get("refreshToken") or None
+    return body["accessToken"]
+
+
+async def _refresh_access_token(client: httpx.AsyncClient) -> str | None:
+    """Try to get a new access token using the cached refresh token.
+
+    Returns the new access token on success, or None if the refresh token is
+    absent / expired so the caller can fall back to password re-login.
+    """
+    global _cached_refresh_token, _cached_token
+    if not _cached_refresh_token:
+        return None
+    try:
+        resp = await client.post(
+            f"{BACKEND_URL}/auth/refresh",
+            json={"refreshToken": _cached_refresh_token},
+        )
+        if not resp.is_success:
+            _cached_refresh_token = None
+            return None
+        body = resp.json()
+        new_access = body.get("accessToken")
+        if not new_access:
+            _cached_refresh_token = None
+            return None
+        _cached_refresh_token = body.get("refreshToken") or _cached_refresh_token
+        return new_access
+    except Exception:
+        logger.exception("MCP: Token refresh request failed")
+        _cached_refresh_token = None
+        return None
 
 
 async def _get_valid_token(client: httpx.AsyncClient) -> str | None:
@@ -140,7 +174,13 @@ _NEO4J_UNAVAILABLE_MSG = (
 
 def _handle_status_error(status_code: int, detail: str, url: str) -> str | None:
     """Return a user-friendly message for known HTTP error codes, or None to raise."""
-    if status_code in (401, 403):
+    if status_code == 403:
+        detail_lower = detail.lower()
+        # Lite-mode feature gate — return the backend's actual message, not the auth template.
+        if "lite" in detail_lower or "not available" in detail_lower or "upgrade" in detail_lower:
+            return f"Error: {detail}"
+        return _AUTH_ERROR_MSG
+    if status_code == 401:
         return _AUTH_ERROR_MSG
     if status_code == 503 and "neo4j" in detail.lower():
         return _NEO4J_UNAVAILABLE_MSG
@@ -171,13 +211,13 @@ async def _req(method: str, path: str, **kwargs: Any) -> Any:
             )
 
         if resp.status_code == 401 and not _STATIC_TOKEN:
-            # Token expired — clear cache and retry login once
+            # Token expired — try refresh first, then fall back to password re-login.
             _cached_token = None
             try:
-                token = await _login(client)
+                token = await _refresh_access_token(client) or await _login(client)
                 _cached_token = token
             except Exception as exc:
-                logger.exception("MCP: Token refresh failed")
+                logger.exception("MCP: Re-authentication failed")
                 raise RuntimeError(_AUTH_ERROR_MSG) from exc
 
             headers["Authorization"] = f"Bearer {token}"
@@ -469,41 +509,36 @@ async def check_file_risk(file_path: str) -> str:
     models: dict[str, int] = {}
     total = len(results)
 
-    # Fetch full records to get accurate risk assessment data
+    # /search already embeds the serialized record — no extra round-trips needed.
     for r in results:
-        uuid = (r.get("uuid") or "").strip()
         mdl = r.get("model") or "unknown"
         models[mdl] = models.get(mdl, 0) + 1
 
         lvl = "unknown"
-        if uuid:
-            try:
-                full_data = await _req("GET", f"/provenance/{uuid}")
-                if isinstance(full_data, str):
-                    continue  # auth/503 error, skip this record
-                rec = full_data.get("record", full_data)
-                ra = rec.get("riskAssessment") or {}
-                risk_score = (
-                    ra.get("score")
-                    or rec.get("riskScore")
-                    or rec.get("risk_score")
-                    or 0
-                )
-                risk_label = ra.get("level") or ra.get("label") or ""
-                if risk_label:
-                    lvl = risk_label.lower()
-                elif isinstance(risk_score, (int, float)):
-                    score = float(risk_score)
-                    if score >= 85:
-                        lvl = "critical"
-                    elif score >= 65:
-                        lvl = "high"
-                    elif score >= 35:
-                        lvl = "medium"
-                    else:
-                        lvl = "low"
-            except Exception:
-                pass
+        try:
+            rec = r.get("record") or {}
+            ra = rec.get("riskAssessment") or {}
+            risk_score = (
+                ra.get("score")
+                or rec.get("riskScore")
+                or rec.get("risk_score")
+                or 0
+            )
+            risk_label = ra.get("level") or ra.get("label") or ""
+            if risk_label:
+                lvl = risk_label.lower()
+            elif isinstance(risk_score, (int, float)):
+                score = float(risk_score)
+                if score >= 85:
+                    lvl = "critical"
+                elif score >= 65:
+                    lvl = "high"
+                elif score >= 35:
+                    lvl = "medium"
+                else:
+                    lvl = "low"
+        except Exception:
+            pass
 
         risk_counts[lvl if lvl in risk_counts else "unknown"] += 1
 
@@ -624,11 +659,14 @@ async def list_workspaces() -> str:
 
         lines = [f"Workspaces ({len(workspaces)}):\n"]
         for i, ws in enumerate(workspaces, 1):
-            ws_id = ws.get("id") or ws.get("workspaceId") or "?"
-            name = ws.get("name") or ws.get("slug") or "?"
+            ws_id = ws.get("workspaceId") or ws.get("id") or "?"
+            # /workspaces/me returns username + role instead of a workspace name
+            name = ws.get("name") or ws.get("username") or "?"
+            role = ws.get("role") or ""
             members = ws.get("memberCount") or ws.get("members") or "?"
-            created = (ws.get("createdAt") or "")[:10] or "?"
-            lines.append(f"[{i}] {name}")
+            # backend field is accountCreatedAt, fall back to createdAt for other endpoints
+            created = (ws.get("accountCreatedAt") or ws.get("createdAt") or "")[:10] or "?"
+            lines.append(f"[{i}] {name}{(' (' + role + ')') if role else ''}")
             lines.append(f"    ID:       {ws_id}")
             lines.append(f"    Members:  {members}")
             lines.append(f"    Created:  {created}")

@@ -1,3 +1,4 @@
+import * as crypto from 'node:crypto';
 import * as http from 'node:http';
 import * as https from 'node:https';
 import * as vscode from 'vscode';
@@ -24,6 +25,8 @@ const MAX_PENDING_CONFIRMATIONS = 50;
 export type BackendIngestResult = {
   uuid: string;
   transport: 'websocket' | 'http';
+  warnings: string[];
+  duplicate: boolean;
 };
 
 type BackendIngestConfig = {
@@ -54,6 +57,7 @@ export class BackendIngestClient implements vscode.Disposable {
   private readonly sessionTraceId: string = generateTraceId();
   private _healthChecked = false;
   private _backendHealthy = false;
+  private _productMode: string = 'plus';
   private _offlineQueue: Array<{ payload: unknown; timestamp: number }> = [];
   private readonly OFFLINE_QUEUE_MAX = 100;
 
@@ -150,6 +154,10 @@ export class BackendIngestClient implements vscode.Disposable {
     await this.closeWebSocket();
   }
 
+  public get productMode(): string {
+    return this._productMode;
+  }
+
   public async checkBackendHealth(resource?: vscode.Uri): Promise<boolean> {
     const config = getBackendIngestConfig(resource);
     const healthUrl = joinUrl(config.baseUrl, '/health');
@@ -157,7 +165,13 @@ export class BackendIngestClient implements vscode.Disposable {
       const result = await requestJson('GET', healthUrl, {});
       this._backendHealthy = result.statusCode >= 200 && result.statusCode < 300;
       this._healthChecked = true;
-      if (!this._backendHealthy) {
+      if (this._backendHealthy) {
+        const body = safeJsonParse(result.body);
+        const mode = toStringValue(readPath(body, ['productMode']));
+        if (mode) {
+          this._productMode = mode;
+        }
+      } else {
         this.log('Backend health check failed with status ' + String(result.statusCode) + '.');
       }
       return this._backendHealthy;
@@ -261,7 +275,9 @@ export class BackendIngestClient implements vscode.Disposable {
 
         return {
           uuid: payloadUuid,
-          transport: 'websocket'
+          transport: 'websocket',
+          warnings: [],
+          duplicate: false,
         };
       } catch (error: unknown) {
         this.log(
@@ -319,6 +335,13 @@ export class BackendIngestClient implements vscode.Disposable {
 
         const result = extractIngestResult(response, payload);
         if (result.success) {
+          if (result.value.duplicate) {
+            this.log('Ingest: duplicate event suppressed by backend (idempotency key matched).');
+          }
+          for (const warning of result.value.warnings) {
+            this.log('Backend ingest warning: ' + warning);
+            vscode.window.setStatusBarMessage('LineageLens: ' + warning, 6000);
+          }
           return result.value;
         }
         lastErrorMessage = result.errorMessage;
@@ -837,7 +860,20 @@ function extractIngestResult(
     if (!responseUuid) {
       throw new Error('HTTP ingest succeeded but returned no UUID.');
     }
-    return { success: true, value: { uuid: responseUuid, transport: 'http' } };
+    const stored = responsePayload === undefined || readPath(responsePayload, ['stored']) !== false;
+    const rawWarnings = readPath(responsePayload, ['warnings']);
+    const warnings: string[] = Array.isArray(rawWarnings)
+      ? rawWarnings.map(String)
+      : [];
+    return {
+      success: true,
+      value: {
+        uuid: responseUuid,
+        transport: 'http',
+        warnings,
+        duplicate: !stored,
+      },
+    };
   }
 
   // Extract FastAPI's "detail" field so the log shows the actual reason.
@@ -854,8 +890,6 @@ function extractIngestResult(
 }
 
 function generateTraceId(): string {
-  const hex = Array.from({ length: 16 }, () =>
-    Math.floor(Math.random() * 256).toString(16).padStart(2, '0')
-  ).join('');
+  const hex = crypto.randomBytes(16).toString('hex');
   return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
 }

@@ -152,6 +152,13 @@ class Settings(BaseSettings):
     def product_mode(self) -> str:
         return {"solo": "lite", "enterprise": "max"}.get(self.backend_mode, "plus")
 
+    @field_validator("auth_password_min_length")
+    @classmethod
+    def validate_auth_password_min_length(cls, value: int) -> int:
+        if value < 8:
+            raise ValueError("AUTH_PASSWORD_MIN_LENGTH must be at least 8.")
+        return value
+
     @field_validator("pgvector_dimension")
     @classmethod
     def validate_pgvector_dimension(cls, value: int) -> int:

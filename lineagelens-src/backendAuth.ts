@@ -85,7 +85,10 @@ export class BackendAuthSession {
 
     const payload = decodeJwtPayload(accessToken);
     const workspaceId =
-      toStringValue(payload?.workspace_id) || toStringValue(payload?.workspace) || undefined;
+      toStringValue(payload?.workspace_id) ||
+      toStringValue(payload?.workspaceId) ||
+      toStringValue(payload?.workspace) ||
+      undefined;
 
     return workspaceId;
   }
