@@ -113,6 +113,8 @@ class Settings(BaseSettings):
     explain_llm_model: str = Field(default="gpt-4o-mini", alias="EXPLAIN_LLM_MODEL")
     explain_llm_timeout_seconds: int = Field(default=25, alias="EXPLAIN_LLM_TIMEOUT_SECONDS")
 
+    proxy_static_token: str = Field(default="", alias="PROXY_STATIC_TOKEN")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

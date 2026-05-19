@@ -120,11 +120,13 @@ else
     NEO4J_PASSWORD=$(openssl rand -hex 24)
     JWT_SECRET_KEY=$(openssl rand -hex 48)
     JWT_REFRESH_SECRET_KEY=$(openssl rand -hex 48)
+    PROXY_INGEST_TOKEN=$(openssl rand -hex 32)
 
     ok "POSTGRES_PASSWORD      generated (hex-32)"
     ok "NEO4J_PASSWORD         generated (hex-24)"
     ok "JWT_SECRET_KEY         generated (hex-48)"
     ok "JWT_REFRESH_SECRET_KEY generated (hex-48)"
+    ok "PROXY_INGEST_TOKEN     generated (hex-32)"
 
     cat > "$ENV_FILE" <<EOF
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
@@ -132,6 +134,7 @@ NEO4J_USERNAME=neo4j
 NEO4J_PASSWORD=$NEO4J_PASSWORD
 JWT_SECRET_KEY=$JWT_SECRET_KEY
 JWT_REFRESH_SECRET_KEY=$JWT_REFRESH_SECRET_KEY
+PROXY_INGEST_TOKEN=$PROXY_INGEST_TOKEN
 EXPLAIN_LLM_API_KEY=
 EOF
 
@@ -151,6 +154,13 @@ EOF
         fi
     done
     ok "Neo4j volumes cleared — will initialise with new credentials."
+fi
+
+# Back-fill PROXY_INGEST_TOKEN if this is an existing .env from a previous version
+if ! grep -qE "^PROXY_INGEST_TOKEN=.+" "$ENV_FILE"; then
+    PROXY_INGEST_TOKEN=$(openssl rand -hex 32)
+    echo "PROXY_INGEST_TOKEN=$PROXY_INGEST_TOKEN" >> "$ENV_FILE"
+    ok "PROXY_INGEST_TOKEN     generated and added to existing .env (hex-32)"
 fi
 
 # ── 4. Start PostgreSQL and Neo4j ─────────────────────────────────────────────
@@ -275,13 +285,13 @@ echo       "       -H 'Content-Type: application/json' \\"
 echo       "       -d '{\"username\":\"admin\",\"password\":\"YourPassword123!\",\"workspace_id\":\"my-workspace\"}' \\"
 echo       "       | python3 -m json.tool"
 echo ""
-echo -e "  ${BOLD}── Proxy setup (one-time after first login) ──────────────────────${RESET}"
+echo -e "  ${BOLD}── Proxy setup ───────────────────────────────────────────────────${RESET}"
 echo ""
-echo -e "  1. Register and log in to get your token (see above)"
-echo -e "  2. Add your token to ${YELLOW}lineagelens-deploy/.env${RESET}:"
-echo -e "       ${YELLOW}PROXY_INGEST_TOKEN=<your-access-token>${RESET}"
-echo -e "  3. Restart the proxy:"
-echo -e "  ${YELLOW}\$${RESET}  $COMPOSE --project-name $PROJECT_NAME -f $COMPOSE_FILE --env-file $ENV_FILE restart proxy"
+echo -e "  The proxy token is already configured — no manual step needed."
+echo -e "  To route captures to your workspace, set ${YELLOW}PROXY_WORKSPACE_ID${RESET} in"
+echo -e "  ${YELLOW}lineagelens-deploy/.env${RESET} to your workspace slug (the value you used"
+echo -e "  when registering), then apply it with:"
+echo -e "  ${YELLOW}\$${RESET}  $COMPOSE --project-name $PROJECT_NAME -f $COMPOSE_FILE --env-file $ENV_FILE up -d proxy"
 echo ""
 echo -e "  ${BOLD}── Point your AI tools at the proxy ─────────────────────────────${RESET}"
 echo ""

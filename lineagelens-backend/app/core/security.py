@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import os
 import uuid
 from dataclasses import dataclass, replace as dc_replace
@@ -111,6 +112,38 @@ async def get_current_auth_context(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account is inactive.")
 
     return auth
+
+
+async def get_ingest_auth_context(
+    request: Request,
+    token: str | None = Depends(oauth2_scheme),
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_db_session),
+) -> AuthContext:
+    static = (settings.proxy_static_token or "").strip()
+    tok = (token or "").strip()
+    if static and tok and hmac.compare_digest(tok, static):
+        try:
+            body_bytes = await request.body()
+            data = json.loads(body_bytes)
+            workspace_id = str(
+                data.get("workspaceId") or data.get("workspace_id") or ""
+            ).strip()
+        except Exception:
+            workspace_id = ""
+        if not workspace_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Proxy ingest payload must include workspaceId.",
+            )
+        return AuthContext(
+            subject="proxy",
+            workspace_id=workspace_id,
+            scopes=settings.required_scopes_set,
+            token_type="proxy",
+            token_payload={},
+        )
+    return await get_current_auth_context(token=token, settings=settings, session=session)
 
 
 def authenticate_websocket(websocket: WebSocket, settings: Settings) -> AuthContext:

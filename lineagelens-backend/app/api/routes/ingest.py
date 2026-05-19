@@ -7,7 +7,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import AuthContext, ensure_workspace_scope, get_current_auth_context
+from app.core.security import AuthContext, ensure_workspace_scope, get_ingest_auth_context
 from app.db.session import get_db_session
 from app.schemas.provenance import IngestResponse
 from app.services.ingest_normalizer import extract_workspace_id, normalize_ingest_payload
@@ -23,7 +23,7 @@ async def ingest_provenance(
     payload: dict[str, Any],
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db_session)],
-    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+    auth: Annotated[AuthContext, Depends(get_ingest_auth_context)],
 ) -> IngestResponse:
     requested_workspace = extract_workspace_id(payload)
     ensure_workspace_scope(auth, requested_workspace)
