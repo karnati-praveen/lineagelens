@@ -141,17 +141,6 @@ I'd rather you find this list before you find these limits in production.
 
 ---
 
-## Contributing & feedback
-
-This is v1.1.5 — the first version I'd call "ready for outside testers." I want bug reports, design feedback, and "you're wrong about X because Y" replies more than I want stars.
-
-- **Issues:** <https://github.com/karnati-praveen/lineagelens/issues>
-- **Discussions:** <https://github.com/karnati-praveen/lineagelens/discussions>
-- **Security disclosure:** see `SECURITY.md` (or email the maintainer if you find something pre-disclosure)
-- **License:** MIT, see `LICENSE.txt`
-
-If you build a new agent adapter (Aider, Cline, Roo Code, Continue's text fallback), please PR it — the adapter contract is documented in [lineagelens-docs/lightweight-adapters.md](lineagelens-docs/lightweight-adapters.md).
-
 ---
 
 ## Roadmap

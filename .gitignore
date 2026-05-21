@@ -38,6 +38,11 @@ cli/node_modules/
 # Remotion video project
 lineagelens-ad/
 
+# Launch / docs working files
+pracodx
+lineagelens-prafea
+lineagelens-docs/
+
 # Marketing and automation docs (local only)
 lineagelens-marketing/
 lineagelens-n8n/
