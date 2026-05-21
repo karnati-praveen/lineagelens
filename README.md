@@ -4,7 +4,7 @@
 
 Captures the prompt, model, tool, file, and accept/reject status from every AI coding session — across Claude Code, Codex CLI, Gemini CLI, and VS Code-based editors — and stores it in your own infrastructure so you can answer "which code did AI write, with what prompt, by which model" without sending anything to a SaaS.
 
-![LineageLens dashboard](lineagelens-docs/assets/hero.png)
+[LineageLens website](https://lineage-website.vercel.app/)
 
 ## Install (pick one)
 
@@ -53,7 +53,7 @@ Self-hosted. MIT licensed. Free Base extension on the VS Code Marketplace and Op
 | **GitHub Copilot CLI** | Not supported. Proprietary endpoints, no public route. | — |
 | **Amazon Q Developer** | Not supported. AWS proprietary protocol. | — |
 
-If the tool you use isn't here, open an issue. The four-layer attribution model in [lineagelens-docs/lightweight-adapters.md](lineagelens-docs/lightweight-adapters.md) explains what's possible and what isn't.
+If the tool you use isn't here, open an issue.
 
 ---
 
@@ -84,8 +84,6 @@ export OPENAI_BASE_URL=http://localhost:8788
 ```
 
 Use Claude Code (or any of the supported CLI tools) as normal. Open <http://localhost:8787/dashboard> to see captures appear.
-
-Plus and Max have the same shape — see [lineagelens-docs/shipping-modes.md](lineagelens-docs/shipping-modes.md) for the full setup including Postgres / Neo4j requirements, the GitHub Actions risk-gate workflow, and the MCP server configuration.
 
 ---
 
@@ -125,8 +123,6 @@ The proxy intercepts traffic going to the AI provider. It does *not* modify requ
 
 The VS Code extension is independent. It watches `onDidChangeTextDocument` for 4+ line insertions and stores them locally or POSTs them to the backend when configured. No proxy involvement, no API key required for the free Base mode.
 
-Full architecture notes including the four-layer attribution model and the per-adapter parser logic: [lineagelens-docs/architecture.md](lineagelens-docs/architecture.md).
-
 ---
 
 ## What this isn't
@@ -140,7 +136,6 @@ Full architecture notes including the four-layer attribution model and the per-a
 I'd rather you find this list before you find these limits in production.
 
 ---
-
 ---
 
 ## Roadmap
