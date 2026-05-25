@@ -20,6 +20,7 @@ coverage.xml
 # Local agent/tooling state
 .agents/
 .claude/
+.github/agents/
 skills-lock.json
 pratry.md
 pratry.sh
