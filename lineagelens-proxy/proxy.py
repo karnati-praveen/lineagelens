@@ -23,6 +23,7 @@ import tempfile
 import time
 import urllib.parse
 import uuid
+from http import HTTPStatus
 from datetime import UTC, datetime
 
 import anyio
@@ -156,6 +157,28 @@ def _build_upstream_url(safe_path: str, raw_query: str) -> str:
     upstream_path = parsed.path.rstrip("/") + "/" + safe_path if safe_path else parsed.path
     return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, upstream_path, "", raw_query, ""))
 
+
+def _backend_url_points_to_proxy() -> bool:
+    try:
+        parsed = urllib.parse.urlparse(BACKEND_URL)
+    except Exception:
+        return False
+
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False
+
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+
+    proxy_hosts = {PROXY_HOST.strip().lower(), "localhost", "127.0.0.1", "0.0.0.0", "::1"}
+    return port == PROXY_PORT and host in proxy_hosts
+
 _DROP_REQ  = {"host", "content-length", "transfer-encoding", "connection",
               "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "upgrade"}
 _DROP_RESP = {"content-encoding", "transfer-encoding", "connection", "content-length"}
@@ -195,6 +218,16 @@ def _redact(text: str) -> str:
     return text
 
 
+def _redact_value(value):
+    if isinstance(value, str):
+        return _redact(value)
+    if isinstance(value, list):
+        return [_redact_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _redact_value(item) for key, item in value.items()}
+    return value
+
+
 def _fwd_headers(h) -> dict:
     forwarded = {k: v for k, v in h.items() if k.lower() not in _DROP_REQ}
     if "authorization" in {k.lower() for k in forwarded}:
@@ -206,11 +239,17 @@ def _resp_headers(h) -> dict:
     return {k: v for k, v in h.items() if k.lower() not in _DROP_RESP}
 
 
-def _is_streaming(body: bytes) -> bool:
+def _is_streaming(url: str, body: bytes) -> bool:
+    path = urllib.parse.urlparse(url).path.lower()
+    if ":streamgeneratecontent" in path or "/responses/stream" in path or path.endswith("/stream"):
+        return True
+
     try:
-        return bool(json.loads(body).get("stream", False))
+        parsed = json.loads(body)
     except Exception:
         return False
+
+    return bool(isinstance(parsed, dict) and parsed.get("stream", False))
 
 
 def _text_from_body(body: bytes, provider: str = "unknown") -> str:
@@ -1528,6 +1567,12 @@ async def _ingest_edit(
     provider: str,
 ) -> None:
     """Send a resolved structured edit to the backend."""
+    if _backend_url_points_to_proxy():
+        logger.error(
+            "BACKEND_URL points at the proxy itself — skipping edit capture to avoid leaking payloads upstream."
+        )
+        return
+
     if not INGEST_TOKEN:
         logger.debug("BACKEND_INGEST_TOKEN not configured — skipping edit capture")
         return
@@ -1536,6 +1581,9 @@ async def _ingest_edit(
     old_string = _redact(edit.get("old_string", "") or "")
     if not new_string and not old_string:
         return
+
+    redacted_messages = _redact_value(edit.get("_messages", []) or [])
+    redacted_system = _redact_value(edit.get("_system", "") or "")
 
     payload = {
         "id": str(uuid.uuid4()),
@@ -1548,9 +1596,9 @@ async def _ingest_edit(
         # _resolve_prompt_messages). Without these the dashboard has no
         # prompt or model to display, even though we captured them.
         "modelName": edit.get("_model", "") or "",
-        "promptMessages": edit.get("_messages", []) or [],
-        "systemPrompt": edit.get("_system", "") or "",
-        "provenance": {
+        "promptMessages": redacted_messages,
+        "systemPrompt": redacted_system,
+        "provenance": _redact_value({
             "source": "lineagelens-universal-proxy",
             "provider": provider,
             "toolUseId": edit.get("tool_use_id", ""),
@@ -1563,7 +1611,7 @@ async def _ingest_edit(
             "errorMessage": error_message,
             "sessionKey": session_key,
             "modelName": edit.get("_model", "") or "",
-        },
+        }),
     }
 
     try:
@@ -1594,6 +1642,11 @@ async def _ingest(
     upstream_status: int = 200,
 ) -> None:
     if not text.strip():
+        return
+    if _backend_url_points_to_proxy():
+        logger.error(
+            "BACKEND_URL points at the proxy itself — skipping capture to avoid leaking payloads upstream."
+        )
         return
     if not INGEST_TOKEN:
         logger.debug("BACKEND_INGEST_TOKEN not configured — skipping capture")
@@ -1638,13 +1691,7 @@ async def _ingest(
 
 @app.get("/proxy-health")
 async def proxy_health() -> dict:
-    return {
-        "status": "ok",
-        "upstream": UPSTREAM_URL,
-        "backend": BACKEND_URL,
-        "workspace": WORKSPACE_ID,
-        "tokenConfigured": bool(INGEST_TOKEN),
-    }
+    return {"status": "ok"}
 
 
 async def _handle_streaming(
@@ -1938,7 +1985,7 @@ async def proxy_request(request: Request, path: str) -> Response:
         req_body_dict = None
     file_path = extract_file_path(dict(request.headers), req_body_dict)
 
-    if _is_streaming(body):
+    if _is_streaming(url, body):
         return await _handle_streaming(
             request.method, url, headers, body, safe_path,
             provider=provider, file_path=file_path,
@@ -1961,6 +2008,257 @@ async def proxy_request(request: Request, path: str) -> Response:
         codex_prompt_context=codex_prompt_context,
         gemini_prompt_context=gemini_prompt_context,
     )
+
+
+def _split_http_target(target: str) -> tuple[str, str]:
+    parsed = urllib.parse.urlsplit(target)
+    if parsed.scheme and parsed.netloc:
+        path = parsed.path or "/"
+        query = parsed.query
+    else:
+        path, _, query = target.partition("?")
+        if not path:
+            path = "/"
+    return path.lstrip("/"), query
+
+
+async def _read_chunked_http_body(reader: asyncio.StreamReader) -> bytes:
+    chunks: list[bytes] = []
+    seen_bytes = 0
+
+    while True:
+        line = await asyncio.wait_for(reader.readline(), timeout=5.0)
+        if line in (b"", b"\n", b"\r\n"):
+            raise ValueError("Unexpected end of chunked request body.")
+
+        size_text = line.strip().split(b";", 1)[0]
+        try:
+            chunk_size = int(size_text, 16)
+        except ValueError as exc:
+            raise ValueError("Invalid chunked request body.") from exc
+
+        if chunk_size == 0:
+            while True:
+                trailer = await asyncio.wait_for(reader.readline(), timeout=5.0)
+                if trailer in (b"\r\n", b"\n", b""):
+                    break
+            break
+
+        chunk = await asyncio.wait_for(reader.readexactly(chunk_size), timeout=30.0)
+        terminator = await asyncio.wait_for(reader.readexactly(2), timeout=5.0)
+        if terminator != b"\r\n":
+            raise ValueError("Invalid chunked request body.")
+
+        seen_bytes += len(chunk)
+        if seen_bytes > MAX_BODY_BYTES:
+            raise ValueError("Request body too large")
+        chunks.append(chunk)
+
+    return b"".join(chunks)
+
+
+async def _read_http_request_body(reader: asyncio.StreamReader, headers: dict[str, str]) -> bytes:
+    transfer_encoding = headers.get("transfer-encoding", "").lower()
+    if "chunked" in transfer_encoding:
+        return await _read_chunked_http_body(reader)
+
+    content_length = headers.get("content-length", "").strip()
+    if not content_length:
+        return b""
+
+    try:
+        body_length = int(content_length)
+    except ValueError as exc:
+        raise ValueError("Invalid Content-Length header.") from exc
+
+    if body_length < 0 or body_length > MAX_BODY_BYTES:
+        raise ValueError("Request body too large")
+
+    if body_length == 0:
+        return b""
+
+    return await asyncio.wait_for(reader.readexactly(body_length), timeout=30.0)
+
+
+async def _read_http_request(
+    reader: asyncio.StreamReader,
+) -> tuple[str, str, str, list[tuple[str, str]], dict[str, str], bytes] | None:
+    request_line = await asyncio.wait_for(reader.readline(), timeout=15.0)
+    if request_line in (b"", b"\r\n", b"\n"):
+        return None
+
+    parts = request_line.rstrip(b"\r\n").split(b" ", 2)
+    if len(parts) < 2:
+        raise ValueError("Invalid HTTP request line.")
+
+    method = parts[0].decode("ascii", errors="replace").upper()
+    target = parts[1].decode("utf-8", errors="replace")
+    version = parts[2].decode("ascii", errors="replace") if len(parts) > 2 else "HTTP/1.1"
+
+    header_items: list[tuple[str, str]] = []
+    header_map: dict[str, str] = {}
+    for _ in range(100):
+        line = await asyncio.wait_for(reader.readline(), timeout=5.0)
+        if line in (b"\r\n", b"\n", b""):
+            break
+        if b":" not in line:
+            raise ValueError("Invalid HTTP header line.")
+
+        name_bytes, value_bytes = line.split(b":", 1)
+        name = name_bytes.decode("latin-1").strip()
+        value = value_bytes.decode("latin-1").strip()
+        header_items.append((name, value))
+        header_map[name.lower()] = value
+
+    body = await _read_http_request_body(reader, header_map)
+    return method, target, version, header_items, header_map, body
+
+
+async def _write_plain_http_error(
+    writer: asyncio.StreamWriter,
+    status_code: int,
+    message: str,
+) -> None:
+    try:
+        reason = HTTPStatus(status_code).phrase
+    except ValueError:
+        reason = "Error"
+
+    body = message.encode("utf-8")
+    writer.write(f"HTTP/1.1 {status_code} {reason}\r\n".encode("latin-1"))
+    writer.write(b"content-type: text/plain; charset=utf-8\r\n")
+    writer.write(f"content-length: {len(body)}\r\n".encode("ascii"))
+    writer.write(b"connection: close\r\n\r\n")
+    writer.write(body)
+    await writer.drain()
+
+
+async def _write_http_response(
+    writer: asyncio.StreamWriter,
+    response: Response,
+    method: str,
+) -> None:
+    try:
+        reason = HTTPStatus(response.status_code).phrase
+    except ValueError:
+        reason = "OK"
+
+    is_streaming = isinstance(response, StreamingResponse)
+    headers = list(getattr(response, "raw_headers", []))
+    if is_streaming:
+        headers = [
+            (name, value)
+            for name, value in headers
+            if name.lower() not in {b"content-length", b"transfer-encoding"}
+        ]
+        headers.append((b"transfer-encoding", b"chunked"))
+    else:
+        body = getattr(response, "body", b"") or b""
+        if isinstance(body, str):
+            body = body.encode("utf-8")
+        if not any(name.lower() == b"content-length" for name, _ in headers):
+            headers.append((b"content-length", str(len(body)).encode("ascii")))
+
+    writer.write(f"HTTP/1.1 {response.status_code} {reason}\r\n".encode("latin-1"))
+    for name, value in headers:
+        writer.write(name + b": " + value + b"\r\n")
+    writer.write(b"\r\n")
+
+    if method.upper() == "HEAD":
+        await writer.drain()
+        return
+
+    if is_streaming:
+        async for chunk in response.body_iterator:
+            if not chunk:
+                continue
+            if isinstance(chunk, str):
+                chunk = chunk.encode("utf-8")
+            writer.write(f"{len(chunk):X}\r\n".encode("ascii"))
+            writer.write(chunk)
+            writer.write(b"\r\n")
+            await writer.drain()
+
+        writer.write(b"0\r\n\r\n")
+        await writer.drain()
+        return
+
+    body = getattr(response, "body", b"") or b""
+    if isinstance(body, str):
+        body = body.encode("utf-8")
+    writer.write(body)
+    await writer.drain()
+
+
+async def _handle_mitm_http_requests(
+    client_reader: asyncio.StreamReader,
+    client_writer: asyncio.StreamWriter,
+    host: str,
+    port: int,
+) -> None:
+    while True:
+        try:
+            parsed_request = await _read_http_request(client_reader)
+        except asyncio.TimeoutError:
+            return
+        except ValueError as exc:
+            logger.warning("MITM HTTP parse error for %s:%s — %s", host, port, exc)
+            await _write_plain_http_error(client_writer, 400, str(exc))
+            return
+
+        if parsed_request is None:
+            return
+
+        method, target, version, header_items, header_map, body = parsed_request
+        safe_path, query = _split_http_target(target)
+        route_path = safe_path
+        scope_path = f"/{route_path}" if route_path else "/"
+
+        peer_name = client_writer.get_extra_info("peername")
+        client = None
+        if isinstance(peer_name, tuple) and len(peer_name) >= 2:
+            client = (str(peer_name[0]), int(peer_name[1]))
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.1"},
+            "http_version": version.split("/", 1)[-1] if "/" in version else version,
+            "method": method,
+            "scheme": "https",
+            "path": scope_path,
+            "raw_path": scope_path.encode("utf-8"),
+            "query_string": query.encode("utf-8"),
+            "headers": [
+                (name.lower().encode("latin-1"), value.encode("latin-1"))
+                for name, value in header_items
+            ],
+            "client": client,
+            "server": (host, port),
+        }
+
+        sent_request = False
+
+        async def receive():
+            nonlocal sent_request
+            if sent_request:
+                return {"type": "http.disconnect"}
+            sent_request = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        request = Request(scope, receive)
+
+        try:
+            response = await proxy_request(request, route_path)
+        except Exception as exc:
+            logger.exception("MITM proxy request failed for %s %s: %s", method, target, exc)
+            await _write_plain_http_error(client_writer, 502, "Bad Gateway")
+            return
+
+        try:
+            await _write_http_response(client_writer, response, method)
+        except Exception as exc:
+            logger.debug("MITM response relay failed for %s %s: %s", method, target, exc)
+            return
 
 
 # ── HTTPS CONNECT tunnel server ───────────────────────────────────────────────
@@ -2127,7 +2425,6 @@ async def _write_temp_pem(data: bytes, suffix: str = ".pem") -> str:
 async def _mitm_upgrade_client_tls(
     host: str,
     client_writer: asyncio.StreamWriter,
-    up_writer: asyncio.StreamWriter,
 ) -> bool:
     """Upgrade the inbound client connection to TLS for MITM interception.
 
@@ -2157,9 +2454,8 @@ async def _mitm_upgrade_client_tls(
         return True
     except Exception as exc:
         logger.warning(
-            "MITM TLS upgrade failed for %s: %s — transparent fallback", host, exc
+            "MITM TLS upgrade failed for %s: %s", host, exc
         )
-        up_writer.close()
         return False
     finally:
         for f in (cert_file, key_file):
@@ -2181,18 +2477,21 @@ async def _handle_connect_client(
             return
         host, port = result
 
-        up_pair = await _connect_to_upstream(host, port, client_writer)
-        if up_pair is None:
-            return
-        up_reader, up_writer = up_pair
-
         client_writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
         await client_writer.drain()
 
         if PROXY_CA_CERT_PATH and PROXY_CA_KEY_PATH:
-            ok = await _mitm_upgrade_client_tls(host, client_writer, up_writer)
+            ok = await _mitm_upgrade_client_tls(host, client_writer)
             if not ok:
                 return
+
+            await _handle_mitm_http_requests(client_reader, client_writer, host, port)
+            return
+
+        up_pair = await _connect_to_upstream(host, port, client_writer)
+        if up_pair is None:
+            return
+        up_reader, up_writer = up_pair
 
         await asyncio.gather(
             _pipe(client_reader, up_writer),
@@ -2241,13 +2540,13 @@ if __name__ == "__main__":
         logger.info("CONNECT  : port %d", PROXY_CONNECT_PORT)
 
         # Guard: BACKEND_URL must not point at the proxy itself.
-        _proxy_self = f"http://{PROXY_HOST}:{PROXY_PORT}"
-        if BACKEND_URL.rstrip("/") in (_proxy_self, f"http://localhost:{PROXY_PORT}", f"http://127.0.0.1:{PROXY_PORT}"):
+        if _backend_url_points_to_proxy():
             logger.error(
                 "MISCONFIGURATION: BACKEND_URL (%s) points at the proxy itself — ingest calls would loop. "
                 "Set BACKEND_URL to the LineageLens backend address.",
                 BACKEND_URL,
             )
+            raise SystemExit(1)
 
         if not INGEST_TOKEN:
             logger.warning("BACKEND_INGEST_TOKEN is not set — all AI captures will be skipped.")

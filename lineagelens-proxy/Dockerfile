@@ -12,7 +12,7 @@ RUN addgroup --system app && adduser --system --ingroup app app
 
 COPY --chown=app:app proxy.py ./
 
-EXPOSE 8788
+EXPOSE 8788 8789
 
 USER app
 

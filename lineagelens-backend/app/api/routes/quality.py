@@ -9,7 +9,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import AuthContext, get_current_auth_context
+from app.core.security import (
+    AuthContext,
+    build_record_visibility_clause,
+    get_current_auth_context,
+    get_verified_user_role,
+)
 from app.db.models import ProvenanceRecord
 from app.db.session import get_db_session
 from app.services.quality_service import compute_code_metrics
@@ -37,6 +42,14 @@ async def get_record_quality(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found.")
 
+    role = await get_verified_user_role(session, auth)
+    access_clause = build_record_visibility_clause(
+        ProvenanceRecord.uuid,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        is_admin=role == "admin",
+    )
+
     result = await session.execute(
         select(
             ProvenanceRecord.uuid,
@@ -48,6 +61,7 @@ async def get_record_quality(
         .where(
             ProvenanceRecord.uuid == parsed_uuid,
             ProvenanceRecord.workspace_id == auth.workspace_id,
+            access_clause,
         )
     )
     row = result.one_or_none()
@@ -81,6 +95,14 @@ async def batch_quality(
     if not parsed_uuids:
         return {"results": [], "summary": {"count": 0}}
 
+    role = await get_verified_user_role(session, auth)
+    access_clause = build_record_visibility_clause(
+        ProvenanceRecord.uuid,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        is_admin=role == "admin",
+    )
+
     result = await session.execute(
         select(
             ProvenanceRecord.uuid,
@@ -92,6 +114,7 @@ async def batch_quality(
         .where(
             ProvenanceRecord.uuid.in_(parsed_uuids),
             ProvenanceRecord.workspace_id == auth.workspace_id,
+            access_clause,
         )
     )
     rows = result.all()

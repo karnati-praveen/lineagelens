@@ -2,7 +2,7 @@
 set -e
 
 if echo "$DATABASE_URL" | grep -q "sqlite"; then
-  echo "LineageLens lite mode — SQLite, no migrations needed"
+  echo "LineageLens lite mode — SQLite, startup schema checks handled by the app"
 else
   echo "LineageLens — running Alembic migrations"
   alembic upgrade head

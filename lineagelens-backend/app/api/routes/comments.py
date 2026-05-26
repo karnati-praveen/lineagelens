@@ -9,7 +9,13 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import log_audit_event
-from app.core.security import AuthContext, get_current_auth_context, require_role
+from app.core.security import (
+    AuthContext,
+    build_record_visibility_clause,
+    get_current_auth_context,
+    get_verified_user_role,
+    require_role,
+)
 from app.db.models import ProvenanceComment, ProvenanceRecord
 from app.db.session import get_db_session
 
@@ -33,7 +39,12 @@ def _get_client_ip(request: Request) -> str | None:
     return None
 
 
-async def _assert_record_exists(session: AsyncSession, record_uuid: str, workspace_id: str) -> None:
+async def _assert_record_exists(
+    session: AsyncSession,
+    record_uuid: str,
+    workspace_id: str,
+    access_filters: list[object] | None = None,
+) -> None:
     import uuid as uuid_pkg
 
     try:
@@ -49,6 +60,7 @@ async def _assert_record_exists(session: AsyncSession, record_uuid: str, workspa
             and_(
                 ProvenanceRecord.uuid == parsed_uuid,
                 ProvenanceRecord.workspace_id == workspace_id,
+                *([] if access_filters is None else access_filters),
             )
         )
     )
@@ -74,7 +86,15 @@ async def add_comment(
             detail="Workspace mismatch.",
         )
 
-    await _assert_record_exists(session, record_uuid, auth.workspace_id)
+    role = await get_verified_user_role(session, auth)
+    access_clause = build_record_visibility_clause(
+        ProvenanceRecord.uuid,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        is_admin=role == "admin",
+    )
+
+    await _assert_record_exists(session, record_uuid, auth.workspace_id, [access_clause])
 
     comment = ProvenanceComment(
         workspace_id=auth.workspace_id,
@@ -114,7 +134,15 @@ async def list_comments(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> dict:
     """List comments on a provenance record."""
-    await _assert_record_exists(session, record_uuid, auth.workspace_id)
+    role = await get_verified_user_role(session, auth)
+    access_clause = build_record_visibility_clause(
+        ProvenanceRecord.uuid,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        is_admin=role == "admin",
+    )
+
+    await _assert_record_exists(session, record_uuid, auth.workspace_id, [access_clause])
 
     result = await session.execute(
         select(ProvenanceComment)
@@ -198,7 +226,7 @@ async def delete_comment(
         )
 
     record_uuid = comment.record_uuid
-    session.delete(comment)
+    await session.delete(comment)
 
     await log_audit_event(
         session,

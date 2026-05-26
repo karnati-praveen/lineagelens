@@ -6,7 +6,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import AuthContext, ensure_workspace_scope, get_current_auth_context
+from app.core.security import (
+    AuthContext,
+    build_record_visibility_clause,
+    ensure_workspace_scope,
+    get_current_auth_context,
+    get_verified_user_role,
+)
+from app.db.models import ProvenanceRecord
 from app.db.session import get_db_session
 from app.services.provenance_service import get_provenance_by_uuid
 
@@ -147,7 +154,19 @@ async def get_record_lineage(
     neo4j_service = _get_neo4j(request)
 
     # Verify record exists in this workspace
-    record = await get_provenance_by_uuid(session, record_uuid, auth.workspace_id)
+    role = await get_verified_user_role(session, auth)
+    access_clause = build_record_visibility_clause(
+        ProvenanceRecord.uuid,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        is_admin=role == "admin",
+    )
+    record = await get_provenance_by_uuid(
+        session,
+        record_uuid,
+        auth.workspace_id,
+        access_filters=[access_clause],
+    )
     if record is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -43,41 +43,10 @@ async def register_user(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AuthTokenResponse:
-    username = normalize_username(payload.username)
-    validate_password_strength(payload.password, settings)
-
-    existing_user = await get_user_by_username(session, username)
-    if existing_user is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Username is already registered.",
-        )
-
-    workspace_id = normalize_workspace_id(payload.workspace_id) or create_default_workspace_id(username)
-
-    workspace_count = await get_workspace_user_count(session, workspace_id)
-    role = "admin" if workspace_count == 0 else "member"
-
-    user = UserAccount(
-        username=username,
-        password_hash=hash_password(payload.password),
-        workspace_id=workspace_id,
-        role=role,
-        is_active=True,
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Self-service registration is disabled. Use /setup for first-time setup or /team/invite for new members.",
     )
-
-    session.add(user)
-    try:
-        await session.commit()
-        await session.refresh(user)
-    except IntegrityError:
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Username is already registered.",
-        )
-
-    return await issue_token_response(session, user, settings)
 
 
 @router.post("/login")

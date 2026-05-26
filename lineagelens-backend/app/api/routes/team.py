@@ -13,7 +13,14 @@ from app.api.routes.auth import normalize_username, validate_password_strength
 from app.core.audit import log_audit_event
 from app.core.config import Settings, get_settings
 from app.core.mode_guard import require_non_solo
-from app.core.security import AuthContext, get_current_auth_context, hash_password, require_admin
+from app.core.security import (
+    AuthContext,
+    build_record_visibility_clause,
+    get_current_auth_context,
+    get_verified_user_role,
+    hash_password,
+    require_admin,
+)
 from app.db.models import ProvenanceRecord, UserAccount
 from app.db.session import get_db_session
 from app.schemas.team import InviteMemberRequest, InviteMemberResponse, TeamMembersResponse
@@ -37,6 +44,14 @@ async def list_team_members(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> TeamMembersResponse:
+    role = await get_verified_user_role(session, auth)
+    access_clause = build_record_visibility_clause(
+        ProvenanceRecord.uuid,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        is_admin=role == "admin",
+    )
+
     users_stmt = (
         select(UserAccount)
         .where(UserAccount.workspace_id == auth.workspace_id, UserAccount.is_active.is_(True))
@@ -47,7 +62,7 @@ async def list_team_members(
 
     counts_stmt = (
         select(ProvenanceRecord.user_id, func.count(ProvenanceRecord.id).label("cnt"))
-        .where(ProvenanceRecord.workspace_id == auth.workspace_id)
+        .where(ProvenanceRecord.workspace_id == auth.workspace_id, access_clause)
         .group_by(ProvenanceRecord.user_id)
     )
     counts_result = await session.execute(counts_stmt)

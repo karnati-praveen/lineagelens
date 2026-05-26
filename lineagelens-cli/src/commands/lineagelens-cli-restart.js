@@ -5,8 +5,11 @@ const { start } = require('./lineagelens-cli-start');
 
 async function restart(mode, opts) {
   console.log(`Restarting LineageLens ${mode.toUpperCase()}...\n`);
-  stop(mode, { volumes: false });  // stop without removing volumes
-  await start(mode);
+  const stopCode = stop(mode, { volumes: false }, { exitProcess: false });
+  if (stopCode !== 0) {
+    process.exit(stopCode);
+  }
+  await start(mode, opts);
 }
 
 module.exports = { restart };

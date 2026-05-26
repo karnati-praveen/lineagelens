@@ -75,7 +75,7 @@ async def register_webhook(
     body: WebhookRegisterRequest,
     request: Request,
     auth: Annotated[AuthContext, Depends(require_admin)],
-) -> WebhookConfig:
+) -> WebhookConfigPublic:
     """Register a new webhook for the authenticated workspace (admin only)."""
     parsed_url = urlparse(body.url)
     if parsed_url.scheme not in ("http", "https") or not parsed_url.netloc:
@@ -112,7 +112,7 @@ async def register_webhook(
         config.url,
         config.risk_threshold,
     )
-    return config
+    return WebhookConfigPublic(**{k: v for k, v in config.model_dump().items() if k != "secret"})
 
 
 @router.get("")

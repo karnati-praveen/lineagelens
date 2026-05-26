@@ -223,6 +223,8 @@ async def sso_callback(
     provider = result.scalar_one_or_none()
     if provider is None:
         raise HTTPException(status_code=400, detail="SSO provider no longer exists.")
+    if not provider.enabled:
+        raise HTTPException(status_code=404, detail="Provider not found or disabled.")
 
     redirect_uri = str(request.base_url).rstrip("/") + "/auth/sso/callback"
 

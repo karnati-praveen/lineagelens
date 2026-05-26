@@ -32,8 +32,8 @@ cp lineagelens-deploy/.env.plus.example lineagelens-deploy/.env.plus
 # Edit required values:
 # - POSTGRES_PASSWORD
 # - JWT_SECRET_KEY (generate: openssl rand -hex 32)
-# - REFRESH_SECRET_KEY (generate: openssl rand -hex 32)
-# - LINEAGELENS_ADMIN_USERNAME / LINEAGELENS_ADMIN_PASSWORD
+# - JWT_REFRESH_SECRET_KEY (generate a different secret: openssl rand -hex 32)
+# - Open https://localhost:8787/setup in the browser and complete the setup wizard
 
 docker compose -f lineagelens-deploy/docker-compose.plus.yml up -d
 ```
@@ -58,9 +58,9 @@ lineagelens status
 Before going to production:
 
 - [ ] Set `APP_ENV=production` — enables HSTS, disables debug endpoints
-- [ ] Use strong, unique `JWT_SECRET_KEY` and `REFRESH_SECRET_KEY` (>=32 bytes)
-- [ ] Set `TRUSTED_HOSTS` to your domain(s)
-- [ ] Configure `CORS_ORIGINS` to your frontend domain only
+- [ ] Use strong, unique `JWT_SECRET_KEY` and `JWT_REFRESH_SECRET_KEY` (>=32 bytes)
+- [ ] Set `BACKEND_TRUSTED_HOSTS` to your domain(s)
+- [ ] Configure `BACKEND_CORS_ORIGINS` to your frontend domain only
 - [ ] Put the backend behind a reverse proxy (nginx/Caddy) with TLS
 - [ ] Set `POSTGRES_PASSWORD` to a strong, unique password
 - [ ] Configure `REDIS_URL` for multi-replica deployments
@@ -198,17 +198,17 @@ Developer machines  ->  LLM Proxy (port 8788)  ->  AI Providers
 |---|---|---|---|
 | `DATABASE_URL` | Yes | — | PostgreSQL async URL (`postgresql+asyncpg://...`) |
 | `JWT_SECRET_KEY` | Yes | — | Access token signing key (>=32 bytes) |
-| `REFRESH_SECRET_KEY` | Yes | — | Refresh token signing key (>=32 bytes) |
+| `JWT_REFRESH_SECRET_KEY` | Yes | — | Refresh token signing key (>=32 bytes, different from `JWT_SECRET_KEY`) |
 | `APP_ENV` | No | `development` | Set to `production` for security headers + HSTS |
 | `REDIS_URL` | No | — | Redis URL for distributed rate limiting |
 | `NEO4J_URI` | No | — | Neo4j bolt URI (Max mode only) |
-| `NEO4J_USER` | No | `neo4j` | Neo4j username |
+| `NEO4J_USERNAME` | No | `neo4j` | Neo4j username |
 | `NEO4J_PASSWORD` | No | — | Neo4j password |
-| `OPENAI_API_KEY` | No | — | For pgvector embeddings (semantic search) |
+| `EMBEDDING_API_KEY` | No | — | For embedding-backed semantic search |
 | `LOG_FORMAT` | No | text | Set to `json` for structured logging |
-| `CORS_ORIGINS` | No | `*` | Comma-separated allowed origins |
-| `TRUSTED_HOSTS` | No | — | Comma-separated allowed Host header values |
-| `PRODUCT_MODE` | No | `plus` | `base`, `plus`, or `max` |
+| `BACKEND_CORS_ORIGINS` | No | `*` | Comma-separated allowed origins |
+| `BACKEND_TRUSTED_HOSTS` | No | — | Comma-separated allowed Host header values |
+| `BACKEND_MODE` | No | `team` | `solo`, `team`, or `enterprise` |
 
 ---
 

@@ -8,7 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import AuthContext, get_current_auth_context
+from app.core.security import (
+    AuthContext,
+    build_record_visibility_clause,
+    get_current_auth_context,
+    get_verified_user_role,
+)
 from app.db.models import ProvenanceRecord
 from app.db.session import get_db_session
 
@@ -39,12 +44,21 @@ async def file_evolution(
     Return all provenance records for a file path in chronological order,
     showing how AI insertions evolved over time.
     """
+    role = await get_verified_user_role(session, auth)
+    access_clause = build_record_visibility_clause(
+        ProvenanceRecord.uuid,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        is_admin=role == "admin",
+    )
+
     result = await session.execute(
         select(ProvenanceRecord)
         .where(
             and_(
                 ProvenanceRecord.workspace_id == auth.workspace_id,
                 ProvenanceRecord.file_path == file_path,
+                access_clause,
             )
         )
         .order_by(ProvenanceRecord.timestamp_iso.asc())
@@ -70,6 +84,14 @@ async def compare_records(
     """
     import uuid as uuid_pkg
 
+    role = await get_verified_user_role(session, auth)
+    access_clause = build_record_visibility_clause(
+        ProvenanceRecord.uuid,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        is_admin=role == "admin",
+    )
+
     parsed = []
     for uid in (a, b):
         try:
@@ -82,6 +104,7 @@ async def compare_records(
             and_(
                 ProvenanceRecord.workspace_id == auth.workspace_id,
                 ProvenanceRecord.uuid.in_(parsed),
+                access_clause,
             )
         )
     )

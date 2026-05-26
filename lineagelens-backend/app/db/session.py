@@ -5,12 +5,24 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from fastapi import Request
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
+
+_CURRENT_ALEMBIC_HEAD = "202501240001"
+_SQLITE_PROVENANCE_COLUMNS = {
+    "risk_score": "INTEGER",
+    "token_count": "INTEGER",
+    "cost_usd": "FLOAT",
+    "is_redacted": "BOOLEAN NOT NULL DEFAULT 0",
+}
+_SQLITE_PROVENANCE_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_provenance_records_risk_score ON provenance_records (risk_score)",
+    "CREATE INDEX IF NOT EXISTS ix_provenance_workspace_risk ON provenance_records (workspace_id, risk_score)",
+)
 
 
 def _is_sqlite(url: str) -> bool:
@@ -57,6 +69,22 @@ async def get_db_session(request: Request) -> AsyncGenerator[AsyncSession, None]
         yield session
 
 
+def _upgrade_sqlite_schema(connection) -> None:
+    inspector = inspect(connection)
+    if "provenance_records" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("provenance_records")}
+    for column_name, column_sql in _SQLITE_PROVENANCE_COLUMNS.items():
+        if column_name not in existing_columns:
+            connection.exec_driver_sql(
+                f"ALTER TABLE provenance_records ADD COLUMN {column_name} {column_sql}"
+            )
+
+    for statement in _SQLITE_PROVENANCE_INDEXES:
+        connection.exec_driver_sql(statement)
+
+
 async def initialize_database(engine: AsyncEngine) -> None:
     url_str = str(engine.url)
 
@@ -70,7 +98,8 @@ async def initialize_database(engine: AsyncEngine) -> None:
             os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        logger.info("SQLite database initialised (create_all).")
+            await conn.run_sync(_upgrade_sqlite_schema)
+        logger.info("SQLite database initialised (create_all + schema upgrade).")
         return
 
     # Postgres: verify migrations have been applied
@@ -91,10 +120,28 @@ async def initialize_database(engine: AsyncEngine) -> None:
         revision = await connection.execute(
             text("SELECT version_num FROM alembic_version LIMIT 1")
         )
-        if not revision.scalar_one_or_none():
+        current_revision = revision.scalar_one_or_none()
+        if current_revision != _CURRENT_ALEMBIC_HEAD:
             raise RuntimeError(
-                "Database migration history is empty. "
+                f"Database schema is not at Alembic head ({_CURRENT_ALEMBIC_HEAD}). "
                 "Run 'alembic upgrade head' before starting the API."
+            )
+
+        provenance_columns = await connection.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'public' "
+                "AND table_name = 'provenance_records' "
+                "AND column_name IN ('risk_score', 'token_count', 'cost_usd', 'is_redacted')"
+            )
+        )
+        present_columns = set(provenance_columns.scalars().all())
+        missing_columns = {"risk_score", "token_count", "cost_usd", "is_redacted"} - present_columns
+        if missing_columns:
+            missing_list = ", ".join(sorted(missing_columns))
+            raise RuntimeError(
+                "Database schema is out of date: 'provenance_records' is missing columns "
+                f"{missing_list}. Run 'alembic upgrade head'."
             )
 
         role_check = await connection.execute(

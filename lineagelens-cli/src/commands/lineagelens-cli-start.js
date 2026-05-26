@@ -6,7 +6,7 @@ const { ensureEnv } = require('../utils/lineagelens-cli-env');
 const { out, err, isJsonMode } = require('../utils/lineagelens-cli-output');
 const { setActiveMode } = require('../utils/lineagelens-cli-config');
 
-const COMPOSE_DIR = path.join(__dirname, '..', '..', '..', 'lineagelens-deploy');
+const COMPOSE_DIR = path.join(__dirname, '..', '..', 'deploy');
 
 async function waitForBackend(timeoutMs = 30000) {
   const start = Date.now();
@@ -26,7 +26,7 @@ async function waitForBackend(timeoutMs = 30000) {
 async function start(mode, opts = {}) {
   checkDocker();
 
-  const composeFile = path.join(COMPOSE_DIR, `docker-compose.${mode}.yml`);
+  const composeFile = path.join(COMPOSE_DIR, `lineagelens-cli-docker-compose.${mode}.yml`);
   const envFile = await ensureEnv(mode, { nonInteractive: opts.nonInteractive });
 
   if (!isJsonMode()) {

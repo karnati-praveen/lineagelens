@@ -5,13 +5,13 @@ const fs = require('node:fs');
 const { checkDocker, runCompose } = require('../utils/lineagelens-cli-docker');
 const { envFilePath } = require('../utils/lineagelens-cli-env');
 
-const COMPOSE_DIR = path.join(__dirname, '..', '..', '..', 'lineagelens-deploy');
+const COMPOSE_DIR = path.join(__dirname, '..', '..', 'deploy');
 
 function logs(opts) {
   checkDocker();
 
   const mode = opts.mode || 'plus';
-  const composeFile = path.join(COMPOSE_DIR, `docker-compose.${mode}.yml`);
+  const composeFile = path.join(COMPOSE_DIR, `lineagelens-cli-docker-compose.${mode}.yml`);
   const envFile = envFilePath(mode);
 
   if (!fs.existsSync(envFile)) {

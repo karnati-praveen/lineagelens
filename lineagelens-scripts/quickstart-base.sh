@@ -35,7 +35,7 @@ else
     echo -e "  Install manually:"
     echo -e "  1. Open VS Code"
     echo -e "  2. Press ${BOLD}Ctrl+P${RESET} (or Cmd+P on Mac)"
-    echo -e "  3. Type: ${CYAN}ext install lineagelens.lineagelens-base${RESET}"
+    echo -e "  3. Type: ${CYAN}ext install karnatipraveen.lineagelens${RESET}"
     echo ""
     exit 0
 fi
@@ -53,7 +53,7 @@ if [[ -n "$VSIX" ]]; then
 else
     # Install from marketplace
     info "Installing lineagelens-base from VS Code Marketplace..."
-    $CODE --install-extension lineagelens.lineagelens-base
+    $CODE --install-extension karnatipraveen.lineagelens
     ok "Extension installed from Marketplace."
 fi
 

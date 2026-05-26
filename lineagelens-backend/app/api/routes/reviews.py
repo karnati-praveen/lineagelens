@@ -158,5 +158,5 @@ async def delete_review(
     if item is None:
         raise HTTPException(status_code=404, detail="Review not found.")
 
-    session.delete(item)
+    await session.delete(item)
     await session.commit()

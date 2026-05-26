@@ -50,12 +50,11 @@ docker --version
 $COMPOSE version
 ok "Docker is ready."
 
-# ── 2. Free port 8787 if blocked ─────────────────────────────────────────────
+# ── 2. Check port 8787 for conflicts ─────────────────────────────────────────
 CIDS=$(docker ps -q --filter "publish=8787" 2>/dev/null || true)
 if [[ -n "$CIDS" ]]; then
-    info "Port 8787 in use — stopping conflicting container(s)..."
-    docker stop $CIDS >/dev/null 2>&1 || true
-    ok "Port 8787 freed."
+    CONTAINERS=$(docker ps --filter "publish=8787" --format '{{.Names}}' 2>/dev/null | tr '\n' ' ')
+    die "Port 8787 is already in use by container(s): ${CONTAINERS:-$CIDS}. Stop them manually and re-run."
 fi
 
 # ── 3. Generate secrets ───────────────────────────────────────────────────────

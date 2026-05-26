@@ -51,7 +51,7 @@ function prompt(question) {
 
 /**
  * Ensure env file exists and is populated for the given mode.
- * @param {string} mode - 'lite' | 'plus' | 'max'
+ * @param {string} mode - 'plus' | 'max'
  * @param {{ nonInteractive?: boolean }} opts
  */
 async function ensureEnv(mode, opts = {}) {
@@ -71,6 +71,15 @@ async function ensureEnv(mode, opts = {}) {
     return existing[key] !== undefined ? existing[key] : fallback;
   }
 
+  function legacyNeo4jPassword() {
+    const legacyAuth = existing.NEO4J_AUTH || '';
+    const slashIndex = legacyAuth.indexOf('/');
+    if (slashIndex === -1) {
+      return '';
+    }
+    return legacyAuth.slice(slashIndex + 1).trim();
+  }
+
   const vars = {
     POSTGRES_PASSWORD: keep('POSTGRES_PASSWORD', randomSecret(16)),
     JWT_SECRET_KEY: keep('JWT_SECRET_KEY', randomSecret(32)),
@@ -84,16 +93,14 @@ async function ensureEnv(mode, opts = {}) {
   };
 
   if (mode === 'max') {
-    vars.NEO4J_AUTH = keep('NEO4J_AUTH', '');
-    vars.NEO4J_BOLT_URL = keep('NEO4J_BOLT_URL', '');
+    vars.NEO4J_PASSWORD = keep('NEO4J_PASSWORD', legacyNeo4jPassword() || randomSecret(16));
   }
 
   if (nonInteractive) {
     // Auto-fill all empty optional fields with defaults
     if (!vars.BACKEND_LOG_LEVEL) vars.BACKEND_LOG_LEVEL = 'INFO';
     if (mode === 'max') {
-      if (!vars.NEO4J_AUTH) vars.NEO4J_AUTH = 'neo4j/changeme';
-      if (!vars.NEO4J_BOLT_URL) vars.NEO4J_BOLT_URL = 'bolt://neo4j:7687';
+      if (!vars.NEO4J_PASSWORD) vars.NEO4J_PASSWORD = randomSecret(16);
     }
   } else {
     // Only prompt for values that are not already set
@@ -108,13 +115,9 @@ async function ensureEnv(mode, opts = {}) {
     }
 
     if (mode === 'max') {
-      if (!vars.NEO4J_AUTH) {
-        const neo4jAuth = await prompt('Neo4j auth (format: neo4j/password, default: neo4j/changeme): ');
-        vars.NEO4J_AUTH = neo4jAuth || 'neo4j/changeme';
-      }
-      if (!vars.NEO4J_BOLT_URL) {
-        const neo4jBolt = await prompt('Neo4j Bolt URL (default: bolt://neo4j:7687): ');
-        vars.NEO4J_BOLT_URL = neo4jBolt || 'bolt://neo4j:7687';
+      if (!vars.NEO4J_PASSWORD) {
+        const neo4jPassword = await prompt('Neo4j password for Max mode (press Enter to auto-generate): ');
+        vars.NEO4J_PASSWORD = neo4jPassword || randomSecret(16);
       }
     }
 

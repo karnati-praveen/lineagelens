@@ -223,27 +223,85 @@ export class BackendStorageService implements ProvenanceStorageService {
     resource?: vscode.Uri
   ): Promise<Record<string, unknown>> {
     const pathStyleUrl = joinUrl(baseUrl, '/provenance/' + encodeURIComponent(uuid));
-    const queryStyleUrl = joinUrl(baseUrl, '/provenance?uuid=' + encodeURIComponent(uuid));
 
     const pathStyleResponse = await this.requestJson('GET', pathStyleUrl, resource);
     if (pathStyleResponse.statusCode >= 200 && pathStyleResponse.statusCode < 300) {
       return extractRecordObject(pathStyleResponse.body);
     }
 
-    const queryStyleResponse = await this.requestJson('GET', queryStyleUrl, resource);
-    if (queryStyleResponse.statusCode >= 200 && queryStyleResponse.statusCode < 300) {
-      return extractRecordObject(queryStyleResponse.body);
+    if (pathStyleResponse.statusCode === 404) {
+      throw new Error('Provenance record not found for UUID ' + uuid + '.');
     }
 
     throw new Error(
       'Failed to fetch provenance record for UUID ' +
         uuid +
-        '. Backend responses: ' +
+        '. Backend response status: ' +
         String(pathStyleResponse.statusCode) +
-        ' and ' +
-        String(queryStyleResponse.statusCode) +
         '.'
     );
+  }
+
+  public async flagRecord(uuid: string, reason?: string, resource?: vscode.Uri): Promise<void> {
+    const targetUuid = uuid.trim();
+    if (!targetUuid) {
+      throw new Error('Record UUID is required.');
+    }
+
+    const workspaceId = await this.authSession.getWorkspaceId(resource, true);
+    if (!workspaceId) {
+      throw new Error('Backend authentication is required. Run AI Insertion Detector: Backend Login.');
+    }
+
+    const baseUrl = this.getBackendBaseUrl(resource);
+    const endpointUrl = joinUrl(baseUrl, '/provenance/' + encodeURIComponent(targetUuid) + '/tags');
+    const response = await this.requestJson(
+      'POST',
+      endpointUrl,
+      resource,
+      {
+        tags: this.buildFlagTags(reason),
+        workspaceId
+      }
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw new Error('Flag request failed with status ' + String(response.statusCode) + ' at ' + endpointUrl + '.');
+    }
+  }
+
+  public async addRecordToReviewQueue(
+    uuid: string,
+    notes?: string,
+    resource?: vscode.Uri
+  ): Promise<void> {
+    const targetUuid = uuid.trim();
+    if (!targetUuid) {
+      throw new Error('Record UUID is required.');
+    }
+
+    const workspaceId = await this.authSession.getWorkspaceId(resource, true);
+    if (!workspaceId) {
+      throw new Error('Backend authentication is required. Run AI Insertion Detector: Backend Login.');
+    }
+
+    const baseUrl = this.getBackendBaseUrl(resource);
+    const endpointUrl = joinUrl(baseUrl, '/reviews');
+    const trimmedNotes = notes?.trim() ?? '';
+    const response = await this.requestJson(
+      'POST',
+      endpointUrl,
+      resource,
+      {
+        workspaceId,
+        recordUuid: targetUuid,
+        notes: trimmedNotes.length > 0 ? trimmedNotes : undefined
+      }
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw new Error('Review queue request failed with status ' + String(response.statusCode) + ' at ' + endpointUrl + '.');
+    }
   }
 
   private async fetchExplanation(
@@ -383,6 +441,17 @@ export class BackendStorageService implements ProvenanceStorageService {
     }
 
     return trimmedPath.startsWith('/') ? trimmedPath : '/' + trimmedPath;
+  }
+
+  private buildFlagTags(reason?: string): string[] {
+    const tags = ['flagged'];
+    const normalizedReason = (reason ?? '').trim().toLowerCase().replace(/\s+/g, '-').slice(0, 64);
+
+    if (normalizedReason.length > 0 && normalizedReason !== 'flagged') {
+      tags.push(normalizedReason);
+    }
+
+    return tags;
   }
 }
 

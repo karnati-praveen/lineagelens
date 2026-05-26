@@ -49,7 +49,7 @@ from app.api.routes.scheduled_reports import router as scheduled_reports_router
 from app.api.routes.sso import router as sso_router
 from app.api.routes.setup import router as setup_router
 from app.core.config import Settings, get_settings
-from app.core.rate_limit import InMemoryRateLimiter, client_identifier, effective_client_ip
+from app.core.rate_limit import InMemoryRateLimiter, effective_client_ip
 from app.db.session import create_engine_from_settings, create_session_factory, initialize_database
 from app.services.neo4j_service import Neo4jLineageService
 
@@ -81,12 +81,14 @@ def get_runtime_settings(request: Request) -> Settings:
     return get_settings()
 
 
-def get_client_ip(request: Request) -> str:
+def get_client_ip(request: Request, settings: Settings | None = None) -> str:
+    current_settings = settings or get_runtime_settings(request)
     peer_host = request.client.host if request.client else None
     return effective_client_ip(
         peer_host,
         request.headers.get("x-forwarded-for", ""),
         request.headers.get("x-real-ip", ""),
+        current_settings.trusted_proxy_ips,
     )
 
 
@@ -178,9 +180,7 @@ class SetupGuardMiddleware:
                     await self.app(scope, receive, send)
                     return
         except Exception:
-            # If DB is not ready yet, let the request through so health checks work
-            await self.app(scope, receive, send)
-            return
+            logger.warning("Setup guard DB check failed; redirecting to /setup.")
 
         # Setup not complete — redirect to /setup
         redirect_body = b""
@@ -216,14 +216,26 @@ class RequestGuardsMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         limiter = request.app.state.rate_limiter
-        client_ip = get_client_ip(request)
+        client_ip = get_client_ip(request, current_settings)
         key = f"http:{client_ip}"
 
-        decision = await limiter.acheck(
-            key=key,
-            limit=current_settings.rate_limit_max_requests,
-            window_seconds=current_settings.rate_limit_window_seconds,
-        )
+        try:
+            decision = await limiter.acheck(
+                key=key,
+                limit=current_settings.rate_limit_max_requests,
+                window_seconds=current_settings.rate_limit_window_seconds,
+            )
+        except Exception as exc:
+            if isinstance(limiter, InMemoryRateLimiter):
+                raise
+            logger.warning("HTTP rate limiter unavailable, switching to in-memory fallback: %s", exc)
+            limiter = InMemoryRateLimiter(current_settings.rate_limit_max_tracked_keys)
+            request.app.state.rate_limiter = limiter
+            decision = await limiter.acheck(
+                key=key,
+                limit=current_settings.rate_limit_max_requests,
+                window_seconds=current_settings.rate_limit_window_seconds,
+            )
 
         if not decision.allowed:
             logger.warning(
@@ -346,20 +358,26 @@ async def lifespan(app: FastAPI):
 
     from app.core.redis_store import RedisStore
     redis_client = None
+    rate_limiter = InMemoryRateLimiter(settings.rate_limit_max_tracked_keys)
     if settings.redis_url:
-        from app.core.rate_limit_redis import RedisRateLimiter
-        rate_limiter = RedisRateLimiter(settings.redis_url)
         try:
             import redis.asyncio as aioredis
+
             redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
             await redis_client.ping()
+            from app.core.rate_limit_redis import RedisRateLimiter
+
+            rate_limiter = RedisRateLimiter(settings.redis_url)
             logger.info("Redis KV store connected.")
+            logger.info("Redis-backed rate limiter initialised.")
         except Exception as exc:
-            logger.warning("Redis KV store unavailable, using in-process fallback: %s", exc)
+            logger.warning(
+                "Redis unavailable, using in-process fallback for KV store and rate limiting: %s",
+                exc,
+            )
+            if redis_client is not None:
+                await redis_client.aclose()
             redis_client = None
-        logger.info("Redis-backed rate limiter initialised.")
-    else:
-        rate_limiter = InMemoryRateLimiter(settings.rate_limit_max_tracked_keys)
     app.state.rate_limiter = rate_limiter
     app.state.kv_store = RedisStore(redis_client)
 

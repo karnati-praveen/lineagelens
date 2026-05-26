@@ -15,7 +15,13 @@ from sqlalchemy import and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import log_audit_event
-from app.core.security import AuthContext, ensure_workspace_scope, get_current_auth_context
+from app.core.security import (
+    AuthContext,
+    build_record_visibility_clause,
+    ensure_workspace_scope,
+    get_current_auth_context,
+    get_verified_user_role,
+)
 from app.db.models import ProvenanceRecord, UserAccount
 from app.db.session import get_db_session
 from app.services.export_service import cleanup_old_jobs, deserialize_job, new_job, run_export_job, serialize_job
@@ -126,6 +132,13 @@ async def export_audit_report(
             detail="Export requires admin role.",
         )
 
+    access_clause = build_record_visibility_clause(
+        ProvenanceRecord.uuid,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        is_admin=True,
+    )
+
     search = SearchRequest(
         workspace_id=auth.workspace_id,
         date_from=_parse_dt(date_from),
@@ -135,7 +148,7 @@ async def export_audit_report(
 
     stmt = (
         select(ProvenanceRecord)
-        .where(and_(*build_workspace_record_filters(search, auth.workspace_id)))
+        .where(and_(*build_workspace_record_filters(search, auth.workspace_id), access_clause))
         .order_by(desc(ProvenanceRecord.timestamp_iso))
         .limit(MAX_EXPORT_ROWS)
     )
@@ -166,7 +179,7 @@ async def export_audit_report(
         action=audit_action,
         details={"record_count": record_count, "format": fmt, "date_from": date_from, "date_to": date_to},
     )
-    await session.flush()
+    await session.commit()
 
     if fmt == "json":
         return JSONResponse(
@@ -218,6 +231,14 @@ async def start_async_export(
     """Start a background export job. Returns job_id for polling."""
     ensure_workspace_scope(auth, payload.workspace_id)
 
+    role = await get_verified_user_role(session, auth)
+    access_clause = build_record_visibility_clause(
+        ProvenanceRecord.uuid,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        is_admin=role == "admin",
+    )
+
     fmt = payload.format.strip().lower()
     if fmt not in {"json", "csv", "parquet"}:
         raise HTTPException(status_code=400, detail="format must be 'json', 'csv', or 'parquet'.")
@@ -247,7 +268,7 @@ async def start_async_export(
 
     result = await session.execute(
         select(ProvenanceRecord)
-        .where(and_(*filters))
+        .where(and_(*filters, access_clause))
         .order_by(ProvenanceRecord.timestamp_iso.desc())
         .limit(payload.limit)
     )

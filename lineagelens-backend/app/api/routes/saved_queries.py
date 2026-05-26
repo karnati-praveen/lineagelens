@@ -149,7 +149,7 @@ async def delete_saved_query(
             detail="You can only delete your own saved queries.",
         )
 
-    session.delete(saved)
+    await session.delete(saved)
 
     await log_audit_event(
         session,

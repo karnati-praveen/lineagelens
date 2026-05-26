@@ -4,12 +4,12 @@ const path = require('node:path');
 const { checkDocker, runComposeSync } = require('../utils/lineagelens-cli-docker');
 const { envFilePath } = require('../utils/lineagelens-cli-env');
 
-const COMPOSE_DIR = path.join(__dirname, '..', '..', '..', 'lineagelens-deploy');
+const COMPOSE_DIR = path.join(__dirname, '..', '..', 'deploy');
 
 async function update(mode) {
   checkDocker();
 
-  const composeFile = path.join(COMPOSE_DIR, `docker-compose.${mode}.yml`);
+  const composeFile = path.join(COMPOSE_DIR, `lineagelens-cli-docker-compose.${mode}.yml`);
   const envFile = envFilePath(mode);
 
   console.log(`Pulling latest images for LineageLens ${mode.toUpperCase()}...`);

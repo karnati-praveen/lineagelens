@@ -7,13 +7,21 @@ const { envFilePath } = require('../utils/lineagelens-cli-env');
 const { out, err, isJsonMode } = require('../utils/lineagelens-cli-output');
 const { setActiveMode } = require('../utils/lineagelens-cli-config');
 
-const COMPOSE_DIR = path.join(__dirname, '..', '..', '..', 'lineagelens-deploy');
+const COMPOSE_DIR = path.join(__dirname, '..', '..', 'deploy');
 
-function stop(mode, opts) {
+function stop(mode, opts, options = {}) {
+  const exitProcess = options.exitProcess !== false;
   checkDocker();
 
-  const composeFile = path.join(COMPOSE_DIR, `docker-compose.${mode}.yml`);
+  const composeFile = path.join(COMPOSE_DIR, `lineagelens-cli-docker-compose.${mode}.yml`);
   const envFile = envFilePath(mode);
+
+  const finish = (code) => {
+    if (exitProcess) {
+      process.exit(code);
+    }
+    return code;
+  };
 
   if (!fs.existsSync(envFile)) {
     if (isJsonMode()) {
@@ -21,7 +29,7 @@ function stop(mode, opts) {
     } else {
       console.error(`No config found for ${mode} mode. Nothing to stop.`);
     }
-    process.exit(1);
+    return finish(1);
   }
 
   if (opts.volumes && !opts.confirmWipe) {
@@ -31,7 +39,7 @@ function stop(mode, opts) {
       console.error('Error: --volumes will permanently delete all data (database, Neo4j, Redis).');
       console.error('Re-run with --confirm-wipe to proceed.');
     }
-    process.exit(1);
+    return finish(1);
   }
 
   const args = opts.volumes ? ['down', '--volumes'] : ['down'];
@@ -55,7 +63,7 @@ function stop(mode, opts) {
     }
   }
 
-  process.exit(result.status ?? 0);
+  return finish(result.status ?? 0);
 }
 
 module.exports = { stop };

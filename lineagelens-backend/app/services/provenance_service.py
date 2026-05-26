@@ -285,18 +285,21 @@ async def get_provenance_by_uuid(
     session: AsyncSession,
     record_uuid: str,
     workspace_id: str,
+    access_filters: list[object] | None = None,
 ) -> ProvenanceRecord | None:
     try:
         parsed_uuid = uuid_pkg.UUID(record_uuid)
     except (ValueError, TypeError):
         return None
 
-    statement = select(ProvenanceRecord).where(
-        and_(
-            ProvenanceRecord.uuid == parsed_uuid,
-            ProvenanceRecord.workspace_id == workspace_id,
-        )
-    )
+    lookup_filters: list[object] = [
+        ProvenanceRecord.uuid == parsed_uuid,
+        ProvenanceRecord.workspace_id == workspace_id,
+    ]
+    if access_filters:
+        lookup_filters.extend(access_filters)
+
+    statement = select(ProvenanceRecord).where(and_(*lookup_filters))
 
     result = await session.execute(statement)
     return result.scalar_one_or_none()
@@ -454,6 +457,7 @@ async def search_provenance_records(
     search: SearchRequest,
     workspace_id: str,
     settings: Settings,
+    access_filters: list[object] | None = None,
 ) -> tuple[list[tuple[ProvenanceRecord, float | None]], list[str], int | None, str | None]:
     query_text = (search.query or search.keywords or "").strip()
 
@@ -462,6 +466,8 @@ async def search_provenance_records(
     offset = max(0, int(search.offset or 0))
 
     filters = build_workspace_record_filters(search, workspace_id)
+    if access_filters:
+        filters.extend(access_filters)
 
     if query_text and settings.vector_search_enabled:
         return await _vector_search(session, query_text, filters, offset, limit, settings)

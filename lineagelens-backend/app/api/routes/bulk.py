@@ -12,7 +12,16 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import log_audit_event
-from app.core.security import AuthContext, ensure_workspace_scope, get_client_ip, get_current_auth_context, require_admin, require_role
+from app.core.security import (
+    AuthContext,
+    build_record_visibility_clause,
+    ensure_workspace_scope,
+    get_client_ip,
+    get_current_auth_context,
+    get_verified_user_role,
+    require_admin,
+    require_role,
+)
 from app.db.models import ProvenanceRecord, ProvenanceTag
 from app.db.session import get_db_session
 from app.services.provenance_service import serialize_provenance_record
@@ -51,6 +60,7 @@ async def _fetch_records(
     session: AsyncSession,
     uuids: list[str],
     workspace_id: str,
+    access_filters: list[object] | None = None,
 ) -> list[ProvenanceRecord]:
     import uuid as uuid_pkg
 
@@ -69,6 +79,7 @@ async def _fetch_records(
             and_(
                 ProvenanceRecord.workspace_id == workspace_id,
                 ProvenanceRecord.uuid.in_(parsed_uuids),
+                *([] if access_filters is None else access_filters),
             )
         )
     )
@@ -89,7 +100,7 @@ async def bulk_delete(
     deleted_uuids = [str(r.uuid) for r in records]
 
     for record in records:
-        session.delete(record)
+        await session.delete(record)
 
     await log_audit_event(
         session,
@@ -177,6 +188,14 @@ async def bulk_export(
     """Export multiple provenance records as JSON or CSV (max 500)."""
     ensure_workspace_scope(auth, payload.workspace_id)
 
+    role = await get_verified_user_role(session, auth)
+    access_clause = build_record_visibility_clause(
+        ProvenanceRecord.uuid,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        is_admin=role == "admin",
+    )
+
     fmt = payload.format.strip().lower()
     if fmt not in {"json", "csv"}:
         raise HTTPException(
@@ -184,7 +203,7 @@ async def bulk_export(
             detail="Format must be 'json' or 'csv'.",
         )
 
-    records = await _fetch_records(session, payload.uuids, auth.workspace_id)
+    records = await _fetch_records(session, payload.uuids, auth.workspace_id, [access_clause])
     serialized = [serialize_provenance_record(r) for r in records]
 
     if fmt == "json":

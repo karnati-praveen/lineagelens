@@ -1,0 +1,50 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Compile",
+			"type": "shell",
+			"command": "npm",
+			"args": ["run", "compile"],
+			"group": "build",
+			"problemMatcher": ["$tsc"]
+		},
+		{
+			"label": "Test",
+			"type": "shell",
+			"command": "npm",
+			"args": ["run", "test"],
+			"group": "test"
+		},
+		{
+			"label": "Package Base",
+			"type": "shell",
+			"command": "npm",
+			"args": ["run", "ship:base"]
+		},
+		{
+			"label": "Package Lite",
+			"type": "shell",
+			"command": "npm",
+			"args": ["run", "ship:lite"]
+		},
+		{
+			"label": "Package Plus",
+			"type": "shell",
+			"command": "npm",
+			"args": ["run", "ship:plus"]
+		},
+		{
+			"label": "Package Max",
+			"type": "shell",
+			"command": "npm",
+			"args": ["run", "ship:max"]
+		},
+		{
+			"label": "Release",
+			"type": "shell",
+			"command": "npm",
+			"args": ["run", "release"]
+		}
+	]
+}

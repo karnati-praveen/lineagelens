@@ -4,6 +4,7 @@ import uuid as uuid_pkg
 from datetime import datetime
 
 from sqlalchemy import JSON, Boolean, DateTime, Float, Index, Integer, String, Text, Uuid, func
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -11,9 +12,14 @@ from app.db.base import Base
 # pgvector is optional — only available when Postgres + pgvector extension are used.
 try:
     from pgvector.sqlalchemy import Vector as _Vector
-    _VECTOR_TYPE = _Vector(256)
 except ImportError:
-    _VECTOR_TYPE = None  # type: ignore[assignment]
+    _Vector = None
+
+_JSON_TYPE = JSON().with_variant(postgresql.JSONB(astext_type=Text()), "postgresql")
+if _Vector is not None:
+    _EMBEDDING_VECTOR_TYPE = JSON().with_variant(_Vector(256), "postgresql")
+else:
+    _EMBEDDING_VECTOR_TYPE = JSON()
 
 EMBEDDING_VECTOR_DIMENSION = 256
 
@@ -40,20 +46,20 @@ class ProvenanceRecord(Base):
 
     timestamp_iso: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
 
-    prompt_messages: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
+    prompt_messages: Mapped[dict | list | None] = mapped_column(_JSON_TYPE, nullable=True)
     model_name: Mapped[str | None] = mapped_column(String(256), index=True, nullable=True)
-    model_parameters: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    model_parameters: Mapped[dict | None] = mapped_column(_JSON_TYPE, nullable=True)
     raw_model_response: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     inserted_code: Mapped[str] = mapped_column(Text, nullable=False)
-    surrounding_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    context_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    embeddings: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    ast_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    surrounding_context: Mapped[dict | None] = mapped_column(_JSON_TYPE, nullable=True)
+    context_snapshot: Mapped[dict | None] = mapped_column(_JSON_TYPE, nullable=True)
+    embeddings: Mapped[dict | None] = mapped_column(_JSON_TYPE, nullable=True)
+    ast_snapshot: Mapped[dict | None] = mapped_column(_JSON_TYPE, nullable=True)
 
-    # Stored as Vector on Postgres+pgvector, JSON array on SQLite
+    # Stored as Vector on Postgres+pgvector, JSON array on SQLite.
     embedding_vector: Mapped[list[float] | None] = mapped_column(
-        _VECTOR_TYPE if _VECTOR_TYPE is not None else JSON,
+        _EMBEDDING_VECTOR_TYPE,
         nullable=True,
     )
     embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -64,7 +70,7 @@ class ProvenanceRecord(Base):
 
     lineage_node_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
-    provenance_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    provenance_payload: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -113,7 +119,7 @@ class AuditLog(Base):
     user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     action: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     target_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    details: Mapped[dict | None] = mapped_column(_JSON_TYPE, nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True, nullable=False
@@ -127,7 +133,7 @@ class SavedQuery(Base):
     workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     user_id: Mapped[str] = mapped_column(String(128), nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
-    query: Mapped[dict] = mapped_column(JSON, nullable=False)
+    query: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -200,7 +206,7 @@ class Policy(Base):
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     policy_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    config: Mapped[dict] = mapped_column(JSON, nullable=False)
+    config: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False)
     action: Mapped[str] = mapped_column(String(32), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -246,8 +252,8 @@ class AlertConfig(Base):
     workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     channel: Mapped[str] = mapped_column(String(32), nullable=False)
-    config: Mapped[dict] = mapped_column(JSON, nullable=False)
-    trigger_on: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    config: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False)
+    trigger_on: Mapped[list] = mapped_column(_JSON_TYPE, nullable=False, default=list)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -263,7 +269,7 @@ class ApiKey(Base):
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     key_prefix: Mapped[str] = mapped_column(String(16), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
-    scopes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    scopes: Mapped[list] = mapped_column(_JSON_TYPE, nullable=False, default=list)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -279,7 +285,7 @@ class GithubIntegration(Base):
     webhook_secret: Mapped[str | None] = mapped_column(String(256), nullable=True)
     risk_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=70)
     block_on_high_risk: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    allowed_repos: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    allowed_repos: Mapped[list] = mapped_column(_JSON_TYPE, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -292,8 +298,8 @@ class ScheduledReport(Base):
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     report_type: Mapped[str] = mapped_column(String(64), nullable=False)
     frequency: Mapped[str] = mapped_column(String(32), nullable=False, default="weekly")
-    recipients: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    recipients: Mapped[list] = mapped_column(_JSON_TYPE, nullable=False, default=list)
+    config: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False, default=dict)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -311,7 +317,7 @@ class OidcProvider(Base):
     issuer: Mapped[str] = mapped_column(String(512), nullable=False)
     client_id: Mapped[str] = mapped_column(String(256), nullable=False)
     client_secret: Mapped[str] = mapped_column(String(512), nullable=False)
-    scopes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    scopes: Mapped[list] = mapped_column(_JSON_TYPE, nullable=False, default=list)
     default_role: Mapped[str] = mapped_column(String(32), nullable=False, default="member")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -325,6 +331,6 @@ class Workspace(Base):
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     owner_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    settings: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    settings: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

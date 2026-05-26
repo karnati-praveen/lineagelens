@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from ipaddress import ip_address
 from threading import Lock
 
 
@@ -89,29 +88,28 @@ def client_identifier(
     return host if host else fallback
 
 
-def _is_trusted_proxy_host(host: str | None) -> bool:
-    normalized = (host or "").strip()
-    if not normalized:
-        return False
-    if normalized.lower() == "localhost":
-        return True
-    try:
-        parsed = ip_address(normalized)
-    except ValueError:
-        return False
-    return parsed.is_loopback or parsed.is_private
+def _parse_trusted_proxy_ips(trusted_proxy_ips: str | None) -> set[str]:
+    raw = (trusted_proxy_ips or "").strip()
+    if not raw:
+        return set()
+    return {entry.strip() for entry in raw.split(",") if entry.strip()}
 
 
 def effective_client_ip(
     peer_host: str | None,
     forwarded_for_header: str,
     real_ip_header: str,
+    trusted_proxy_ips: str | None = None,
 ) -> str:
-    """Return the real client IP, honouring X-Forwarded-For behind trusted proxies."""
-    if _is_trusted_proxy_host(peer_host):
+    """Return the real client IP, honoring forwarded headers only from allowlisted proxies."""
+    trusted_ips = _parse_trusted_proxy_ips(trusted_proxy_ips)
+    normalized_peer = (peer_host or "").strip()
+
+    if normalized_peer and normalized_peer in trusted_ips:
         forwarded_chain = [e.strip() for e in forwarded_for_header.split(",") if e.strip()]
         if forwarded_chain:
             return client_identifier(forwarded_chain[0])
-        if real_ip_header.strip():
-            return client_identifier(real_ip_header.strip())
+        real_ip = real_ip_header.strip()
+        if real_ip:
+            return client_identifier(real_ip)
     return client_identifier(peer_host)

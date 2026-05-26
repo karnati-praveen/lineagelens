@@ -387,27 +387,71 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.window.showInformationMessage('Open a file to view its AI insertion history.');
         return;
       }
-      const filePath = editor.document.uri.fsPath;
-      const panel = DiffViewPanel.createOrShow(context.extensionUri);
       try {
-        // Try backend diff API first, fall back to local storage
-        let records: any[] = [];
-        const diffStorage = activeStorageService;
-        if (diffStorage) {
-          records = await diffStorage.search(
+        await ensureRuntimeInitialized(editor.document.uri);
+        const filePath = editor.document.uri.fsPath;
+        const panel = DiffViewPanel.createOrShow(context.extensionUri);
+        const diffStorage = getStorageService();
+        const records = await diffStorage.search(
             { keywords: '', model: '', dateFrom: '', dateTo: '', currentFileOnly: true, currentFilePath: filePath },
             undefined
           );
-        }
-        panel.showFileDiff(filePath, records.map((r: any) => ({
-          uuid: r.normalizedEvent?.eventId ?? r.uuid ?? '',
-          filePath: r.normalizedEvent?.file?.path ?? r.filePath ?? filePath,
-          modelName: r.normalizedEvent?.model?.name ?? r.modelName,
-          riskScore: r.riskAssessment?.score ?? r.riskScore,
-          timestampIso: r.normalizedEvent?.timestamps?.insertedAtIso ?? r.timestampIso,
-          insertedCodeSnippet: (r.normalizedEvent?.diff?.insertedText ?? r.insertedCode ?? '').substring(0, 200),
-          isRedacted: r.isRedacted ?? false,
-        })));
+        panel.showFileDiff(filePath, records.map((r: any) => {
+          const record = isRecord(r.record) ? (r.record as Record<string, any>) : undefined;
+          const normalizedEvent = isRecord(record?.normalizedEvent)
+            ? (record.normalizedEvent as Record<string, any>)
+            : undefined;
+          const normalizedFile = isRecord(normalizedEvent?.file)
+            ? (normalizedEvent.file as Record<string, any>)
+            : undefined;
+          const normalizedTimestamps = isRecord(normalizedEvent?.timestamps)
+            ? (normalizedEvent.timestamps as Record<string, any>)
+            : undefined;
+          const normalizedDiff = isRecord(normalizedEvent?.diff)
+            ? (normalizedEvent.diff as Record<string, any>)
+            : undefined;
+          const riskAssessment = isRecord(record?.riskAssessment)
+            ? (record.riskAssessment as Record<string, any>)
+            : undefined;
+
+          return {
+            uuid:
+              (typeof r.uuid === 'string' && r.uuid.length > 0 ? r.uuid : undefined) ??
+              (typeof record?.uuid === 'string' && record.uuid.length > 0 ? record.uuid : undefined) ??
+              (typeof normalizedEvent?.eventId === 'string' ? normalizedEvent.eventId : ''),
+            filePath:
+              (typeof r.filePath === 'string' && r.filePath.length > 0 ? r.filePath : undefined) ??
+              (typeof record?.filePath === 'string' && record.filePath.length > 0 ? record.filePath : undefined) ??
+              (typeof normalizedFile?.path === 'string' ? normalizedFile.path : undefined) ??
+              filePath,
+            modelName:
+              (typeof r.modelName === 'string' ? r.modelName : undefined) ??
+              (typeof r.model === 'string' ? r.model : undefined) ??
+              (typeof record?.modelName === 'string' ? record.modelName : undefined) ??
+              (typeof normalizedEvent?.model?.name === 'string' ? normalizedEvent.model.name : undefined),
+            riskScore:
+              (typeof r.riskScore === 'number' ? r.riskScore : undefined) ??
+              (typeof record?.riskScore === 'number' ? record.riskScore : undefined) ??
+              (typeof riskAssessment?.score === 'number' ? riskAssessment.score : undefined),
+            timestampIso:
+              (typeof r.timestampIso === 'string' ? r.timestampIso : undefined) ??
+              (typeof record?.timestampIso === 'string' ? record.timestampIso : undefined) ??
+              (typeof normalizedTimestamps?.insertedAtIso === 'string'
+                ? normalizedTimestamps.insertedAtIso
+                : undefined),
+            insertedCodeSnippet:
+              (typeof r.snippet === 'string' ? r.snippet : undefined) ??
+              (typeof record?.insertedCode === 'string' ? record.insertedCode : undefined) ??
+              (typeof normalizedDiff?.insertedText === 'string' ? normalizedDiff.insertedText : undefined) ??
+              '',
+            isRedacted:
+              typeof r.isRedacted === 'boolean'
+                ? r.isRedacted
+                : typeof record?.isRedacted === 'boolean'
+                  ? record.isRedacted
+                  : false,
+          };
+        }));
       } catch (err) {
         vscode.window.showErrorMessage(`Failed to load diff: ${toErrorMessage(err)}`);
       }
@@ -420,15 +464,42 @@ export function activate(context: vscode.ExtensionContext): void {
         prompt: 'Flag reason (optional)',
         placeHolder: 'e.g. needs-review, suspicious',
       });
-      vscode.window.showInformationMessage(`Record ${targetUuid} flagged${reason ? ': ' + reason : ''}.`);
-      // Toast feedback
-      activeToastManager?.notify({ status: 'success', message: 'Record flagged', uuid: targetUuid });
+      try {
+        await ensureRuntimeInitialized(vscode.window.activeTextEditor?.document.uri);
+        const storageService = getStorageService();
+        if (!(storageService instanceof BackendStorageService)) {
+          vscode.window.showWarningMessage('Flagging records requires backend mode.');
+          return;
+        }
+
+        await storageService.flagRecord(targetUuid, reason ?? undefined, vscode.window.activeTextEditor?.document.uri);
+        vscode.window.showInformationMessage(`Record ${targetUuid} flagged${reason ? ': ' + reason : ''}.`);
+        activeToastManager?.notify({ status: 'success', message: 'Record flagged', uuid: targetUuid });
+      } catch (error: unknown) {
+        const message = 'Failed to flag record: ' + toErrorMessage(error);
+        log(message);
+        vscode.window.showErrorMessage(message);
+      }
     }),
     // lineagelens.addToReview — add to reviewer queue
     vscode.commands.registerCommand('lineagelens.addToReview', async (uuid?: string) => {
       const targetUuid = uuid ?? await vscode.window.showInputBox({ prompt: 'Enter record UUID to add to review' });
       if (!targetUuid) { return; }
-      vscode.window.showInformationMessage(`Record ${targetUuid} added to reviewer queue.`);
+      try {
+        await ensureRuntimeInitialized(vscode.window.activeTextEditor?.document.uri);
+        const storageService = getStorageService();
+        if (!(storageService instanceof BackendStorageService)) {
+          vscode.window.showWarningMessage('Adding records to review requires backend mode.');
+          return;
+        }
+
+        await storageService.addRecordToReviewQueue(targetUuid, undefined, vscode.window.activeTextEditor?.document.uri);
+        vscode.window.showInformationMessage(`Record ${targetUuid} added to reviewer queue.`);
+      } catch (error: unknown) {
+        const message = 'Failed to add record to reviewer queue: ' + toErrorMessage(error);
+        log(message);
+        vscode.window.showErrorMessage(message);
+      }
     }),
     // lineagelens.explainRecord — explain AI-generated code
     vscode.commands.registerCommand('lineagelens.explainRecord', async (uuid?: string) => {

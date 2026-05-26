@@ -63,7 +63,7 @@ cmd $COMPOSE version
 ok "All prerequisites met."
 
 # ── 2. Remove any conflicting containers and stale volumes ────────────────────
-step "2/8" "Removing conflicting Postgres / Neo4j containers and stale volumes"
+step "2/8" "Checking for port conflicts and stale volumes"
 
 # a) Stop this project's own containers (clean slate)
 if $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" ps -q 2>/dev/null | grep -q .; then
@@ -72,14 +72,13 @@ if $COMPOSE --project-name "$PROJECT_NAME" -f "$COMPOSE_FILE" ps -q 2>/dev/null 
     ok "Project containers stopped."
 fi
 
-# b) Kill ANY other container using our ports so they don't block startup
+# b) Fail fast if any other container is already using our ports
 #    Includes Neo4j ports 7474 (HTTP) and 7687 (Bolt)
 for PORT in 5432 8787 8788 7474 7687; do
     CIDS=$(docker ps -q --filter "publish=$PORT" 2>/dev/null || true)
     if [[ -n "$CIDS" ]]; then
-        info "Port $PORT in use by container(s) [$CIDS] — stopping them..."
-        docker stop $CIDS >/dev/null 2>&1 || true
-        ok "Port $PORT freed."
+        CONTAINERS=$(docker ps --filter "publish=$PORT" --format '{{.Names}}' 2>/dev/null | tr '\n' ' ')
+        die "Port $PORT is already in use by container(s): ${CONTAINERS:-$CIDS}. Stop them manually and re-run."
     fi
 done
 
@@ -100,7 +99,7 @@ for VOL in \
     fi
 done
 
-ok "Port and volume conflicts resolved."
+ok "Port and volume checks passed."
 
 # ── 3. Generate secrets & write .env ─────────────────────────────────────────
 step "3/8" "Generating secrets"

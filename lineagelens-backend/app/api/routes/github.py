@@ -193,15 +193,17 @@ async def receive_github_webhook(
     )
     config = result.scalar_one_or_none()
 
+    if config is None or not (config.webhook_secret or "").strip():
+        raise HTTPException(status_code=403, detail="GitHub webhooks are not configured for this workspace.")
+
     body = await request.body()
 
-    if config and config.webhook_secret:
-        sig_header = request.headers.get("X-Hub-Signature-256", "")
-        expected_sig = "sha256=" + hmac.new(
-            config.webhook_secret.encode(), body, hashlib.sha256
-        ).hexdigest()
-        if not hmac.compare_digest(sig_header, expected_sig):
-            raise HTTPException(status_code=401, detail="Invalid webhook signature.")
+    sig_header = request.headers.get("X-Hub-Signature-256", "")
+    expected_sig = "sha256=" + hmac.new(
+        config.webhook_secret.encode(), body, hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(sig_header, expected_sig):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature.")
 
     try:
         event = json.loads(body)

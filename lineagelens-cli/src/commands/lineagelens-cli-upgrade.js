@@ -8,7 +8,7 @@ const { checkDocker, runComposeSync } = require('../utils/lineagelens-cli-docker
 const { envFilePath } = require('../utils/lineagelens-cli-env');
 const { out, err, isJsonMode } = require('../utils/lineagelens-cli-output');
 
-const COMPOSE_DIR = path.join(__dirname, '..', '..', '..', 'lineagelens-deploy');
+const COMPOSE_DIR = path.join(__dirname, '..', '..', 'deploy');
 
 function promptConfirm(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -33,7 +33,7 @@ async function waitForBackend(timeoutMs = 30000) {
 async function upgrade(mode, opts = {}) {
   checkDocker();
 
-  const composeFile = path.join(COMPOSE_DIR, `docker-compose.${mode}.yml`);
+  const composeFile = path.join(COMPOSE_DIR, `lineagelens-cli-docker-compose.${mode}.yml`);
   const envFile = envFilePath(mode);
 
   if (!fs.existsSync(envFile)) {

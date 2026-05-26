@@ -7,8 +7,8 @@ const { checkDocker, runComposeSync } = require('../utils/lineagelens-cli-docker
 const { envFilePath } = require('../utils/lineagelens-cli-env');
 const { out, err, isJsonMode } = require('../utils/lineagelens-cli-output');
 
-const COMPOSE_DIR = path.join(__dirname, '..', '..', '..', 'lineagelens-deploy');
-const MODES = ['base', 'plus', 'max'];
+const COMPOSE_DIR = path.join(__dirname, '..', '..', 'deploy');
+const MODES = ['plus', 'max'];
 
 /**
  * Parse docker ps tab-delimited output: Names\tStatus\tPorts
@@ -90,7 +90,7 @@ function status(opts) {
         console.log(formatTable(containers));
       } else {
         // Fallback: run compose ps for raw output
-        const composeFile = path.join(COMPOSE_DIR, `docker-compose.${mode}.yml`);
+        const composeFile = path.join(COMPOSE_DIR, `lineagelens-cli-docker-compose.${mode}.yml`);
         runComposeSync(composeFile, envFile, ['ps'], { mode });
       }
     }

@@ -166,6 +166,14 @@ class Settings(BaseSettings):
             raise ValueError("PGVECTOR_DIMENSION must be 256 to match the database schema.")
         return value
 
+    @model_validator(mode="after")
+    def validate_vector_search_for_database(self) -> "Settings":
+        if self.is_sqlite and self.vector_search_enabled:
+            raise ValueError(
+                "VECTOR_SEARCH_ENABLED requires PostgreSQL with pgvector; disable it for SQLite/Lite mode."
+            )
+        return self
+
     @field_validator("backend_mode")
     @classmethod
     def validate_backend_mode(cls, value: str) -> str:

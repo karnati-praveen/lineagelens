@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import uuid
@@ -16,6 +17,8 @@ from app.core.config import Settings, get_settings
 from app.core.security import hash_password, create_access_token, create_refresh_token
 from app.db.models import UserAccount, Workspace
 from app.db.session import get_db_session
+
+logger = logging.getLogger(__name__)
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "static")
 

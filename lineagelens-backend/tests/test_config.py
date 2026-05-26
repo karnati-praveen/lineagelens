@@ -53,6 +53,11 @@ def test_settings_rejects_vector_dimension_mismatch() -> None:
         build_settings(PGVECTOR_DIMENSION=384)
 
 
+def test_settings_rejects_vector_search_on_sqlite() -> None:
+    with pytest.raises(ValueError, match="VECTOR_SEARCH_ENABLED requires PostgreSQL"):
+        build_settings(VECTOR_SEARCH_ENABLED=True)
+
+
 def test_settings_rejects_invalid_backend_mode() -> None:
     with pytest.raises(ValueError, match="BACKEND_MODE must be 'solo', 'team', or 'enterprise'"):
         build_settings(BACKEND_MODE="unsupported")

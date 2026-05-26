@@ -23,11 +23,11 @@ echo ""
 #   Linux/Mac: ~/.vscode/extensions / globalStorage
 #   Windows:   %APPDATA%\Code\User\globalStorage
 if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || -n "${APPDATA:-}" ]]; then
-    STORAGE_DIR="${APPDATA}/Code/User/globalStorage/lineagelens.lineagelens-base"
+    STORAGE_DIR="${APPDATA}/Code/User/globalStorage/karnatipraveen.lineagelens"
 elif [[ "$OSTYPE" == "darwin"* ]]; then
-    STORAGE_DIR="$HOME/Library/Application Support/Code/User/globalStorage/lineagelens.lineagelens-base"
+    STORAGE_DIR="$HOME/Library/Application Support/Code/User/globalStorage/karnatipraveen.lineagelens"
 else
-    STORAGE_DIR="$HOME/.config/Code/User/globalStorage/lineagelens.lineagelens-base"
+    STORAGE_DIR="$HOME/.config/Code/User/globalStorage/karnatipraveen.lineagelens"
 fi
 
 CAPTURES_FILE="$STORAGE_DIR/captures.json"

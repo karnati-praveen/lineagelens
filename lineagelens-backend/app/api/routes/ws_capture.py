@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
-from app.core.rate_limit import effective_client_ip
+from app.core.rate_limit import InMemoryRateLimiter, RateLimitDecision, effective_client_ip
 from app.core.security import AuthContext, AuthError, authenticate_websocket, ensure_workspace_scope
 from app.db.models import UserAccount
 from app.db.session import get_session_factory_from_app
@@ -49,6 +49,39 @@ def get_ws_rate_limiter(websocket: WebSocket) -> Any:
     if limiter is None or not callable(getattr(limiter, "acheck", None)):
         raise RuntimeError("Rate limiter is not available for websocket capture route.")
     return limiter
+
+
+async def _check_ws_rate_limit(
+    rate_limiter: Any,
+    settings: Settings,
+    app_state: Any | None,
+    *,
+    key: str,
+    limit: int,
+    window_seconds: int,
+) -> tuple[Any, RateLimitDecision]:
+    try:
+        decision = await rate_limiter.acheck(
+            key=key,
+            limit=limit,
+            window_seconds=window_seconds,
+        )
+        return rate_limiter, decision
+    except Exception as exc:
+        if isinstance(rate_limiter, InMemoryRateLimiter):
+            raise
+
+        logger.warning("WebSocket rate limiter unavailable, switching to in-memory fallback: %s", exc)
+        fallback = InMemoryRateLimiter(settings.rate_limit_max_tracked_keys)
+        if app_state is not None:
+            setattr(app_state, "rate_limiter", fallback)
+
+        decision = await fallback.acheck(
+            key=key,
+            limit=limit,
+            window_seconds=window_seconds,
+        )
+        return fallback, decision
 
 
 async def _verify_ws_token_against_db(
@@ -103,7 +136,10 @@ async def _setup_ws_connection(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> Any | None:
     if settings.rate_limit_enabled:
-        decision = await rate_limiter.acheck(
+        rate_limiter, decision = await _check_ws_rate_limit(
+            rate_limiter,
+            settings,
+            websocket.app.state if websocket.app is not None else None,
             key=f"ws-connect:{client_ip}",
             limit=settings.rate_limit_ws_max_connections,
             window_seconds=settings.rate_limit_ws_window_seconds,
@@ -238,7 +274,10 @@ async def _run_ws_message_loop(
     message_count = 0
     while True:
         if settings.rate_limit_enabled:
-            message_decision = await rate_limiter.acheck(
+            rate_limiter, message_decision = await _check_ws_rate_limit(
+                rate_limiter,
+                settings,
+                websocket.app.state if websocket.app is not None else None,
                 key=f"ws-message:{auth.workspace_id}:{auth.subject}",
                 limit=settings.rate_limit_ws_max_messages,
                 window_seconds=settings.rate_limit_ws_window_seconds,
@@ -281,10 +320,13 @@ async def ws_capture(
         peer_host,
         websocket.headers.get("x-forwarded-for", ""),
         websocket.headers.get("x-real-ip", ""),
+        settings.trusted_proxy_ips,
     )
     auth = await _setup_ws_connection(websocket, settings, rate_limiter, client_ip, session_factory)
     if auth is None:
         return
+
+    rate_limiter = get_ws_rate_limiter(websocket)
 
     await manager.connect(auth.workspace_id, websocket)
     logger.info("WebSocket capture connected: workspace=%s subject=%s", auth.workspace_id, auth.subject)

@@ -3,13 +3,19 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import log_audit_event
 from app.core.config import Settings
 from app.core.mode_guard import require_non_solo
-from app.core.security import AuthContext, ensure_workspace_scope, get_current_auth_context
+from app.core.security import (
+    AuthContext,
+    build_record_visibility_clause,
+    ensure_workspace_scope,
+    get_current_auth_context,
+    get_verified_user_role,
+)
 from app.db.models import ProvenanceRecord
 from app.db.session import get_db_session
 from app.schemas.provenance import SearchRequest, SearchResponse, SearchResultItem
@@ -29,6 +35,13 @@ async def search_provenance(
     ensure_workspace_scope(auth, payload.workspace_id)
 
     settings: Settings = request.app.state.settings
+    role = await get_verified_user_role(session, auth)
+    access_clause = build_record_visibility_clause(
+        ProvenanceRecord.uuid,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        is_admin=role == "admin",
+    )
 
     await log_audit_event(
         session,
@@ -37,12 +50,14 @@ async def search_provenance(
         action="search.execute",
         details={"query": payload.query or payload.keywords or "", "offset": payload.offset},
     )
+    await session.commit()
 
     rows, warnings, total, next_cursor = await search_provenance_records(
         session=session,
         search=payload,
         workspace_id=auth.workspace_id,
         settings=settings,
+        access_filters=[access_clause],
     )
 
     items: list[SearchResultItem] = []
@@ -89,7 +104,14 @@ async def get_search_facets(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> dict:
     """Return aggregated facet counts for filter UI: models, risk levels, file extensions, capture status."""
-    ws = ProvenanceRecord.workspace_id == auth.workspace_id
+    role = await get_verified_user_role(session, auth)
+    access_clause = build_record_visibility_clause(
+        ProvenanceRecord.uuid,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        is_admin=role == "admin",
+    )
+    ws = and_(ProvenanceRecord.workspace_id == auth.workspace_id, access_clause)
 
     # Model name facets (top 20)
     model_rows = await session.execute(

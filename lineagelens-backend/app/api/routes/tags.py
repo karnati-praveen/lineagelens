@@ -9,7 +9,13 @@ from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import log_audit_event
-from app.core.security import AuthContext, get_current_auth_context, require_role
+from app.core.security import (
+    AuthContext,
+    build_record_visibility_clause,
+    get_current_auth_context,
+    get_verified_user_role,
+    require_role,
+)
 from app.db.models import ProvenanceRecord, ProvenanceTag
 from app.db.session import get_db_session
 
@@ -33,7 +39,12 @@ def _get_client_ip(request: Request) -> str | None:
     return None
 
 
-async def _assert_record_exists(session: AsyncSession, record_uuid: str, workspace_id: str) -> None:
+async def _assert_record_exists(
+    session: AsyncSession,
+    record_uuid: str,
+    workspace_id: str,
+    access_filters: list[object] | None = None,
+) -> None:
     """Raise 404 if the provenance record does not exist in the workspace."""
     import uuid as uuid_pkg
 
@@ -50,6 +61,7 @@ async def _assert_record_exists(session: AsyncSession, record_uuid: str, workspa
             and_(
                 ProvenanceRecord.uuid == parsed_uuid,
                 ProvenanceRecord.workspace_id == workspace_id,
+                *([] if access_filters is None else access_filters),
             )
         )
     )
@@ -75,7 +87,15 @@ async def add_tags(
             detail="Workspace mismatch.",
         )
 
-    await _assert_record_exists(session, record_uuid, auth.workspace_id)
+    role = await get_verified_user_role(session, auth)
+    access_clause = build_record_visibility_clause(
+        ProvenanceRecord.uuid,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        is_admin=role == "admin",
+    )
+
+    await _assert_record_exists(session, record_uuid, auth.workspace_id, [access_clause])
 
     added: list[str] = []
     for raw_tag in payload.tags:
@@ -130,7 +150,15 @@ async def remove_tag(
     auth: Annotated[AuthContext, Depends(require_role("admin", "member", "reviewer"))],
 ) -> None:
     """Remove a tag from a provenance record."""
-    await _assert_record_exists(session, record_uuid, auth.workspace_id)
+    role = await get_verified_user_role(session, auth)
+    access_clause = build_record_visibility_clause(
+        ProvenanceRecord.uuid,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        is_admin=role == "admin",
+    )
+
+    await _assert_record_exists(session, record_uuid, auth.workspace_id, [access_clause])
 
     tag_val = tag.strip().lower()
     result = await session.execute(
@@ -171,7 +199,15 @@ async def list_record_tags(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> dict:
     """List all tags on a provenance record."""
-    await _assert_record_exists(session, record_uuid, auth.workspace_id)
+    role = await get_verified_user_role(session, auth)
+    access_clause = build_record_visibility_clause(
+        ProvenanceRecord.uuid,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        is_admin=role == "admin",
+    )
+
+    await _assert_record_exists(session, record_uuid, auth.workspace_id, [access_clause])
 
     result = await session.execute(
         select(ProvenanceTag)

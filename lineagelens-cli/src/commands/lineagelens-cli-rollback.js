@@ -2,12 +2,43 @@
 
 const path = require('node:path');
 const fs = require('node:fs');
+const os = require('node:os');
 const { spawnSync } = require('node:child_process');
 const { checkDocker, runComposeSync } = require('../utils/lineagelens-cli-docker');
 const { envFilePath } = require('../utils/lineagelens-cli-env');
 const { out, err, isJsonMode } = require('../utils/lineagelens-cli-output');
 
-const COMPOSE_DIR = path.join(__dirname, '..', '..', '..', 'lineagelens-deploy');
+const COMPOSE_DIR = path.join(__dirname, '..', '..', 'deploy');
+
+function promptConfirm(question) {
+  const readline = require('node:readline');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(resolve => rl.question(question, ans => { rl.close(); resolve(ans.trim().toLowerCase()); }));
+}
+
+function dumpDatabase(containerName) {
+  return spawnSync(
+    'docker',
+    ['exec', containerName, 'pg_dump', '-U', 'postgres', '-d', 'provenance', '--format=custom'],
+    { stdio: ['ignore', 'pipe', 'inherit'] }
+  );
+}
+
+function restoreDatabase(containerName, dumpData) {
+  return spawnSync(
+    'docker',
+    ['exec', '-i', containerName, 'pg_restore', '-U', 'postgres', '-d', 'provenance', '--no-owner', '--exit-on-error'],
+    { input: dumpData, stdio: ['pipe', 'pipe', 'pipe'] }
+  );
+}
+
+function recreateDatabase(containerName) {
+  return spawnSync(
+    'docker',
+    ['exec', '-i', containerName, 'psql', '-U', 'postgres', '-c', 'DROP DATABASE IF EXISTS provenance; CREATE DATABASE provenance;'],
+    { stdio: ['ignore', 'pipe', 'pipe'] }
+  );
+}
 
 async function waitForBackend(timeoutMs = 30000) {
   const start = Date.now();
@@ -46,7 +77,7 @@ async function rollback(mode, opts = {}) {
     process.exit(1);
   }
 
-  const composeFile = path.join(COMPOSE_DIR, `docker-compose.${mode}.yml`);
+  const composeFile = path.join(COMPOSE_DIR, `lineagelens-cli-docker-compose.${mode}.yml`);
   const envFile = envFilePath(mode);
 
   if (!fs.existsSync(envFile)) {
@@ -58,8 +89,36 @@ async function rollback(mode, opts = {}) {
     process.exit(1);
   }
 
+  if (!opts.nonInteractive && !isJsonMode()) {
+    const ans = await promptConfirm('This will overwrite the current database. Continue? [y/N] ');
+    if (ans !== 'y' && ans !== 'yes') {
+      console.log('Rollback cancelled.');
+      process.exit(0);
+    }
+  }
+
   const postgresContainer = `lineagelens-${mode}-postgres`;
   const backendService = 'backend';
+  const safetyBackupDir = path.join(os.tmpdir(), 'lineagelens');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const safetyBackupFile = path.join(safetyBackupDir, `lineagelens-rollback-safety-${mode}-${timestamp}.dump`);
+
+  if (!fs.existsSync(safetyBackupDir)) {
+    fs.mkdirSync(safetyBackupDir, { recursive: true });
+  }
+
+  if (!isJsonMode()) console.log(`Creating safety backup → ${safetyBackupFile}`);
+  const safetyBackupResult = dumpDatabase(postgresContainer);
+  if (safetyBackupResult.status !== 0) {
+    if (isJsonMode()) {
+      err({ error: 'Failed to create safety backup', mode });
+    } else {
+      console.error('Failed to create safety backup. Aborting rollback.');
+    }
+    process.exit(safetyBackupResult.status ?? 1);
+  }
+
+  fs.writeFileSync(safetyBackupFile, safetyBackupResult.stdout);
 
   // Step 1: Stop backend service (not postgres)
   if (!isJsonMode()) console.log(`Stopping backend service for ${mode.toUpperCase()}...`);
@@ -80,11 +139,7 @@ async function rollback(mode, opts = {}) {
   const dumpData = fs.readFileSync(dumpFile);
 
   // Drop and recreate the database, then restore
-  const dropResult = spawnSync(
-    'docker',
-    ['exec', '-i', postgresContainer, 'psql', '-U', 'postgres', '-c', 'DROP DATABASE IF EXISTS provenance; CREATE DATABASE provenance;'],
-    { stdio: ['ignore', 'pipe', 'pipe'] }
-  );
+  const dropResult = recreateDatabase(postgresContainer);
   if (dropResult.status !== 0) {
     const errMsg = (dropResult.stderr || '').toString().slice(0, 300);
     if (isJsonMode()) {
@@ -95,11 +150,7 @@ async function rollback(mode, opts = {}) {
     process.exit(1);
   }
 
-  const restoreResult = spawnSync(
-    'docker',
-    ['exec', '-i', postgresContainer, 'pg_restore', '-U', 'postgres', '-d', 'provenance', '--no-owner', '--exit-on-error'],
-    { input: dumpData, stdio: ['pipe', 'pipe', 'pipe'] }
-  );
+  const restoreResult = restoreDatabase(postgresContainer, dumpData);
   if (restoreResult.status !== 0) {
     const errMsg = (restoreResult.stderr || '').toString().slice(0, 300);
     if (isJsonMode()) {
@@ -107,7 +158,23 @@ async function rollback(mode, opts = {}) {
     } else {
       console.error('pg_restore failed:', errMsg);
     }
-    process.exit(1);
+
+    const safetyDump = fs.readFileSync(safetyBackupFile);
+    recreateDatabase(postgresContainer);
+    const safetyRestoreResult = restoreDatabase(postgresContainer, safetyDump);
+    if (safetyRestoreResult.status !== 0) {
+      const safetyErr = (safetyRestoreResult.stderr || '').toString().slice(0, 300);
+      if (isJsonMode()) {
+        err({ error: 'Safety restore failed', detail: safetyErr });
+      } else {
+        console.error('Safety restore failed:', safetyErr);
+      }
+      process.exit(1);
+    }
+
+    if (!isJsonMode()) {
+      console.warn('Original database restored from safety backup after rollback failure.');
+    }
   }
 
   if (!isJsonMode()) console.log('Database restored successfully.');
@@ -133,6 +200,7 @@ async function rollback(mode, opts = {}) {
       status: 'rolled_back',
       mode,
       file: dumpFile,
+      safetyBackup: safetyBackupFile,
       healthy: ready,
     });
   } else {

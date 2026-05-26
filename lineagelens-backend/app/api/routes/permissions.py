@@ -119,7 +119,7 @@ async def revoke_permission(
     perm = result.scalar_one_or_none()
     if perm is None:
         raise HTTPException(status_code=404, detail="Permission not found.")
-    session.delete(perm)
+    await session.delete(perm)
 
     await log_audit_event(
         session,

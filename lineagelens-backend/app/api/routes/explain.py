@@ -5,7 +5,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import AuthContext, ensure_workspace_scope, get_current_auth_context
+from app.core.security import (
+    AuthContext,
+    build_record_visibility_clause,
+    ensure_workspace_scope,
+    get_current_auth_context,
+    get_verified_user_role,
+)
+from app.db.models import ProvenanceRecord
 from app.db.session import get_db_session
 from app.schemas.provenance import ExplainRequest, ExplainResponse
 from app.services.explanation_service import (
@@ -31,7 +38,19 @@ async def explain_provenance(
     resolved_uuid = (payload.uuid or "").strip() or None
 
     if payload.record is None:
-        record_data, resolved_uuid = await _fetch_record_by_uuid(session, resolved_uuid, auth.workspace_id)
+        role = await get_verified_user_role(session, auth)
+        access_clause = build_record_visibility_clause(
+            ProvenanceRecord.uuid,
+            workspace_id=auth.workspace_id,
+            user_id=auth.subject,
+            is_admin=role == "admin",
+        )
+        record_data, resolved_uuid = await _fetch_record_by_uuid(
+            session,
+            resolved_uuid,
+            auth.workspace_id,
+            [access_clause],
+        )
     else:
         record_data = payload.record
         _assert_record_workspace(record_data, auth.workspace_id)
@@ -48,13 +67,19 @@ async def _fetch_record_by_uuid(
     session: AsyncSession,
     record_uuid: str | None,
     workspace_id: str,
+    access_filters: list[object] | None = None,
 ) -> tuple[dict, str]:
     if not record_uuid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Provide either uuid or record payload for /explain.",
         )
-    record = await get_provenance_by_uuid(session=session, record_uuid=record_uuid, workspace_id=workspace_id)
+    record = await get_provenance_by_uuid(
+        session=session,
+        record_uuid=record_uuid,
+        workspace_id=workspace_id,
+        access_filters=access_filters,
+    )
     if record is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

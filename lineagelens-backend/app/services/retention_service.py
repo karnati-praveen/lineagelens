@@ -85,7 +85,7 @@ async def run_retention_cleanup(
             )
             records_to_delete = records_to_delete_result.scalars().all()
             for record in records_to_delete:
-                session.delete(record)
+                await session.delete(record)
             deleted_total += len(records_to_delete)
 
             # Soft redact records older than redact_after_days but not yet queued

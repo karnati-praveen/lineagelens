@@ -13,7 +13,7 @@ from uuid import UUID as PyUUID
 from fastapi import Depends, HTTPException, Request, WebSocket, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import ExpiredSignatureError, JWTError, jwt
-from sqlalchemy import select
+from sqlalchemy import Text, cast, exists, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -450,6 +450,52 @@ async def require_admin(
     if row.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required.")
     return auth
+
+
+async def get_verified_user_role(session: AsyncSession, auth: AuthContext) -> str:
+    try:
+        user_id = PyUUID(auth.subject)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_INVALID_TOKEN_SUBJECT)
+
+    from app.db.models import UserAccount  # local import to avoid circular dependency
+
+    result = await session.execute(
+        select(UserAccount.role, UserAccount.is_active).where(UserAccount.id == user_id)
+    )
+    row = result.one_or_none()
+    if row is None or not row.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account not found or inactive.")
+    return row.role
+
+
+def build_record_visibility_clause(
+    record_uuid_column,
+    *,
+    workspace_id: str,
+    user_id: str,
+    is_admin: bool,
+):
+    from app.db.models import ResourcePermission
+
+    if is_admin:
+        return literal(True)
+
+    user_permission_exists = exists(
+        select(ResourcePermission.id).where(
+            ResourcePermission.workspace_id == workspace_id,
+            ResourcePermission.record_uuid == cast(record_uuid_column, Text),
+            ResourcePermission.user_id == user_id,
+            ResourcePermission.can_view.is_(True),
+        )
+    )
+    any_permission_exists = exists(
+        select(ResourcePermission.id).where(
+            ResourcePermission.workspace_id == workspace_id,
+            ResourcePermission.record_uuid == cast(record_uuid_column, Text),
+        )
+    )
+    return or_(user_permission_exists, ~any_permission_exists)
 
 
 def ensure_workspace_scope(auth: AuthContext, workspace_id: str | None) -> None:
