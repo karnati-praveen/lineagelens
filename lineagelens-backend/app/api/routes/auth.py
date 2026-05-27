@@ -30,23 +30,11 @@ from app.schemas.auth import (
     LoginRequest,
     LogoutResponse,
     RefreshRequest,
-    RegisterRequest,
 )
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-
-@router.post("/register", status_code=status.HTTP_201_CREATED)
-async def register_user(
-    payload: RegisterRequest,
-    session: Annotated[AsyncSession, Depends(get_db_session)],
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> AuthTokenResponse:
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Self-service registration is disabled. Use /setup for first-time setup or /team/invite for new members.",
-    )
 
 
 @router.post("/login")

@@ -31,10 +31,20 @@ import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 
+from classifier import classify_request
+from pricing import estimate_savings
+from routing_cache import cancel_refresh_loop, get_policy, init_routing_cache
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("lineagelens-proxy")
 
 UPSTREAM_URL      = os.environ.get("UPSTREAM_URL", "https://api.anthropic.com").rstrip("/")
+# Per-provider upstream URLs.  When set, requests classified for that provider
+# are forwarded to that URL instead of the generic UPSTREAM_URL.  Leave empty to
+# keep the original single-upstream behaviour (backward-compatible default).
+_ANTHROPIC_UPSTREAM_URL = os.environ.get("ANTHROPIC_UPSTREAM_URL", "").rstrip("/")
+_OPENAI_UPSTREAM_URL    = os.environ.get("OPENAI_UPSTREAM_URL",    "").rstrip("/")
+_GEMINI_UPSTREAM_URL    = os.environ.get("GEMINI_UPSTREAM_URL",    "").rstrip("/")
 BACKEND_URL       = os.environ.get("BACKEND_URL", "http://backend:8787").rstrip("/")
 INGEST_TOKEN      = os.environ.get("BACKEND_INGEST_TOKEN", "")
 WORKSPACE_ID      = os.environ.get("PROXY_WORKSPACE_ID", "proxy-capture")
@@ -116,6 +126,86 @@ def detect_provider_and_format(url: str, headers: dict) -> str:
     return "unknown"
 
 
+def detect_provider_from_inbound(path: str, headers: dict) -> str:
+    """Detect the target LLM provider from the RAW inbound request path and headers.
+
+    This must be called BEFORE the URL is rewritten to the upstream base so
+    the path still reflects how the CLI tool addressed the proxy, not where we
+    are forwarding it.
+
+    Returns one of: "anthropic", "openai", "gemini", or "unknown".
+
+    Detection strategy (in priority order):
+      1. Anthropic-version or x-api-key-provider:anthropic header  → anthropic
+      2. Gemini path pattern (/v1beta/ or /v1/models or gemini keyword) → gemini
+      3. OpenAI path (/v1/chat/completions, /v1/responses, /v1/embeddings)  → openai
+      4. Anthropic path (/v1/messages)                               → anthropic
+      5. Header-based fallback: if Authorization has no goog prefix  → openai
+      6. Unknown
+    """
+    header_keys_lower = {k.lower(): v for k, v in headers.items()}
+    path_lower = path.lower()
+
+    # Priority 1: explicit Anthropic marker headers
+    if (
+        "anthropic-version" in header_keys_lower
+        or header_keys_lower.get("x-api-key-provider", "").lower() == "anthropic"
+    ):
+        return "anthropic"
+
+    # Priority 2: Gemini path patterns — Gemini CLI uses /v1beta/ or /v1/models/<name>:generateContent
+    if (
+        "/v1beta/" in path_lower
+        or ":generatecontent" in path_lower
+        or ":streamgeneratecontent" in path_lower
+        or "gemini" in path_lower
+    ):
+        return "gemini"
+
+    # Priority 3: OpenAI path patterns (chat completions, responses API, embeddings)
+    if (
+        "/v1/chat/completions" in path_lower
+        or "/v1/responses" in path_lower
+        or "/v1/embeddings" in path_lower
+        or "/v1/completions" in path_lower
+    ):
+        return "openai"
+
+    # Priority 4: Anthropic messages path
+    if "/v1/messages" in path_lower:
+        return "anthropic"
+
+    # Priority 5: Bearer token heuristic — Google tokens start with "ya29." or are long OAuth
+    auth = header_keys_lower.get("authorization", "")
+    if auth.lower().startswith("bearer ya29.") or "x-goog" in header_keys_lower:
+        return "gemini"
+
+    return "unknown"
+
+
+def _get_provider_upstream_base(provider: str) -> str:
+    """Return the upstream base URL for a detected provider.
+
+    Checks per-provider env vars first; falls back to the generic UPSTREAM_URL
+    so existing single-upstream deployments continue to work unchanged.
+    """
+    if provider == "anthropic" and _ANTHROPIC_UPSTREAM_URL:
+        return _ANTHROPIC_UPSTREAM_URL
+    if provider == "openai" and _OPENAI_UPSTREAM_URL:
+        return _OPENAI_UPSTREAM_URL
+    if provider == "gemini" and _GEMINI_UPSTREAM_URL:
+        return _GEMINI_UPSTREAM_URL
+    return UPSTREAM_URL
+
+
+def _build_upstream_url_for_provider(provider: str, safe_path: str, raw_query: str) -> str:
+    """Build the upstream URL using the provider-specific base URL."""
+    base = _get_provider_upstream_base(provider)
+    parsed = urllib.parse.urlparse(base)
+    upstream_path = parsed.path.rstrip("/") + "/" + safe_path if safe_path else parsed.path
+    return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, upstream_path, "", raw_query, ""))
+
+
 def extract_file_path(request_headers: dict, request_body: "dict | None") -> str:
     """Resolve a meaningful file path from request metadata.
 
@@ -193,10 +283,16 @@ async def _lifespan(app: FastAPI):
     task = asyncio.create_task(_cleanup_pending_edits_loop())
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
+    # Startup: initialise routing policy cache (non-blocking; fails gracefully).
+    try:
+        await init_routing_cache()
+    except Exception as _rc_err:
+        logger.warning("routing cache init failed (routing disabled until next refresh): %s", _rc_err)
     try:
         yield
     finally:
         # Shutdown: cancel background tasks so the event loop can close cleanly.
+        cancel_refresh_loop()
         for t in list(_background_tasks):
             t.cancel()
 
@@ -231,7 +327,7 @@ def _redact_value(value):
 def _fwd_headers(h) -> dict:
     forwarded = {k: v for k, v in h.items() if k.lower() not in _DROP_REQ}
     if "authorization" in {k.lower() for k in forwarded}:
-        logger.debug("Forwarding Authorization header to upstream — ensure client API keys are intended for %s", UPSTREAM_URL)
+        logger.debug("Forwarding Authorization header to upstream — ensure client API keys are intended for the configured upstream URL")
     return forwarded
 
 
@@ -650,16 +746,37 @@ def _classify_tool_result(result: dict) -> tuple[str, str]:
     return ("errored", content_str[:500])
 
 
+def _annotate_edits(
+    edits: list[dict],
+    ctx: dict,
+    routing_info: dict | None,
+    proposed_at: float,
+) -> None:
+    """Shared helper (R1/R2): annotate a list of edit dicts with context metadata in-place."""
+    for edit in edits:
+        edit["_proposed_at"] = proposed_at
+        edit["_model"] = ctx.get("model", "")
+        edit["_system"] = ctx.get("system", "")
+        edit["_messages"] = ctx.get("messages", [])
+        if routing_info:
+            edit["_routing"] = routing_info
+
+
 async def _store_pending_edits(
     session_key: str,
     tool_uses: list[dict],
     prompt_context: dict | None = None,
+    routing_info: dict | None = None,
 ) -> None:
     """Convert tool_uses to edit records and stash them as pending.
 
     `prompt_context` carries model + system + messages from the triggering
     request body so they can be attached to the ingest payload at resolve
     time. Without this, the dashboard has no prompt or model to display.
+
+    `routing_info` is the dynamic routing decision (if any) made for this
+    request and is attached to each edit so it can be included in the ingest
+    payload when the edit is resolved.
     """
     now = time.time()
     ctx = prompt_context or {}
@@ -677,11 +794,7 @@ async def _store_pending_edits(
             tool_use_id = tool_use.get("id", "")
             if not tool_use_id:
                 continue
-            for edit in edits:
-                edit["_proposed_at"] = now
-                edit["_model"] = ctx.get("model", "")
-                edit["_system"] = ctx.get("system", "")
-                edit["_messages"] = ctx.get("messages", [])
+            _annotate_edits(edits, ctx, routing_info, now)
             _pending_edits[(session_key, tool_use_id)] = edits
             logger.debug(
                 "pending edit: tool=%s file=%s id=%s",
@@ -1086,6 +1199,7 @@ async def _store_codex_pending_edits(
     session_key: str,
     function_calls: list[dict],
     prompt_context: dict | None = None,
+    routing_info: dict | None = None,
 ) -> None:
     """Parse Codex function_calls into edit records and store as pending."""
     now = time.time()
@@ -1103,11 +1217,7 @@ async def _store_codex_pending_edits(
             call_id = fc.get("call_id", "") or fc.get("id", "")
             if not call_id:
                 continue
-            for edit in edits:
-                edit["_proposed_at"] = now
-                edit["_model"] = ctx.get("model", "")
-                edit["_system"] = ctx.get("system", "")
-                edit["_messages"] = ctx.get("messages", [])
+            _annotate_edits(edits, ctx, routing_info, now)
             _pending_edits[(session_key, call_id)] = edits
             logger.debug(
                 "pending codex edit: call_id=%s verb=%s file=%s",
@@ -1472,6 +1582,7 @@ async def _store_gemini_pending_edits(
     session_key: str,
     function_calls: list[dict],
     prompt_context: dict | None = None,
+    routing_info: dict | None = None,
 ) -> None:
     """Parse Gemini functionCalls into edit records and store as pending.
 
@@ -1492,11 +1603,7 @@ async def _store_gemini_pending_edits(
             if not edits:
                 continue
             synthetic_id = edits[0]["tool_use_id"]
-            for edit in edits:
-                edit["_proposed_at"] = now
-                edit["_model"] = ctx.get("model", "")
-                edit["_system"] = ctx.get("system", "")
-                edit["_messages"] = ctx.get("messages", [])
+            _annotate_edits(edits, ctx, routing_info, now)
             _pending_edits[(session_key, synthetic_id)] = edits
             logger.debug(
                 "pending gemini edit: id=%s tool=%s file=%s",
@@ -1577,8 +1684,8 @@ async def _ingest_edit(
         logger.debug("BACKEND_INGEST_TOKEN not configured — skipping edit capture")
         return
 
-    new_string = _redact(edit.get("new_string", "") or "")
-    old_string = _redact(edit.get("old_string", "") or "")
+    new_string = _redact(edit.get("new_string") or "")
+    old_string = _redact(edit.get("old_string") or "")
     if not new_string and not old_string:
         return
 
@@ -1591,11 +1698,9 @@ async def _ingest_edit(
         "filePath": edit.get("file_path", "proxy-capture") or "proxy-capture",
         "insertedText": new_string,
         "workspaceId": WORKSPACE_ID,
-        # Top-level model + promptMessages are what the backend's ingest
-        # normalizer reads (see ingest_normalizer._resolve_model_name and
-        # _resolve_prompt_messages). Without these the dashboard has no
-        # prompt or model to display, even though we captured them.
-        "modelName": edit.get("_model", "") or "",
+        # Top-level promptMessages is what the backend's ingest normalizer reads
+        # (see ingest_normalizer._resolve_prompt_messages). modelName lives only
+        # inside provenance to avoid duplication.
         "promptMessages": redacted_messages,
         "systemPrompt": redacted_system,
         "provenance": _redact_value({
@@ -1613,6 +1718,10 @@ async def _ingest_edit(
             "modelName": edit.get("_model", "") or "",
         }),
     }
+    # Attach routing decision if this request was model-routed.
+    routing_info = edit.get("_routing")
+    if routing_info:
+        payload["routing"] = routing_info
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -1640,6 +1749,7 @@ async def _ingest(
     file_path: str = "proxy-capture",
     upstream_method: str = "POST",
     upstream_status: int = 200,
+    routing_info: dict | None = None,
 ) -> None:
     if not text.strip():
         return
@@ -1656,7 +1766,7 @@ async def _ingest(
     if not code:
         return
 
-    payload = {
+    payload: dict = {
         "id": str(uuid.uuid4()),
         "timestampIso": datetime.now(tz=UTC).isoformat(),
         "filePath": file_path,
@@ -1670,6 +1780,8 @@ async def _ingest(
             "provider": provider,
         },
     }
+    if routing_info:
+        payload["routing"] = routing_info
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -1709,6 +1821,7 @@ async def _handle_streaming(
     anthropic_prompt_context: dict | None = None,
     codex_prompt_context: dict | None = None,
     gemini_prompt_context: dict | None = None,
+    routing_info: dict | None = None,
 ) -> Response:
     # URL base is from UPSTREAM_URL (env-configured, trusted); only path is from request.
     # Scheme and host are pinned by _build_upstream_url — never sourced from user input.
@@ -1767,17 +1880,17 @@ async def _handle_streaming(
                 if provider == "anthropic" and session_key:
                     tool_uses = _extract_anthropic_tool_uses_from_sse(collected)
                     if tool_uses:
-                        await _store_pending_edits(session_key, tool_uses, anthropic_prompt_context)
+                        await _store_pending_edits(session_key, tool_uses, anthropic_prompt_context, routing_info)
                         structured_captured = True
                 elif is_codex and codex_session_key:
                     function_calls = _extract_codex_function_calls_from_sse(collected)
                     if function_calls:
-                        await _store_codex_pending_edits(codex_session_key, function_calls, codex_prompt_context)
+                        await _store_codex_pending_edits(codex_session_key, function_calls, codex_prompt_context, routing_info)
                         structured_captured = True
                 elif provider == "gemini" and gemini_session_key:
                     function_calls = _extract_gemini_function_calls_from_sse(collected)
                     if function_calls:
-                        await _store_gemini_pending_edits(gemini_session_key, function_calls, gemini_prompt_context)
+                        await _store_gemini_pending_edits(gemini_session_key, function_calls, gemini_prompt_context, routing_info)
                         structured_captured = True
 
                 if not structured_captured:
@@ -1786,6 +1899,7 @@ async def _handle_streaming(
                         _ingest(
                             text, f"/{safe_path}", provider=provider, file_path=file_path,
                             upstream_method=method, upstream_status=upstream.status_code,
+                            routing_info=routing_info,
                         )
                     )
                     _background_tasks.add(_task)
@@ -1816,6 +1930,7 @@ async def _handle_non_streaming(
     anthropic_prompt_context: dict | None = None,
     codex_prompt_context: dict | None = None,
     gemini_prompt_context: dict | None = None,
+    routing_info: dict | None = None,
 ) -> Response:
     # URL base is from UPSTREAM_URL (env-configured, trusted); only path is from request.
     # Scheme and host are pinned by _build_upstream_url — never sourced from user input.
@@ -1842,6 +1957,23 @@ async def _handle_non_streaming(
 
     if not skip_capture and upstream.status_code < 400:
         if len(upstream.content) <= MAX_BODY_BYTES:
+            # Wire up savings estimate now that token counts are available.
+            if routing_info and routing_info.get("savings_estimate_usd") == 0.0:
+                try:
+                    resp_json = upstream.json()
+                    usage = resp_json.get("usage") or {}
+                    input_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+                    output_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+                    if input_tokens or output_tokens:
+                        routing_info["savings_estimate_usd"] = estimate_savings(
+                            routing_info["originalModel"],
+                            routing_info["routedModel"],
+                            input_tokens,
+                            output_tokens,
+                        )
+                except Exception:
+                    pass
+
             # Prefer structured edit capture over text scraping when available:
             # Anthropic tool_use, Codex Responses API function_call, or Gemini
             # functionCall.
@@ -1849,17 +1981,17 @@ async def _handle_non_streaming(
             if provider == "anthropic" and session_key:
                 tool_uses = _extract_anthropic_tool_uses_from_body(upstream.content)
                 if tool_uses:
-                    await _store_pending_edits(session_key, tool_uses, anthropic_prompt_context)
+                    await _store_pending_edits(session_key, tool_uses, anthropic_prompt_context, routing_info)
                     structured_captured = True
             elif is_codex and codex_session_key:
                 function_calls = _extract_codex_function_calls_from_body(upstream.content)
                 if function_calls:
-                    await _store_codex_pending_edits(codex_session_key, function_calls, codex_prompt_context)
+                    await _store_codex_pending_edits(codex_session_key, function_calls, codex_prompt_context, routing_info)
                     structured_captured = True
             elif provider == "gemini" and gemini_session_key:
                 function_calls = _extract_gemini_function_calls_from_body(upstream.content)
                 if function_calls:
-                    await _store_gemini_pending_edits(gemini_session_key, function_calls, gemini_prompt_context)
+                    await _store_gemini_pending_edits(gemini_session_key, function_calls, gemini_prompt_context, routing_info)
                     structured_captured = True
 
             if not structured_captured:
@@ -1869,6 +2001,7 @@ async def _handle_non_streaming(
                         _ingest(
                             text, f"/{safe_path}", provider=provider, file_path=file_path,
                             upstream_method=method, upstream_status=upstream.status_code,
+                            routing_info=routing_info,
                         )
                     )
                     _background_tasks.add(_task)
@@ -1917,7 +2050,6 @@ async def _read_request_body(request: Request) -> Response | bytes:
 )
 async def proxy_request(request: Request, path: str) -> Response:
     safe_path = _sanitize_path(path)
-    url = _build_upstream_url(safe_path, request.url.query)
 
     body_or_error = await _read_request_body(request)
     if isinstance(body_or_error, Response):
@@ -1926,8 +2058,32 @@ async def proxy_request(request: Request, path: str) -> Response:
 
     headers = _fwd_headers(request.headers)
 
-    # Detect provider from the resolved upstream URL and request headers.
-    provider = detect_provider_and_format(url, dict(request.headers))
+    # ── Provider detection (inbound-first) ────────────────────────────────────
+    # Step 1: detect from the raw inbound path + headers — BEFORE the URL is
+    # rewritten to an upstream base.  This lets a single proxy serve Claude Code
+    # (Anthropic), Codex CLI (OpenAI), and Gemini CLI simultaneously when each
+    # tool sends to /v1/messages, /v1/chat/completions, or /v1beta/models/…
+    provider = detect_provider_from_inbound("/" + safe_path, dict(request.headers))
+
+    # Step 2: build the upstream URL with the provider-specific base URL.
+    # If provider is unknown here, fall back to the generic UPSTREAM_URL — the
+    # URL-based detect_provider_and_format call below will refine the provider.
+    url = _build_upstream_url_for_provider(provider, safe_path, request.url.query)
+
+    # Step 3: if inbound detection was inconclusive, fall back to URL-based
+    # detection (original behaviour — examines the upstream domain/path).
+    if provider == "unknown":
+        provider = detect_provider_and_format(url, dict(request.headers))
+
+    logger.debug("provider routing: inbound=/%s → provider=%s upstream=%s", safe_path, provider, url)
+
+    # Parse request body JSON once and reuse across all provider adapters (R3).
+    try:
+        req_body_dict: dict | None = json.loads(body) if body else None
+        if not isinstance(req_body_dict, dict):
+            req_body_dict = None
+    except Exception:
+        req_body_dict = None
 
     # Anthropic adapter: resolve pending edits from any tool_result blocks the
     # client is sending back from a previous turn, and extract the prompt
@@ -1937,7 +2093,6 @@ async def proxy_request(request: Request, path: str) -> Response:
     anthropic_prompt_context: dict = {}
     if provider == "anthropic" and body:
         try:
-            req_body_dict = json.loads(body)
             if isinstance(req_body_dict, dict):
                 anthropic_session_key = _session_key(req_body_dict, dict(request.headers))
                 anthropic_prompt_context = _extract_anthropic_prompt_context(req_body_dict)
@@ -1953,7 +2108,6 @@ async def proxy_request(request: Request, path: str) -> Response:
     codex_prompt_context: dict = {}
     if is_codex and body:
         try:
-            req_body_dict = json.loads(body)
             if isinstance(req_body_dict, dict):
                 codex_session_key = _codex_session_key(req_body_dict, dict(request.headers))
                 codex_prompt_context = _extract_codex_prompt_context(req_body_dict)
@@ -1968,7 +2122,6 @@ async def proxy_request(request: Request, path: str) -> Response:
     gemini_prompt_context: dict = {}
     if provider == "gemini" and body:
         try:
-            req_body_dict = json.loads(body)
             if isinstance(req_body_dict, dict):
                 gemini_session_key = _gemini_session_key(req_body_dict, dict(request.headers))
                 gemini_prompt_context = _extract_gemini_prompt_context(req_body_dict, url)
@@ -1979,11 +2132,40 @@ async def proxy_request(request: Request, path: str) -> Response:
             logger.debug("gemini adapter: request body parse failed", exc_info=True)
 
     # Extract the best available file path from request metadata.
-    try:
-        req_body_dict = json.loads(body) if body else None
-    except Exception:
-        req_body_dict = None
     file_path = extract_file_path(dict(request.headers), req_body_dict)
+
+    # ── Dynamic model routing ─────────────────────────────────────────────────
+    # Classify the request and, if an enabled routing policy exists for this
+    # workspace + provider, overwrite the model name before forwarding.
+    # On any error the request is forwarded unchanged — never block the client.
+    routing_info: dict | None = None
+    try:
+        if req_body_dict and provider in ("anthropic", "openai", "gemini"):
+            tier = classify_request(req_body_dict)
+            policy = await get_policy(WORKSPACE_ID, provider)
+            if policy:
+                target_model = policy.get("mappings", {}).get(tier)
+                current_model = req_body_dict.get("model", "")
+                if target_model and target_model != current_model and current_model:
+                    req_body_dict["model"] = target_model
+                    body = json.dumps(req_body_dict).encode()
+                    routing_info = {
+                        "originalModel": current_model,
+                        "routedModel": target_model,
+                        "tier": tier,
+                        "policyId": str(policy.get("id", "")),
+                        # savings_estimate_usd is added after upstream responds
+                        # and token counts are known; for text-based captures
+                        # token counts aren't available, so we default to 0.
+                        "savings_estimate_usd": 0.0,
+                    }
+                    logger.info(
+                        "routing: %s → %s (tier=%s workspace=%s)",
+                        current_model, target_model, tier, WORKSPACE_ID,
+                    )
+    except Exception as _routing_err:
+        logger.warning("routing error (request forwarded unchanged): %s", _routing_err)
+    # ── End routing ───────────────────────────────────────────────────────────
 
     if _is_streaming(url, body):
         return await _handle_streaming(
@@ -1996,6 +2178,7 @@ async def proxy_request(request: Request, path: str) -> Response:
             anthropic_prompt_context=anthropic_prompt_context,
             codex_prompt_context=codex_prompt_context,
             gemini_prompt_context=gemini_prompt_context,
+            routing_info=routing_info,
         )
     return await _handle_non_streaming(
         request.method, url, headers, body, safe_path,
@@ -2007,6 +2190,7 @@ async def proxy_request(request: Request, path: str) -> Response:
         anthropic_prompt_context=anthropic_prompt_context,
         codex_prompt_context=codex_prompt_context,
         gemini_prompt_context=gemini_prompt_context,
+        routing_info=routing_info,
     )
 
 

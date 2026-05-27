@@ -63,6 +63,10 @@ class InMemoryRateLimiter:
             bucket.popleft()
 
     async def acheck(self, *, key: str, limit: int, window_seconds: int) -> RateLimitDecision:
+        # Intentionally delegates to the synchronous .check() without an executor.
+        # This is safe because InMemoryRateLimiter.check() is fast (in-memory, no I/O)
+        # and the async def is only needed for duck-typing compatibility with the
+        # RedisRateLimiter interface (which IS truly async).
         return self.check(key=key, limit=limit, window_seconds=window_seconds)
 
     def _compact_if_necessary(self, *, now: float, window_seconds: int) -> None:

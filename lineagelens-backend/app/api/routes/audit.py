@@ -3,8 +3,10 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, desc, select
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import AuthContext, require_admin
@@ -27,8 +29,6 @@ async def list_audit_log(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> dict:
     """List audit log entries for the workspace. Admin only."""
-    from datetime import datetime
-
     filters = [AuditLog.workspace_id == auth.workspace_id]
 
     if action:
@@ -50,8 +50,6 @@ async def list_audit_log(
             filters.append(AuditLog.created_at <= dt_to)
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid date_to format: {date_to!r}. Use ISO 8601.")
-
-    from sqlalchemy import func
 
     count_result = await session.execute(
         select(func.count()).select_from(AuditLog).where(and_(*filters))

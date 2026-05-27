@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import and_, select
+from sqlalchemy import and_, exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import log_audit_event
@@ -316,7 +316,6 @@ async def bulk_review(
     records = await _fetch_records(session, payload.uuids, auth.workspace_id)
     found_uuids = {str(r.uuid) for r in records}
 
-    from sqlalchemy import exists
     queued = 0
     for record in records:
         record_uuid_str = str(record.uuid)

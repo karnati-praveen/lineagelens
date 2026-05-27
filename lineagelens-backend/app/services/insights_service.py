@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.model_names import normalize_model_name as _canonical_normalize_model_name
 from app.db.models import ProvenanceRecord, UserAccount
 from app.schemas.provenance import SearchRequest
 from app.services.provenance_service import (
@@ -19,6 +20,7 @@ from app.services.provenance_service import (
 from app.services.team_service import build_team_member_stats
 
 
+# Configurable thresholds — override via Settings if needed
 HIGH_RISK_THRESHOLD = 65
 CRITICAL_RISK_THRESHOLD = 85
 AGENT_SESSION_GAP_SECONDS = 20 * 60
@@ -157,7 +159,7 @@ def build_insights_dashboard(
     for record in records:
         risk = get_risk_assessment(record)
         agent_context = get_agent_context(record)
-        model_name = normalize_model_name(pick_first(record, [["prompt", "modelName"], ["model"], ["modelName"]]))
+        model_name = _canonical_normalize_model_name(pick_first(record, [["prompt", "modelName"], ["model"], ["modelName"]])) or ""
 
         summaries.append(
             {
@@ -613,6 +615,9 @@ def get_risk_assessment(record: dict[str, Any]) -> dict[str, Any]:
 def _compute_heuristic_risk(
     record: dict[str, Any],
 ) -> tuple[int, list[str], set[str]]:
+    # NOTE: a separate risk scoring implementation also exists in
+    # app.services.risk_service.  Do not merge without careful regression
+    # testing of both paths.
     score = 12
     reasons: list[str] = []
     categories: set[str] = set()

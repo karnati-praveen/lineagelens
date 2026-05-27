@@ -16,6 +16,11 @@ from app.db.session import get_db_session
 router = APIRouter(tags=["permissions"])
 logger = logging.getLogger(__name__)
 
+# NOTE: require_role("admin") works both as a decorator argument
+# (dependencies=[Depends(require_role("admin"))]) and as a direct FastAPI
+# dependency (auth: AuthContext = Depends(require_role("admin"))). Both forms
+# are equivalent — require_role returns a closure that FastAPI resolves lazily.
+
 
 class PermissionGrant(BaseModel):
     record_uuid: str = Field(..., alias="recordUuid")

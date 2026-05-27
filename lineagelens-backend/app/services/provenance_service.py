@@ -141,6 +141,8 @@ async def ingest_provenance_event(
         embedding_model=settings.embedding_model_name,
         risk_score=risk_score_value,
         provenance_payload=payload.provenance_payload,
+        routing_decision=payload.routing_decision,
+        confidence_breakdown=payload.confidence_breakdown,
     )
 
     try:
@@ -501,6 +503,22 @@ def serialize_provenance_record(
     payload.setdefault("astSnapshot", record.ast_snapshot)
     payload.setdefault("embeddings", record.embeddings)
     payload.setdefault("lineageNodeId", record.lineage_node_id)
+
+    # Always surface the latest confidence value and breakdown.
+    # normalized_event.confidence (full dict) is already inside provenance_payload
+    # via normalizedEvent; here we also expose them at the top level so callers
+    # don't have to dig into the nested structure.
+    if record.confidence_breakdown is not None:
+        payload["confidenceBreakdown"] = record.confidence_breakdown
+    # Top-level confidence.value for search responses (non-null if breakdown exists).
+    _ne_conf = None
+    try:
+        _ne_conf = payload.get("normalizedEvent", {}).get("confidence", {})
+    except Exception:
+        pass
+    if isinstance(_ne_conf, dict) and "value" in _ne_conf:
+        payload.setdefault("confidenceValue", _ne_conf["value"])
+        payload.setdefault("confidenceLevel", _ne_conf.get("level"))
 
     if score is not None:
         payload["score"] = score

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import uuid as uuid_pkg
+from uuid import UUID as PyUUID
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -16,7 +18,9 @@ from app.core.security import (
     get_verified_user_role,
     require_role,
 )
-from app.db.models import ProvenanceComment, ProvenanceRecord
+from app.api.routes.request_utils import assert_record_exists as _assert_record_exists
+from app.api.routes.request_utils import get_client_ip as _get_client_ip
+from app.db.models import ProvenanceComment, ProvenanceRecord, UserAccount
 from app.db.session import get_db_session
 
 router = APIRouter(tags=["comments"])
@@ -28,47 +32,6 @@ class AddCommentRequest(BaseModel):
     workspace_id: str | None = Field(default=None, alias="workspaceId")
 
     model_config = ConfigDict(populate_by_name=True, extra="allow")
-
-
-def _get_client_ip(request: Request) -> str | None:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return None
-
-
-async def _assert_record_exists(
-    session: AsyncSession,
-    record_uuid: str,
-    workspace_id: str,
-    access_filters: list[object] | None = None,
-) -> None:
-    import uuid as uuid_pkg
-
-    try:
-        parsed_uuid = uuid_pkg.UUID(record_uuid)
-    except (ValueError, TypeError):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Provenance record not found for this workspace.",
-        )
-
-    result = await session.execute(
-        select(ProvenanceRecord.uuid).where(
-            and_(
-                ProvenanceRecord.uuid == parsed_uuid,
-                ProvenanceRecord.workspace_id == workspace_id,
-                *([] if access_filters is None else access_filters),
-            )
-        )
-    )
-    if result.scalar_one_or_none() is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Provenance record not found for this workspace.",
-        )
 
 
 @router.post("/provenance/{record_uuid}/comments", status_code=status.HTTP_201_CREATED)
@@ -180,11 +143,6 @@ async def delete_comment(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> None:
     """Delete a comment. Users can delete their own comments; admins can delete any."""
-    import uuid as uuid_pkg
-    from uuid import UUID as PyUUID
-    from app.db.models import UserAccount
-    from sqlalchemy import select as sa_select
-
     try:
         parsed_id = uuid_pkg.UUID(comment_id)
     except ValueError:
@@ -215,7 +173,7 @@ async def delete_comment(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.")
 
     role_result = await session.execute(
-        sa_select(UserAccount.role).where(UserAccount.id == user_uuid)
+        select(UserAccount.role).where(UserAccount.id == user_uuid)
     )
     current_role = role_result.scalar_one_or_none() or "member"
 

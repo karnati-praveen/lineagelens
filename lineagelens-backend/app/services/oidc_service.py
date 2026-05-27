@@ -47,7 +47,7 @@ def build_auth_url(
     scopes: list[str],
     state: str,
 ) -> str:
-    """Construct the IdP authorization URL."""
+    """Construct the IdP authorization URL using urllib.parse.urlencode (consistent with exchange_code)."""
     auth_endpoint = discovery_doc["authorization_endpoint"]
     params = urllib.parse.urlencode({
         "response_type": "code",
@@ -66,7 +66,12 @@ async def exchange_code(
     client_secret: str,
     token_endpoint: str,
 ) -> dict:
-    """Exchange authorization code for tokens at the IdP token endpoint."""
+    """Exchange authorization code for tokens at the IdP token endpoint.
+
+    Uses httpx's built-in form-data encoding (data=) which is consistent with
+    build_auth_url's use of urllib.parse.urlencode — both produce form-encoded
+    key=value pairs, just for different HTTP verbs (POST body vs GET query string).
+    """
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
             token_endpoint,

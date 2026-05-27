@@ -22,7 +22,7 @@ from app.services.provenance_service import get_provenance_by_uuid, serialize_pr
 router = APIRouter(tags=["provenance"])
 
 
-@router.get("/provenance", response_model=None)
+@router.get("/provenance")
 async def list_provenance_records(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],

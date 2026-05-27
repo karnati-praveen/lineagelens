@@ -40,18 +40,19 @@ class RedisRateLimiter:
     Requirements: pip install redis[asyncio]
     """
 
-    def __init__(self, redis_url: str) -> None:
+    def __init__(self, redis_url: str, key_prefix: str = "rl:") -> None:
         import redis.asyncio as aioredis
 
         self._client = aioredis.from_url(redis_url, decode_responses=True)
         self._script = self._client.register_script(_SLIDING_WINDOW_LUA)
+        self._key_prefix = key_prefix
 
     async def acheck(self, *, key: str, limit: int, window_seconds: int) -> RateLimitDecision:
         now = time.time()
         safe_limit = max(1, limit)
         safe_window = max(1, window_seconds)
         window_start = now - safe_window
-        prefixed = f"rl:{key}"
+        prefixed = f"{self._key_prefix}{key}"
         member = f"{now}:{secrets.token_hex(8)}"
 
         result = await self._script(

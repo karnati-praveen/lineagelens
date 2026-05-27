@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import urllib.parse
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -130,6 +131,7 @@ async def get_file_chain(
     """Show how a file evolved across AI insertions."""
     ensure_workspace_scope(auth, workspace_id)
     neo4j_service = _get_neo4j(request)
+    file_path = urllib.parse.unquote(file_path)
 
     blocks = await neo4j_service.find_blocks_in_file(
         workspace_id=workspace_id,

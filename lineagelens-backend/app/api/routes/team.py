@@ -248,7 +248,7 @@ async def deactivate_member(
     if parsed is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_MEMBER_NOT_FOUND)
 
-    if user_id == auth.subject:
+    if uuid_pkg.UUID(user_id) == uuid_pkg.UUID(str(auth.subject)):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot deactivate your own account.")
 
     result = await session.execute(

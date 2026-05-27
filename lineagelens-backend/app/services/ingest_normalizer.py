@@ -8,6 +8,7 @@ import uuid as uuid_pkg
 from typing import Any
 
 from app.core.model_names import normalize_model_name as _normalize_model_name_canonical
+from app.services.confidence_service import ConfidenceInputs, compute_confidence
 
 
 PROVENANCE_EVENT_SCHEMA_VERSION = "lineagelens.provenance-event.v1"
@@ -42,6 +43,10 @@ class NormalizedIngestPayload:
     capture_status: str
     prompt_status: str
     agent_context: dict[str, Any] | None
+    # Dynamic routing decision (None when routing was not applied).
+    routing_decision: dict[str, Any] | None = None
+    # Evidence-weighted confidence breakdown (None when unavailable).
+    confidence_breakdown: list[dict[str, Any]] | None = None
 
 
 def extract_workspace_id(payload: object) -> str | None:
@@ -209,6 +214,66 @@ def normalize_ingest_payload(
         prompt_status=prompt_status,
     )
 
+    # ── Evidence-weighted confidence ──────────────────────────────────────────
+    # Build ConfidenceInputs from already-extracted fields, compute the result,
+    # then patch both agent_context and normalized_event before the provenance
+    # payload is assembled (so provenance_payload.normalizedEvent inherits the
+    # updated values automatically).
+
+    # Prompt timestamp: try several probe paths in the raw payload.
+    _prompt_ts: datetime | None = None
+    for _ts_path in (
+        ["timestamps", "requestAtIso"],
+        ["requestTimestampIso"],
+        ["correlation", "proxyRequestTimestampIso"],
+    ):
+        _ts_str = _first_string(payload, _ts_path)
+        if _ts_str:
+            try:
+                _prompt_ts = _normalize_datetime(datetime.fromisoformat(_ts_str.replace("Z", "+00:00")))
+                break
+            except ValueError:
+                pass
+
+    # Whether proxy & editor both confirmed the same request UUID.
+    _uuid_matched = bool(
+        payload.get("requestUuidMatchesCapture")
+        or (capture or {}).get("requestUuidMatchesCapture")
+    )
+
+    _conf_inputs = ConfidenceInputs(
+        capture_status=capture_status,
+        request_uuid_present=request_uuid is not None,
+        request_uuid_matches_capture=_uuid_matched,
+        prompt_timestamp=_prompt_ts,
+        insertion_timestamp=timestamp_iso,
+        raw_model_response=raw_model_response,
+        inserted_text=inserted_text,
+        tool_name=_first_string(source, ["toolName"]),
+        user_agent=_first_string(source, ["userAgent"]),
+        provider=_first_string(source, ["provider"]),
+    )
+    _conf_result = compute_confidence(_conf_inputs)
+
+    # Compute evidence dicts once and reuse across all aliases (avoids 4x serialisation).
+    _evidence_dicts = [e.to_dict() for e in _conf_result.evidence]
+
+    # Patch agent_context in-place (skip when build_agent_context returned None).
+    if isinstance(agent_context, dict):
+        agent_context["confidence"] = _conf_result.value
+        # Two aliases kept for backward compat: callers may use either key.
+        agent_context["confidenceEvidence"] = _evidence_dicts
+        agent_context["evidence"] = agent_context["confidenceEvidence"]  # D16: same list, two keys
+
+    # Patch normalized_event in-place.
+    if isinstance(normalized_event, dict):
+        normalized_event["confidence"] = _conf_result.to_dict()
+        _corr = normalized_event.get("correlation")
+        if isinstance(_corr, dict):
+            _corr["confidence"] = _conf_result.value
+
+    # ── End confidence ────────────────────────────────────────────────────────
+
     provenance_payload = _build_legacy_provenance_payload(_LegacyPayloadParams(
         payload=raw_payload,
         record_uuid=record_uuid,
@@ -246,6 +311,12 @@ def normalize_ingest_payload(
 
     warnings = _build_ingest_warnings(raw_payload, capture_status)
 
+    # Extract routing decision block sent by the proxy (if present).
+    routing_decision: dict[str, Any] | None = None
+    _routing_raw = payload.get("routing")
+    if isinstance(_routing_raw, dict) and _routing_raw:
+        routing_decision = _routing_raw
+
     return NormalizedIngestPayload(
         record_uuid=record_uuid,
         request_uuid=request_uuid,
@@ -274,6 +345,8 @@ def normalize_ingest_payload(
         capture_status=capture_status,
         prompt_status=prompt_status,
         agent_context=agent_context,
+        routing_decision=routing_decision,
+        confidence_breakdown=_evidence_dicts,
     )
 
 
@@ -728,21 +801,6 @@ def _build_agent_context(
         return None
 
     session_kind = _guess_session_kind(source, model_name)
-    confidence = 0.5 if tool_name or provider else 0.25
-    evidence = [
-        {
-            "source": "heuristic",
-            "field": "source",
-            "value": f"{tool_name or 'unknown'}|{provider or 'unknown'}",
-            "weight": 0.2,
-        },
-        {
-            "source": "heuristic",
-            "field": "captureStatus",
-            "value": capture_status,
-            "weight": 0.1,
-        },
-    ]
 
     return {
         "toolName": tool_name,
@@ -752,8 +810,11 @@ def _build_agent_context(
         "runId": _first_string(source, ["runId"]),
         "workspaceHint": workspace_id,
         "operationType": _first_string(source, ["operationType"]) or "edit",
-        "confidence": confidence,
-        "evidence": evidence,
+        # confidence / confidenceEvidence are filled by compute_confidence() in
+        # normalize_ingest_payload after _build_agent_context returns.
+        "confidence": None,
+        "confidenceEvidence": [],
+        "evidence": [],
         "adapterName": _first_string(source, ["shim"]) or "lightweight",
         "matchSource": "heuristic",
         "sessionKind": session_kind,

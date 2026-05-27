@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -64,8 +65,6 @@ async def _send_to_channel(config, *, event: str, payload: dict) -> None:
         await _post_webhook(webhook_url, message, channel)
 
     elif channel == "email":
-        import asyncio
-
         recipients = cfg.get("recipients") or cfg.get("email")
         smtp_host = cfg.get("smtp_host", "localhost")
         try:

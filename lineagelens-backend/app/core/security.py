@@ -27,17 +27,20 @@ _INVALID_TOKEN_SUBJECT = "Invalid token subject."
 
 
 def get_client_ip(request: Request, settings: Settings | None = None) -> str | None:
-    """Return the real client IP, only trusting X-Forwarded-For from allowlisted proxies."""
-    trusted_ips: set[str] = set()
-    if settings is not None:
-        raw = getattr(settings, "trusted_proxy_ips", "") or ""
-        trusted_ips = {ip.strip() for ip in raw.split(",") if ip.strip()}
+    """Return the real client IP, only trusting X-Forwarded-For from allowlisted proxies.
 
-    peer_ip = request.client.host if request.client else None
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded and trusted_ips and peer_ip in trusted_ips:
-        return forwarded.split(",")[0].strip()
-    return peer_ip
+    This is the canonical implementation — import from here, not from app.main.
+    """
+    from app.core.rate_limit import effective_client_ip
+
+    trusted_proxy_ips = getattr(settings, "trusted_proxy_ips", None) if settings is not None else None
+    peer_host = request.client.host if request.client else None
+    return effective_client_ip(
+        peer_host,
+        request.headers.get("x-forwarded-for", ""),
+        request.headers.get("x-real-ip", ""),
+        trusted_proxy_ips,
+    ) or None
 
 
 @dataclass(slots=True)
@@ -405,11 +408,10 @@ def require_role(*roles: str):
         except ValueError:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_INVALID_TOKEN_SUBJECT)
 
-        from sqlalchemy import select as sa_select
         from app.db.models import UserAccount  # local import to avoid circular dependency
 
         result = await session.execute(
-            sa_select(UserAccount.role, UserAccount.is_active).where(UserAccount.id == user_id)
+            select(UserAccount.role, UserAccount.is_active).where(UserAccount.id == user_id)
         )
         row = result.one_or_none()
         if row is None or not row.is_active:
@@ -429,27 +431,9 @@ def require_role(*roles: str):
     return _check
 
 
-async def require_admin(
-    auth: AuthContext = Depends(get_current_auth_context),
-    session: AsyncSession = Depends(get_db_session),
-) -> AuthContext:
-    """Dependency that raises 403 unless the authenticated user has admin role."""
-    try:
-        user_id = PyUUID(auth.subject)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_INVALID_TOKEN_SUBJECT)
-
-    from sqlalchemy import select as sa_select
-    from app.db.models import UserAccount  # local import to avoid circular dependency
-    result = await session.execute(
-        sa_select(UserAccount.role, UserAccount.is_active).where(UserAccount.id == user_id)
-    )
-    row = result.one_or_none()
-    if row is None or not row.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account not found or inactive.")
-    if row.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required.")
-    return auth
+# Thin wrapper: require_admin is equivalent to require_role("admin") but
+# kept as a named dependency for readability and backward compatibility.
+require_admin = require_role("admin")
 
 
 async def get_verified_user_role(session: AsyncSession, auth: AuthContext) -> str:

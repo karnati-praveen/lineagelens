@@ -277,7 +277,7 @@ async def sso_callback(
         raise HTTPException(status_code=403, detail="Account is inactive.")
 
     user.token_version = (user.token_version or 0) + 1
-    refresh_jti = str(uuid_pkg.uuid4().hex)
+    refresh_jti = uuid_pkg.uuid4().hex
     user.refresh_token_jti = refresh_jti
     scopes = sorted(settings.required_scopes_set)
     token, expires_at = create_access_token(

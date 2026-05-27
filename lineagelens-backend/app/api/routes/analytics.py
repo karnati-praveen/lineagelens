@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import AuthContext, ensure_workspace_scope, get_current_auth_context
+from app.db.models import ProvenanceRecord
 from app.db.session import get_db_session
 from app.services.analytics_service import detect_anomalies, get_model_usage, get_risk_trend, get_token_cost
 
@@ -127,3 +130,39 @@ async def analytics_anomaly(
         date_to=payload.date_to,
         z_threshold=payload.z_threshold,
     )
+
+
+@router.get("/analytics/routing-savings")
+async def analytics_routing_savings(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+) -> dict:
+    """Return the estimated USD cost saved by dynamic model routing over the last 30 days.
+
+    Sums the ``savings_estimate_usd`` field from each provenance record's
+    ``routing_decision`` JSON column.  Records without a routing decision
+    (i.e. not routed, or routed before this feature was deployed) contribute 0.
+    """
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(days=30)
+
+    result = await session.execute(
+        select(ProvenanceRecord.routing_decision)
+        .where(ProvenanceRecord.workspace_id == auth.workspace_id)
+        .where(ProvenanceRecord.created_at >= cutoff)
+        .where(ProvenanceRecord.routing_decision.isnot(None))
+    )
+    rows = result.all()
+
+    total: float = 0.0
+    routed_count: int = 0
+    for (rd,) in rows:
+        if isinstance(rd, dict):
+            savings = rd.get("savings_estimate_usd", 0.0)
+            if isinstance(savings, (int, float)):
+                total += float(savings)
+            routed_count += 1
+
+    return {
+        "savings_usd_30d": round(total, 6),
+        "routed_requests_30d": routed_count,
+    }

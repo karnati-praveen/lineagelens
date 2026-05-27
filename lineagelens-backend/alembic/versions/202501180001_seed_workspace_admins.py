@@ -49,6 +49,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Intentionally left empty: demoting users back from admin after a workspace-seeding
-    # migration is destructive and workspace-specific; there is no safe generic reversal.
-    pass
+    """No-op: reversing a workspace admin seed is unsafe.
+
+    Demoting users who were promoted by this migration cannot be done safely
+    in a generic, non-destructive way because we cannot reliably distinguish
+    accounts promoted here from those promoted by other means.  Any rollback
+    should be handled manually on a case-by-case basis.
+    """

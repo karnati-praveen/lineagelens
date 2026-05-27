@@ -10,6 +10,8 @@ def build_team_member_stats(
     record_counts: dict[str, int],
     net_added_lines_by_user: dict[str, int] | None = None,
 ) -> list[TeamMemberStats]:
+    if net_added_lines_by_user is None:
+        net_added_lines_by_user = {}
     members: list[TeamMemberStats] = []
 
     for user in users:

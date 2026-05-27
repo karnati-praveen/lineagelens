@@ -3,6 +3,7 @@ import { minimatch } from 'minimatch';
 import { CaptureStore } from './store';
 
 // Known AI-related file name patterns and editor context clues
+// TODO: use AI_TOOL_HINTS for detection (currently defined but not yet wired up)
 const AI_TOOL_HINTS = [
   /copilot/i, /cursor/i, /codeium/i, /tabnine/i, /cody/i, /continue/i,
   /github\.copilot/i, /amazonq/i, /supermaven/i,

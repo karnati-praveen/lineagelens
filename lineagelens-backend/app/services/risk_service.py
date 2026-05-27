@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# NOTE: risk assessment logic is also partially implemented in
+# app.services.insights_service (_compute_heuristic_risk).  Do not merge
+# without careful regression testing of both paths.
+
 import re
 
 

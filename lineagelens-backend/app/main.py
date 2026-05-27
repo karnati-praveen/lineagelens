@@ -49,7 +49,7 @@ from app.api.routes.scheduled_reports import router as scheduled_reports_router
 from app.api.routes.sso import router as sso_router
 from app.api.routes.setup import router as setup_router
 from app.core.config import Settings, get_settings
-from app.core.rate_limit import InMemoryRateLimiter, effective_client_ip
+from app.core.rate_limit import InMemoryRateLimiter
 from app.db.session import create_engine_from_settings, create_session_factory, initialize_database
 from app.services.neo4j_service import Neo4jLineageService
 
@@ -81,15 +81,11 @@ def get_runtime_settings(request: Request) -> Settings:
     return get_settings()
 
 
-def get_client_ip(request: Request, settings: Settings | None = None) -> str:
+def get_client_ip(request: Request, settings: Settings | None = None) -> str | None:
+    """Thin wrapper — canonical implementation lives in app.core.security.get_client_ip."""
+    from app.core.security import get_client_ip as _get_client_ip
     current_settings = settings or get_runtime_settings(request)
-    peer_host = request.client.host if request.client else None
-    return effective_client_ip(
-        peer_host,
-        request.headers.get("x-forwarded-for", ""),
-        request.headers.get("x-real-ip", ""),
-        current_settings.trusted_proxy_ips,
-    )
+    return _get_client_ip(request, current_settings)
 
 
 class SecurityHeadersMiddleware:
@@ -367,7 +363,7 @@ async def lifespan(app: FastAPI):
             await redis_client.ping()
             from app.core.rate_limit_redis import RedisRateLimiter
 
-            rate_limiter = RedisRateLimiter(settings.redis_url)
+            rate_limiter = RedisRateLimiter(settings.redis_url, key_prefix=settings.rate_limit_key_prefix)
             logger.info("Redis KV store connected.")
             logger.info("Redis-backed rate limiter initialised.")
         except Exception as exc:
@@ -394,7 +390,6 @@ async def lifespan(app: FastAPI):
 
         yield
     finally:
-        from app.services.report_scheduler import stop_scheduler
         await stop_scheduler()
         if neo4j_service is not None:
             await neo4j_service.close()

@@ -38,8 +38,8 @@ async def _scheduler_loop(session_factory) -> None:
             await _run_due_reports(session_factory)
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
-            logger.warning("Scheduler loop error: %s", exc)
+        except Exception:
+            logger.exception("Scheduler loop error")
 
 
 async def _run_due_reports(session_factory) -> None:

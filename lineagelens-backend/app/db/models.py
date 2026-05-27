@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid as uuid_pkg
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, Index, Integer, String, Text, Uuid, func
+from sqlalchemy import JSON, Boolean, DateTime, Float, Index, Integer, String, Text, UniqueConstraint, Uuid, func
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -69,6 +69,15 @@ class ProvenanceRecord(Base):
     is_redacted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
 
     lineage_node_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    # Populated by the proxy when dynamic model routing overrides the requested model.
+    # Schema: {originalModel, routedModel, tier, policyId, savings_estimate_usd}
+    routing_decision: Mapped[dict | None] = mapped_column(_JSON_TYPE, nullable=True)
+
+    # Confidence breakdown: list of EvidenceItem dicts produced by confidence_service.
+    # NULL for records ingested before the confidence engine was introduced.
+    # Schema: [{signal, value, weight, contribution, rationale}, ...]
+    confidence_breakdown: Mapped[list | None] = mapped_column(_JSON_TYPE, nullable=True)
 
     provenance_payload: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False)
 
@@ -334,3 +343,43 @@ class Workspace(Base):
     settings: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class RoutingPolicy(Base):
+    """Per-workspace, per-provider dynamic model routing policy.
+
+    Stored as one row per (workspace_id, provider) combination.  The proxy
+    reads these via GET /policies/routing/internal and routes simple/standard
+    requests to cheaper models according to the mappings dict.
+
+    Example mappings value:
+        {
+            "simple":   "claude-haiku-4-5-20251001",
+            "standard": "claude-sonnet-4-6",
+            "complex":  "claude-opus-4-7"
+        }
+    """
+
+    __tablename__ = "routing_policies"
+
+    id: Mapped[uuid_pkg.UUID] = mapped_column(
+        Uuid(), primary_key=True, default=uuid_pkg.uuid4, nullable=False
+    )
+    workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    mappings: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False, default=dict)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "provider", name="uq_routing_policy_workspace_provider"),
+        Index("ix_routing_policy_workspace", "workspace_id"),
+    )

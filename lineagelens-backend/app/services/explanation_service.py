@@ -48,6 +48,9 @@ def _safe_json(value: Any, max_chars: int = 4500) -> str:
         text = str(value)
 
     if len(text) > max_chars:
+        # NOTE: Truncation may produce invalid JSON if the value is a JSON string.
+        # This is intentional — the truncated text is used as context in a prompt,
+        # not re-parsed as JSON. Do not silently remove; the marker makes it visible.
         return text[:max_chars] + "\n...<truncated>"
 
     return text

@@ -16,6 +16,8 @@ from app.core.security import (
     get_verified_user_role,
     require_role,
 )
+from app.api.routes.request_utils import assert_record_exists as _assert_record_exists
+from app.api.routes.request_utils import get_client_ip as _get_client_ip
 from app.db.models import ProvenanceRecord, ProvenanceTag
 from app.db.session import get_db_session
 
@@ -28,48 +30,6 @@ class AddTagsRequest(BaseModel):
     workspace_id: str | None = Field(default=None, alias="workspaceId")
 
     model_config = ConfigDict(populate_by_name=True, extra="allow")
-
-
-def _get_client_ip(request: Request) -> str | None:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return None
-
-
-async def _assert_record_exists(
-    session: AsyncSession,
-    record_uuid: str,
-    workspace_id: str,
-    access_filters: list[object] | None = None,
-) -> None:
-    """Raise 404 if the provenance record does not exist in the workspace."""
-    import uuid as uuid_pkg
-
-    try:
-        parsed_uuid = uuid_pkg.UUID(record_uuid)
-    except (ValueError, TypeError):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Provenance record not found for this workspace.",
-        )
-
-    result = await session.execute(
-        select(ProvenanceRecord.uuid).where(
-            and_(
-                ProvenanceRecord.uuid == parsed_uuid,
-                ProvenanceRecord.workspace_id == workspace_id,
-                *([] if access_filters is None else access_filters),
-            )
-        )
-    )
-    if result.scalar_one_or_none() is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Provenance record not found for this workspace.",
-        )
 
 
 @router.post("/provenance/{record_uuid}/tags", status_code=status.HTTP_201_CREATED)

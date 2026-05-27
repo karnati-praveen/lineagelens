@@ -31,7 +31,7 @@ _PASSWORD: str = os.environ.get("LINEAGELENS_PASSWORD", "").strip()
 SEARCH_ENDPOINT = "/search"
 
 _DEFAULT_BACKEND_CANDIDATES = [
-    "http://localhost:8787",
+    os.environ.get("LINEAGELENS_BACKEND_URL", "http://localhost:8787"),
     "http://127.0.0.1:8787",
 ]
 
@@ -781,6 +781,8 @@ def _pct(v: Any) -> str:
         return "—"
     try:
         n = float(v)
+        # Heuristic: values <= 1 are assumed to be fractions (e.g. 0.87 → 87%);
+        # values > 1 are assumed to already be percentages (e.g. 87.0 → 87.0%).
         return f"{(n * 100 if n <= 1 else n):.1f}%"
     except (TypeError, ValueError):
         return str(v)

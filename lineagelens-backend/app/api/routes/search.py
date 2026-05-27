@@ -104,6 +104,7 @@ async def get_search_facets(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> dict:
     """Return aggregated facet counts for filter UI: models, risk levels, file extensions, capture status."""
+    ensure_workspace_scope(auth, auth.workspace_id)
     role = await get_verified_user_role(session, auth)
     access_clause = build_record_visibility_clause(
         ProvenanceRecord.uuid,

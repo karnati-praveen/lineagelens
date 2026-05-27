@@ -31,5 +31,5 @@ async def log_audit_event(
         )
         session.add(entry)
         await session.flush()
-    except Exception as exc:
-        logger.warning("Audit log write failed: %s", exc)
+    except Exception:
+        logger.exception("Audit log write failed")

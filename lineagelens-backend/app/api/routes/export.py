@@ -4,7 +4,7 @@ import asyncio
 import csv
 import io
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID as PyUUID
 
@@ -244,8 +244,6 @@ async def start_async_export(
         raise HTTPException(status_code=400, detail="format must be 'json', 'csv', or 'parquet'.")
 
     # Fetch records now (before background task)
-    from datetime import timezone
-
     filters = [ProvenanceRecord.workspace_id == auth.workspace_id]
     if payload.date_from:
         try:
@@ -332,7 +330,7 @@ async def download_export_job(
     if job is None:
         raise HTTPException(status_code=404, detail="Export job not found.")
     if job.status in {"pending", "running"}:
-        raise HTTPException(status_code=202, detail="Export job is still in progress.")
+        raise HTTPException(status_code=409, detail="Export job is still in progress.")
     if job.status == "failed":
         raise HTTPException(status_code=500, detail=f"Export job failed: {job.error}")
     if not job.result_bytes:

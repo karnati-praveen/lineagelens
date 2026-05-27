@@ -118,7 +118,7 @@ async def run_retention(
         session,
         workspace_id=auth.workspace_id,
         user_id=auth.subject,
-        action="retention.update",
+        action="retention.manual_run",
         details={"manual_run": True, **result},
     )
 

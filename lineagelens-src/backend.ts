@@ -522,6 +522,7 @@ export class BackendIngestClient implements vscode.Disposable {
       return;
     }
 
+    // intentional: two distinct server-sent message types
     if (messageType === 'capture.connected') {
       this.log('WebSocket capture channel connected.');
       return;

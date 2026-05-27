@@ -294,6 +294,7 @@ export function activate(context: vscode.ExtensionContext): void {
       previousDocumentTexts.delete(document.uri.toString());
     }),
     vscode.workspace.onDidChangeTextDocument((event) => {
+      // fire-and-forget intentional — errors logged in catch
       queueDocumentChangeProcessing(event).catch((error: unknown) => {
         log('Document change processing failed: ' + toErrorMessage(error));
       });
