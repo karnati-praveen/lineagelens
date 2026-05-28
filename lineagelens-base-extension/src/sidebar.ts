@@ -129,8 +129,17 @@ export class CaptureTreeProvider
     dataTransfer: vscode.DataTransfer,
     _token: vscode.CancellationToken,
   ): void {
+    // Custom MIME carries IDs — used by handleDrop (in-tree reorder) and
+    // the DocumentDropEditProvider registered in extension.ts.
     const ids = source.map(item => item.record.id).join(',');
     dataTransfer.set(CAPTURE_DRAG_MIME, new vscode.DataTransferItem(ids));
+
+    // text/plain is the universal drop target: VS Code inserts this verbatim
+    // when the user drops the item onto any open editor, no extra confirmation
+    // needed.  Multiple captures are separated by a comment divider.
+    const separator = '\n\n// ── AI capture ──────────────────────\n\n';
+    const code = source.map(item => item.record.insertedCode).join(separator);
+    dataTransfer.set('text/plain', new vscode.DataTransferItem(code));
   }
 
   /**

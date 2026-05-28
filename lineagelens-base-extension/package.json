@@ -85,14 +85,14 @@
     "menus": {
       "view/title": [
         {
-          "command": "lineagelens.refreshSidebar",
-          "when": "view == lineagelens.captures",
-          "group": "navigation@1"
-        },
-        {
           "command": "lineagelens.clearAll",
           "when": "view == lineagelens.captures",
-          "group": "navigation@2"
+          "group": "navigation"
+        },
+        {
+          "command": "lineagelens.refreshSidebar",
+          "when": "view == lineagelens.captures",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
