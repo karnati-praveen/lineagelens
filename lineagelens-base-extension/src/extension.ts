@@ -3,11 +3,17 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { CaptureStore } from './store';
 import { CaptureService } from './capture';
-import { CaptureTreeProvider, CaptureTreeItem, buildDetailPanel, CAPTURE_DRAG_MIME } from './sidebar';
+import { CaptureTreeProvider, CaptureTreeItem, ClearAllTreeItem, buildDetailPanel, CAPTURE_DRAG_MIME } from './sidebar';
 
-/** Context-menu invocations pass the tree item; click invocations pass the raw id string. */
-function resolveId(idOrItem: string | CaptureTreeItem): string {
-  return typeof idOrItem === 'string' ? idOrItem : idOrItem.record.id;
+/**
+ * VS Code passes the tree item when a command is invoked from the context menu,
+ * but passes the raw id string when invoked via the item's own command.arguments.
+ * ClearAllTreeItem has no record — guard against it being passed here.
+ */
+function resolveId(idOrItem: string | CaptureTreeItem | ClearAllTreeItem): string {
+  if (typeof idOrItem === 'string') { return idOrItem; }
+  if (idOrItem instanceof CaptureTreeItem) { return idOrItem.record.id; }
+  return '';  // ClearAllTreeItem — callers must guard against empty string
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -43,8 +49,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Open capture detail panel
   context.subscriptions.push(
-    vscode.commands.registerCommand('lineagelens.openCapture', (idOrItem: string | CaptureTreeItem) => {
-      const record = store.getById(resolveId(idOrItem));
+    vscode.commands.registerCommand('lineagelens.openCapture', (idOrItem: string | CaptureTreeItem | ClearAllTreeItem) => {
+      const id = resolveId(idOrItem);
+      const record = id ? store.getById(id) : undefined;
       if (!record) {
         vscode.window.showErrorMessage('LineageLens: Capture not found.');
         return;
@@ -108,8 +115,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Insert capture code at the active editor cursor (also used by the context menu)
   context.subscriptions.push(
-    vscode.commands.registerCommand('lineagelens.insertAtCursor', (idOrItem: string | CaptureTreeItem) => {
-      const record = store.getById(resolveId(idOrItem));
+    vscode.commands.registerCommand('lineagelens.insertAtCursor', (idOrItem: string | CaptureTreeItem | ClearAllTreeItem) => {
+      const id = resolveId(idOrItem);
+      const record = id ? store.getById(id) : undefined;
       if (!record) {
         vscode.window.showErrorMessage('LineageLens: Capture not found.');
         return;
@@ -129,8 +137,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Copy capture code to clipboard (context menu)
   context.subscriptions.push(
-    vscode.commands.registerCommand('lineagelens.copyCode', (idOrItem: string | CaptureTreeItem) => {
-      const record = store.getById(resolveId(idOrItem));
+    vscode.commands.registerCommand('lineagelens.copyCode', (idOrItem: string | CaptureTreeItem | ClearAllTreeItem) => {
+      const id = resolveId(idOrItem);
+      const record = id ? store.getById(id) : undefined;
       if (!record) { return; }
       vscode.env.clipboard.writeText(record.insertedCode).then(() => {
         vscode.window.showInformationMessage(`LineageLens: Copied code from "${record.fileName}".`);
