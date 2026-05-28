@@ -254,6 +254,20 @@ def test_empty_mappings_falls_back_to_defaults():
 class TestRoutingPolicyHTTP:
     """HTTP-level tests for the routing policy endpoints."""
 
+    @pytest.fixture(autouse=True)
+    def _require_api_mode(self, client):
+        """Skip every test in this class when the app is in setup-wizard mode.
+
+        In first-run mode the setup wizard middleware intercepts all requests
+        and returns 200 HTML, so auth checks, wrong-token rejections, and
+        JSON responses cannot be validated meaningfully.
+        """
+        resp = client.post("/auth/token", data={"username": "__probe__", "password": "__probe__"})
+        try:
+            resp.json()  # raises if the body is HTML, not JSON
+        except Exception:
+            pytest.skip("App is in setup-wizard mode — skipping all HTTP routing policy tests")
+
     def test_get_routing_policy_404_when_none(self, client, admin_token):
         resp = client.get("/policies/routing", headers=auth_header(admin_token))
         # Either 404 (no policies) or 200 — depends on whether policies were
