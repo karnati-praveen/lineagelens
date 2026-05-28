@@ -380,12 +380,13 @@ async def lifespan(app: FastAPI):
     neo4j_service: Neo4jLineageService | None = None
     app.state.neo4j_service = neo4j_service
 
+    from app.services.report_scheduler import start_scheduler, stop_scheduler
+
     try:
         await initialize_database(engine)
         neo4j_service = await initialize_neo4j_service(settings)
         app.state.neo4j_service = neo4j_service
 
-        from app.services.report_scheduler import start_scheduler, stop_scheduler
         start_scheduler(session_factory)
 
         yield

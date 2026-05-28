@@ -12,7 +12,7 @@ from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
 
-_CURRENT_ALEMBIC_HEAD = "202501240001"
+_CURRENT_ALEMBIC_HEAD = "202605270001"
 _SQLITE_PROVENANCE_COLUMNS = {
     "risk_score": "INTEGER",
     "token_count": "INTEGER",

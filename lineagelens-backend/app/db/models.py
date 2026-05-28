@@ -17,7 +17,9 @@ except ImportError:
 
 _JSON_TYPE = JSON().with_variant(postgresql.JSONB(astext_type=Text()), "postgresql")
 if _Vector is not None:
-    _EMBEDDING_VECTOR_TYPE = JSON().with_variant(_Vector(256), "postgresql")
+    # Vector is the primary type so its Comparator (cosine_distance, l2_distance, etc.)
+    # is available on PostgreSQL. SQLite falls back to JSON for storage-only use.
+    _EMBEDDING_VECTOR_TYPE = _Vector(256).with_variant(JSON(), "sqlite")
 else:
     _EMBEDDING_VECTOR_TYPE = JSON()
 

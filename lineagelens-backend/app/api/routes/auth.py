@@ -22,7 +22,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
-from app.db.models import UserAccount
+from app.db.models import UserAccount, Workspace
 from app.db.session import get_db_session
 from app.schemas.auth import (
     AuthTokenResponse,
@@ -30,11 +30,52 @@ from app.schemas.auth import (
     LoginRequest,
     LogoutResponse,
     RefreshRequest,
+    RegisterRequest,
 )
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+
+@router.post("/register", status_code=status.HTTP_201_CREATED)
+async def register_user(
+    payload: RegisterRequest,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AuthTokenResponse:
+    """Self-registration: creates a new workspace and an admin user for it."""
+    username = normalize_username(payload.username)
+    validate_password_strength(payload.password, settings)
+
+    workspace_id = (
+        normalize_workspace_id(payload.workspace_id) or create_default_workspace_id(username)
+    )
+
+    refresh_jti = uuid.uuid4().hex
+    user = UserAccount(
+        username=username,
+        password_hash=hash_password(payload.password),
+        workspace_id=workspace_id,
+        role="admin",
+        is_active=True,
+        refresh_token_jti=refresh_jti,
+    )
+    session.add(user)
+
+    try:
+        await session.flush()
+        await session.refresh(user)
+        workspace = Workspace(id=workspace_id, name=workspace_id, owner_id=str(user.id))
+        session.add(workspace)
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username or workspace already taken.",
+        )
+
+    return await issue_token_response(session, user, settings)
 
 
 @router.post("/login")
