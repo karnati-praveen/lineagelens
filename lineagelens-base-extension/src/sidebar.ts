@@ -97,9 +97,10 @@ export class CaptureTreeItem extends vscode.TreeItem {
     this.tooltip      = tip;
     this.iconPath     = langIcon(record.language);
     this.contextValue = CaptureTreeItem.CONTEXT;
+    // Single click = insert at cursor.  Right-click → "View Details" is still accessible.
     this.command = {
-      command:   'lineagelens.openCapture',
-      title:     'View Capture',
+      command:   'lineagelens.insertAtCursor',
+      title:     'Insert at Cursor',
       arguments: [record.id],
     };
   }

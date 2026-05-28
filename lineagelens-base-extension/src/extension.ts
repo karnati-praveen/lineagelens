@@ -19,13 +19,21 @@ function resolveId(idOrItem: string | CaptureTreeItem | ClearAllTreeItem): strin
 export function activate(context: vscode.ExtensionContext): void {
   const store = new CaptureStore(context);
 
-  // Status bar
+  // Status bar — capture count (right side, click to refresh)
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBar.command = 'lineagelens.refreshSidebar';
   statusBar.text = `$(history) ${store.count} captures`;
-  statusBar.tooltip = 'LineageLens Base — click to refresh sidebar';
+  statusBar.tooltip = 'LineageLens — click to refresh';
   statusBar.show();
   context.subscriptions.push(statusBar);
+
+  // Status bar — trash button (left side, always visible, click to clear all)
+  const clearBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
+  clearBar.command = 'lineagelens.clearAll';
+  clearBar.text = `$(trash) LL: clear`;
+  clearBar.tooltip = 'LineageLens: delete all AI captures';
+  clearBar.show();
+  context.subscriptions.push(clearBar);
 
   // Sidebar tree — dragAndDropController enables both in-tree reordering and
   // drag-to-editor code insertion; canSelectMany lets users select + drag multiple items.

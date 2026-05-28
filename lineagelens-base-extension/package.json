@@ -2,7 +2,7 @@
   "name": "lineagelens",
   "displayName": "LineageLens",
   "description": "Lightweight AI code provenance \u00e2\u20ac\u201d capture and review every AI-generated insertion locally, no server required.",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "publisher": "karnatipraveen",
   "license": "MIT",
   "repository": {
