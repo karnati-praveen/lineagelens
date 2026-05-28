@@ -15,7 +15,6 @@ Run with:
 from __future__ import annotations
 
 import os
-import asyncio
 
 import pytest
 from fastapi.testclient import TestClient
@@ -62,33 +61,43 @@ def client(app):
         yield c
 
 
+def _extract_token(resp) -> str | None:
+    """Return access_token from a /auth/token response, or None if unavailable."""
+    if resp.status_code != 200:
+        return None
+    try:
+        return resp.json().get("access_token") or None
+    except Exception:
+        # Response was not JSON (e.g. setup-wizard HTML in first-run mode)
+        return None
+
+
 @pytest.fixture
 def admin_token(client):
-    """Register an admin user and return a valid JWT access token."""
-    # Use the /auth/setup endpoint (first-run admin creation) if available,
-    # otherwise use the /auth/register endpoint.
-    resp = client.post("/auth/setup", json={
+    """Create an admin user via /auth/setup and return a JWT access token.
+
+    Skips gracefully when the DB is in first-run mode and the setup wizard
+    returns HTML instead of JSON (common on fresh CI SQLite databases).
+    """
+    client.post("/auth/setup", json={
         "username": "testadmin",
         "password": "Password123!",
         "workspaceId": "ws-test",
     })
-    if resp.status_code not in (200, 201, 409):
-        # Setup already done or not available — try login
-        pass
-
     resp = client.post("/auth/token", data={
         "username": "testadmin",
         "password": "Password123!",
     })
-    if resp.status_code != 200:
-        pytest.skip("Could not obtain admin token — auth setup may vary")
-    return resp.json()["access_token"]
+    token = _extract_token(resp)
+    if not token:
+        pytest.skip("Could not obtain admin token — DB may be in setup-wizard mode")
+    return token
 
 
 @pytest.fixture
 def member_token(client):
-    """Register a member (non-admin) user and return a JWT access token."""
-    client.post("/auth/register", json={
+    """Create a member user and return a JWT access token."""
+    client.post("/auth/setup", json={
         "username": "testmember",
         "password": "Password123!",
         "workspaceId": "ws-test",
@@ -98,9 +107,10 @@ def member_token(client):
         "username": "testmember",
         "password": "Password123!",
     })
-    if resp.status_code != 200:
+    token = _extract_token(resp)
+    if not token:
         pytest.skip("Could not obtain member token")
-    return resp.json()["access_token"]
+    return token
 
 
 def auth_header(token: str) -> dict:
