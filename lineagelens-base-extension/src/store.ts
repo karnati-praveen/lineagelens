@@ -84,11 +84,16 @@ export class CaptureStore {
   }
 
   /**
-   * Move one or more records so they appear immediately before `targetId`.
-   * When `targetId` is undefined the dragged records move to the bottom.
-   * Persists immediately.
+   * Move one or more records by `draggedIds` relative to `targetId`.
+   *
+   * targetId === null      → move to top of the list
+   * targetId === undefined → move to bottom (dropped on empty space)
+   * targetId === <id>      → insert immediately before that record
+   *
+   * When `targetId` is one of the dragged ids the drop target's original
+   * position is used as the insertion point so the order stays intuitive.
    */
-  reorder(draggedIds: string[], targetId: string | undefined): void {
+  reorder(draggedIds: string[], targetId: string | null | undefined): void {
     const idSet = new Set(draggedIds);
     const dragged = draggedIds
       .map(id => this.records.find(r => r.id === id))
@@ -96,15 +101,22 @@ export class CaptureStore {
     if (dragged.length === 0) { return; }
 
     const rest = this.records.filter(r => !idSet.has(r.id));
-    if (targetId === undefined) {
+
+    if (targetId === null) {
+      // Dropped on the header — move to top.
+      this.records = [...dragged, ...rest];
+    } else if (targetId === undefined) {
+      // Dropped on empty space — move to bottom.
       this.records = [...rest, ...dragged];
     } else {
-      const idx = rest.findIndex(r => r.id === targetId);
+      let idx = rest.findIndex(r => r.id === targetId);
       if (idx === -1) {
-        this.records = [...dragged, ...rest];
-      } else {
-        this.records = [...rest.slice(0, idx), ...dragged, ...rest.slice(idx)];
+        // targetId was one of the dragged items — compute its original position
+        // among the non-dragged items so we insert where it originally sat.
+        const originalIdx = this.records.findIndex(r => r.id === targetId);
+        idx = this.records.slice(0, originalIdx).filter(r => !idSet.has(r.id)).length;
       }
+      this.records = [...rest.slice(0, idx), ...dragged, ...rest.slice(idx)];
     }
     this.save();
   }

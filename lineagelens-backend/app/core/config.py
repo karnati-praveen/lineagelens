@@ -68,6 +68,7 @@ class Settings(BaseSettings):
         default="provenance:write provenance:read", alias="JWT_REQUIRED_SCOPES"
     )
     auth_password_min_length: int = Field(default=8, alias="AUTH_PASSWORD_MIN_LENGTH")
+    registration_enabled: bool = Field(default=True, alias="REGISTRATION_ENABLED")
 
     backend_cors_origins: str = Field(
         default="http://127.0.0.1:3000,http://localhost:3000",

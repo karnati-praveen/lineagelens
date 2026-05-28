@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import uuid as uuid_pkg
 from datetime import datetime
 
@@ -16,9 +17,16 @@ except ImportError:
     _Vector = None
 
 _JSON_TYPE = JSON().with_variant(postgresql.JSONB(astext_type=Text()), "postgresql")
-if _Vector is not None:
-    # Vector is the primary type so its Comparator (cosine_distance, l2_distance, etc.)
-    # is available on PostgreSQL. SQLite falls back to JSON for storage-only use.
+
+# Only use the Vector primary type when VECTOR_SEARCH_ENABLED=true is explicitly set.
+# If the pgvector Python package is installed but the DB extension is not, emitting
+# vector(256) DDL would crash startup.  Defaulting to JSON is safe everywhere.
+_vector_search_active = (
+    _Vector is not None
+    and os.environ.get("VECTOR_SEARCH_ENABLED", "false").strip().lower() in ("true", "1", "yes")
+)
+if _vector_search_active:
+    # Vector is the primary type so its Comparator (cosine_distance etc.) works on PG.
     _EMBEDDING_VECTOR_TYPE = _Vector(256).with_variant(JSON(), "sqlite")
 else:
     _EMBEDDING_VECTOR_TYPE = JSON()

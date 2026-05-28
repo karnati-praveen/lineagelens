@@ -163,16 +163,8 @@ export class CaptureTreeProvider
     ));
 
     // text/plain — VS Code 1.92+ inserts this directly when dropped on an editor.
-    dataTransfer.set('text/plain', new vscode.DataTransferItem(code));
-
-    // Clipboard fallback: regardless of whether the drop widget fires, the user
-    // can always Ctrl+V to paste.  A transient status-bar hint explains this.
-    vscode.env.clipboard.writeText(code).then(() => {
-      vscode.window.setStatusBarMessage(
-        `$(clippy) LineageLens: captured code copied — drop on editor or press Ctrl+V`,
-        4000,
-      );
-    }).catch(() => {/* ignore clipboard errors */});
+    // Clipboard is intentionally NOT written here: in-tree reorder drags must not
+    // clobber whatever the user had on their clipboard.
   }
 
   // ── Drop (in-tree reorder) ───────────────────────────────────────────────────
@@ -185,9 +177,14 @@ export class CaptureTreeProvider
     const item = dataTransfer.get(CAPTURE_DRAG_MIME);
     if (!item) { return; }
     const ids = (await item.asString()).split(',').filter(Boolean);
-    // Don't use the header as a reorder anchor — drop above it goes to top.
-    const captureTarget = (target instanceof CaptureTreeItem) ? target : undefined;
-    this.store.reorder(ids, captureTarget?.record.id);
+    // null  → ClearAllTreeItem header → reorder to top
+    // undef → empty space             → reorder to bottom
+    // id    → specific capture item   → insert before it
+    const targetId: string | null | undefined =
+      target instanceof CaptureTreeItem ? target.record.id :
+      target instanceof ClearAllTreeItem ? null :
+      undefined;
+    this.store.reorder(ids, targetId);
     this.refresh();
   }
 

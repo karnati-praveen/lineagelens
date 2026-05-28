@@ -37,6 +37,14 @@ from app.schemas.auth import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _registration_conflict_detail(exc: IntegrityError) -> str:
+    """Return a precise 409 message by inspecting which constraint fired."""
+    msg = str(getattr(exc, "orig", exc)).lower()
+    if "user_account" in msg or "username" in msg or "uq_user" in msg:
+        return "Username already taken."
+    return "Workspace ID already taken."
+
+
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register_user(
     payload: RegisterRequest,
@@ -44,6 +52,12 @@ async def register_user(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AuthTokenResponse:
     """Self-registration: creates a new workspace and an admin user for it."""
+    if not settings.registration_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Self-registration is disabled on this server.",
+        )
+
     username = normalize_username(payload.username)
     validate_password_strength(payload.password, settings)
 
@@ -51,30 +65,32 @@ async def register_user(
         normalize_workspace_id(payload.workspace_id) or create_default_workspace_id(username)
     )
 
-    refresh_jti = uuid.uuid4().hex
+    # Add both rows before flushing so constraints are checked together and
+    # exactly one commit (inside issue_token_response) closes the transaction.
     user = UserAccount(
         username=username,
         password_hash=hash_password(payload.password),
         workspace_id=workspace_id,
         role="admin",
         is_active=True,
-        refresh_token_jti=refresh_jti,
     )
+    workspace = Workspace(id=workspace_id, name=workspace_id)
     session.add(user)
+    session.add(workspace)
 
     try:
-        await session.flush()
-        await session.refresh(user)
-        workspace = Workspace(id=workspace_id, name=workspace_id, owner_id=str(user.id))
-        session.add(workspace)
-        await session.commit()
-    except IntegrityError:
+        await session.flush()         # populate user.id; raise IntegrityError if duplicate
+        await session.refresh(user)   # ensure user.id is accessible after flush
+        workspace.owner_id = str(user.id)
+    except IntegrityError as exc:
         await session.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Username or workspace already taken.",
+            detail=_registration_conflict_detail(exc),
         )
 
+    # issue_token_response generates the JTI, writes it to user, and does the
+    # single final commit — no pre-commit here avoids the partial-write window.
     return await issue_token_response(session, user, settings)
 
 

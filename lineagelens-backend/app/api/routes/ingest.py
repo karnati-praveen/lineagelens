@@ -20,6 +20,12 @@ from app.services.provenance_service import find_existing_ingest_record, ingest_
 router = APIRouter(tags=["ingest"])
 logger = logging.getLogger(__name__)
 
+# Process-local cache of workspace IDs that are confirmed to exist.
+# Avoids a SELECT on every ingest request for already-seen workspaces.
+# Safe to be module-level: workspaces are never deleted in normal operation,
+# and a worker restart simply repopulates the cache on the next request.
+_known_workspace_ids: set[str] = set()
+
 
 async def _ensure_workspace_exists(session: AsyncSession, workspace_id: str) -> None:
     """Create a workspace stub if one doesn't exist for the given id.
@@ -29,15 +35,20 @@ async def _ensure_workspace_exists(session: AsyncSession, workspace_id: str) -> 
     has never been explicitly created via the setup wizard or team API.
     The stub has no owner; an admin can rename/claim it later.
     """
+    if workspace_id in _known_workspace_ids:
+        return
     result = await session.execute(select(Workspace.id).where(Workspace.id == workspace_id))
     if result.scalar_one_or_none() is not None:
+        _known_workspace_ids.add(workspace_id)
         return
     session.add(Workspace(id=workspace_id, name=workspace_id))
     try:
         await session.flush()
+        _known_workspace_ids.add(workspace_id)
     except IntegrityError:
         # Another concurrent request created it first — reset and continue.
         await session.rollback()
+        _known_workspace_ids.add(workspace_id)  # it exists now regardless of who won
 
 
 @router.post("/ingest")
