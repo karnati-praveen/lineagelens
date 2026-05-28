@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 RUN addgroup --system app && adduser --system --ingroup app app
 
-COPY --chown=app:app proxy.py ./
+COPY --chown=app:app proxy.py classifier.py pricing.py routing_cache.py ./
 
 EXPOSE 8788 8789
 

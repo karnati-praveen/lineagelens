@@ -248,8 +248,6 @@ async def get_routing_policies(
         .order_by(RoutingPolicy.created_at.desc())
     )
     policies = list(result.scalars().all())
-    if not policies:
-        raise HTTPException(status_code=404, detail="No routing policies configured for this workspace.")
     return {"results": [_serialize_routing_policy(p) for p in policies], "count": len(policies)}
 
 

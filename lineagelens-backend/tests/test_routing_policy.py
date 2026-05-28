@@ -268,11 +268,12 @@ class TestRoutingPolicyHTTP:
         except Exception:
             pytest.skip("App is in setup-wizard mode — skipping all HTTP routing policy tests")
 
-    def test_get_routing_policy_404_when_none(self, client, admin_token):
+    def test_get_routing_policy_200_empty_when_none(self, client, admin_token):
         resp = client.get("/policies/routing", headers=auth_header(admin_token))
-        # Either 404 (no policies) or 200 — depends on whether policies were
-        # created in other tests. Accept both.
-        assert resp.status_code in (200, 404)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "results" in data
+        assert "count" in data
 
     def test_put_invalid_provider_returns_400(self, client, admin_token):
         body = {**_VALID_UPSERT_BODY, "provider": "invalid-provider"}

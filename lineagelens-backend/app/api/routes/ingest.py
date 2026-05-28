@@ -5,9 +5,12 @@ import uuid as uuid_stdlib
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import AuthContext, ensure_workspace_scope, get_ingest_auth_context
+from app.db.models import Workspace
 from app.db.session import get_db_session
 from app.schemas.provenance import IngestResponse
 from app.services.ingest_normalizer import extract_workspace_id, normalize_ingest_payload
@@ -16,6 +19,25 @@ from app.services.provenance_service import find_existing_ingest_record, ingest_
 
 router = APIRouter(tags=["ingest"])
 logger = logging.getLogger(__name__)
+
+
+async def _ensure_workspace_exists(session: AsyncSession, workspace_id: str) -> None:
+    """Create a workspace stub if one doesn't exist for the given id.
+
+    This handles the common case where the proxy is configured with
+    PROXY_WORKSPACE_ID=proxy-capture (or any custom slug) but that workspace
+    has never been explicitly created via the setup wizard or team API.
+    The stub has no owner; an admin can rename/claim it later.
+    """
+    result = await session.execute(select(Workspace.id).where(Workspace.id == workspace_id))
+    if result.scalar_one_or_none() is not None:
+        return
+    session.add(Workspace(id=workspace_id, name=workspace_id))
+    try:
+        await session.flush()
+    except IntegrityError:
+        # Another concurrent request created it first — reset and continue.
+        await session.rollback()
 
 
 @router.post("/ingest")
@@ -51,6 +73,8 @@ async def ingest_provenance(
                     stored=False,
                     warnings=["Duplicate request; existing record returned."],
                 )
+
+    await _ensure_workspace_exists(session, auth.workspace_id)
 
     try:
         normalized_payload = normalize_ingest_payload(payload, workspace_id=auth.workspace_id)
