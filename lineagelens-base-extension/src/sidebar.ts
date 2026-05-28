@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { CaptureRecord, CaptureStore } from './store';
 
+/** Custom MIME type used to carry capture IDs across the drag-and-drop boundary. */
+export const CAPTURE_DRAG_MIME = 'application/vnd.lineagelens.capture';
+
 const LANG_ICONS: Record<string, string> = {
   typescript: 'symbol-class',
   javascript: 'symbol-method',
@@ -67,9 +70,20 @@ export class CaptureTreeItem extends vscode.TreeItem {
   }
 }
 
-export class CaptureTreeProvider implements vscode.TreeDataProvider<CaptureTreeItem>, vscode.Disposable {
+export class CaptureTreeProvider
+  implements
+    vscode.TreeDataProvider<CaptureTreeItem>,
+    vscode.TreeDragAndDropController<CaptureTreeItem>,
+    vscode.Disposable
+{
   private _onDidChangeTreeData = new vscode.EventEmitter<CaptureTreeItem | undefined | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+
+  // ── TreeDragAndDropController ─────────────────────────────────────────────
+  // dragMimeTypes  — what this controller advertises when a drag starts
+  // dropMimeTypes  — what this controller accepts when something is dropped on it
+  readonly dragMimeTypes: readonly string[] = [CAPTURE_DRAG_MIME];
+  readonly dropMimeTypes: readonly string[] = [CAPTURE_DRAG_MIME];
 
   constructor(private store: CaptureStore) {}
 
@@ -83,6 +97,38 @@ export class CaptureTreeProvider implements vscode.TreeDataProvider<CaptureTreeI
 
   getChildren(): CaptureTreeItem[] {
     return this.store.getAll().map(r => new CaptureTreeItem(r));
+  }
+
+  /**
+   * Called by VS Code when the user begins dragging one or more tree items.
+   * We publish:
+   *   - our custom MIME with a comma-separated list of capture IDs (used for
+   *     both in-tree reordering and editor drop insertion)
+   */
+  handleDrag(
+    source: readonly CaptureTreeItem[],
+    dataTransfer: vscode.DataTransfer,
+    _token: vscode.CancellationToken,
+  ): void {
+    const ids = source.map(item => item.record.id).join(',');
+    dataTransfer.set(CAPTURE_DRAG_MIME, new vscode.DataTransferItem(ids));
+  }
+
+  /**
+   * Called by VS Code when items are dropped onto the tree itself.
+   * Reorders the dropped captures so they appear immediately before the
+   * target item (or at the bottom when dropped on empty space).
+   */
+  async handleDrop(
+    target: CaptureTreeItem | undefined,
+    dataTransfer: vscode.DataTransfer,
+    _token: vscode.CancellationToken,
+  ): Promise<void> {
+    const item = dataTransfer.get(CAPTURE_DRAG_MIME);
+    if (!item) { return; }
+    const ids = (await item.asString()).split(',').filter(Boolean);
+    this.store.reorder(ids, target?.record.id);
+    this.refresh();
   }
 
   dispose(): void {

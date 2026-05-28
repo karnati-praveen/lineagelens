@@ -83,6 +83,32 @@ export class CaptureStore {
     return this.records.find(r => r.id === id);
   }
 
+  /**
+   * Move one or more records so they appear immediately before `targetId`.
+   * When `targetId` is undefined the dragged records move to the bottom.
+   * Persists immediately.
+   */
+  reorder(draggedIds: string[], targetId: string | undefined): void {
+    const idSet = new Set(draggedIds);
+    const dragged = draggedIds
+      .map(id => this.records.find(r => r.id === id))
+      .filter((r): r is CaptureRecord => r !== undefined);
+    if (dragged.length === 0) { return; }
+
+    const rest = this.records.filter(r => !idSet.has(r.id));
+    if (targetId === undefined) {
+      this.records = [...rest, ...dragged];
+    } else {
+      const idx = rest.findIndex(r => r.id === targetId);
+      if (idx === -1) {
+        this.records = [...dragged, ...rest];
+      } else {
+        this.records = [...rest.slice(0, idx), ...dragged, ...rest.slice(idx)];
+      }
+    }
+    this.save();
+  }
+
   clear(): void {
     this.records = [];
     this.save();

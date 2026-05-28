@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { CaptureStore } from './store';
 import { CaptureService } from './capture';
-import { CaptureTreeProvider, buildDetailPanel } from './sidebar';
+import { CaptureTreeProvider, buildDetailPanel, CAPTURE_DRAG_MIME } from './sidebar';
 
 export function activate(context: vscode.ExtensionContext): void {
   const store = new CaptureStore(context);
@@ -16,10 +16,13 @@ export function activate(context: vscode.ExtensionContext): void {
   statusBar.show();
   context.subscriptions.push(statusBar);
 
-  // Sidebar tree
+  // Sidebar tree — dragAndDropController enables both in-tree reordering and
+  // drag-to-editor code insertion; canSelectMany lets users select + drag multiple items.
   const treeProvider = new CaptureTreeProvider(store);
   const treeView = vscode.window.createTreeView('lineagelens.captures', {
     treeDataProvider: treeProvider,
+    dragAndDropController: treeProvider,
+    canSelectMany: true,
     showCollapseAll: false,
   });
   context.subscriptions.push(treeView);
@@ -96,6 +99,68 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.workspace.openTextDocument(uri).then(doc => vscode.window.showTextDocument(doc)).catch(() => {});
       }
     }),
+  );
+
+  // Insert capture code at the active editor cursor (also used by the context menu)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('lineagelens.insertAtCursor', (id: string) => {
+      const record = store.getById(id);
+      if (!record) {
+        vscode.window.showErrorMessage('LineageLens: Capture not found.');
+        return;
+      }
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        vscode.window.showWarningMessage('LineageLens: No active editor — open a file first.');
+        return;
+      }
+      editor.edit(editBuilder => {
+        for (const sel of editor.selections) {
+          editBuilder.insert(sel.active, record.insertedCode);
+        }
+      });
+    }),
+  );
+
+  // Copy capture code to clipboard (context menu)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('lineagelens.copyCode', (id: string) => {
+      const record = store.getById(id);
+      if (!record) { return; }
+      vscode.env.clipboard.writeText(record.insertedCode).then(() => {
+        vscode.window.showInformationMessage(`LineageLens: Copied code from "${record.fileName}".`);
+      }).catch(() => {});
+    }),
+  );
+
+  // Editor drop handler — when the user drags a capture from the sidebar and drops
+  // it onto an open editor tab, this inserts the captured code at the drop position.
+  context.subscriptions.push(
+    vscode.languages.registerDocumentDropEditProvider(
+      { language: '*' },
+      {
+        async provideDocumentDropEdits(
+          _document: vscode.TextDocument,
+          _position: vscode.Position,
+          dataTransfer: vscode.DataTransfer,
+          _token: vscode.CancellationToken,
+        ): Promise<vscode.DocumentDropEdit | undefined> {
+          const item = dataTransfer.get(CAPTURE_DRAG_MIME);
+          if (!item) { return undefined; }
+          const ids = (await item.asString()).split(',').filter(Boolean);
+          const codes = ids
+            .map(id => store.getById(id)?.insertedCode)
+            .filter((c): c is string => c !== undefined);
+          if (codes.length === 0) { return undefined; }
+          const edit = new vscode.DocumentDropEdit(codes.join('\n'));
+          const firstName = ids.length === 1 ? store.getById(ids[0])?.fileName : undefined;
+          edit.label = firstName
+            ? `Insert AI capture — ${firstName}`
+            : `Insert ${ids.length} AI captures`;
+          return edit;
+        },
+      },
+    ),
   );
 
   // Welcome message on first install

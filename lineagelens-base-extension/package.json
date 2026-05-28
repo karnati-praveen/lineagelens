@@ -63,6 +63,16 @@
         "command": "lineagelens.refreshSidebar",
         "title": "LineageLens: Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "lineagelens.insertAtCursor",
+        "title": "Insert at Cursor",
+        "icon": "$(insert)"
+      },
+      {
+        "command": "lineagelens.copyCode",
+        "title": "Copy Code",
+        "icon": "$(copy)"
       }
     ],
     "viewsWelcome": [
@@ -77,6 +87,23 @@
           "command": "lineagelens.refreshSidebar",
           "when": "view == lineagelens.captures",
           "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "lineagelens.insertAtCursor",
+          "when": "view == lineagelens.captures && viewItem == captureRecord",
+          "group": "1_capture@1"
+        },
+        {
+          "command": "lineagelens.copyCode",
+          "when": "view == lineagelens.captures && viewItem == captureRecord",
+          "group": "1_capture@2"
+        },
+        {
+          "command": "lineagelens.openCapture",
+          "when": "view == lineagelens.captures && viewItem == captureRecord",
+          "group": "1_capture@3"
         }
       ]
     },
