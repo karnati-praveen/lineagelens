@@ -61,10 +61,13 @@ export class ClearAllTreeItem extends vscode.TreeItem {
 
   constructor(count: number) {
     super('Clear all captures', vscode.TreeItemCollapsibleState.None);
-    this.description   = `${count} record${count !== 1 ? 's' : ''}`;
-    this.iconPath      = new vscode.ThemeIcon('trash', new vscode.ThemeColor('errorForeground'));
-    this.contextValue  = ClearAllTreeItem.CONTEXT;
-    this.tooltip       = `Permanently delete all ${count} AI captures (cannot be undone)`;
+    // Stable unique id — prevents VS Code from merging this item with cached
+    // tree items from a previous extension version that didn't have it.
+    this.id           = '__lineagelens_clearall__';
+    this.description  = `${count} record${count !== 1 ? 's' : ''}`;
+    this.iconPath     = new vscode.ThemeIcon('trash', new vscode.ThemeColor('errorForeground'));
+    this.contextValue = ClearAllTreeItem.CONTEXT;
+    this.tooltip      = `Permanently delete all ${count} AI captures — cannot be undone`;
     this.command = {
       command:   'lineagelens.clearAll',
       title:     'Clear All Captures',
@@ -127,6 +130,9 @@ export class CaptureTreeProvider
 
   getTreeItem(element: TreeNode): vscode.TreeItem { return element; }
 
+  /** All items are root-level — required so VS Code can navigate via reveal(). */
+  getParent(_element: TreeNode): undefined { return undefined; }
+
   getChildren(): TreeNode[] {
     const records = this.store.getAll();
     if (records.length === 0) { return []; }
@@ -147,17 +153,25 @@ export class CaptureTreeProvider
     const items = source.filter((n): n is CaptureTreeItem => n instanceof CaptureTreeItem);
     if (items.length === 0) { return; }
 
-    // Custom MIME → used by handleDrop for in-tree reordering.
+    const separator = '\n\n// ── AI capture ──────────────────────────────\n\n';
+    const code = items.map(i => i.record.insertedCode).join(separator);
+
+    // Custom MIME — picked up by handleDrop (reorder) and DocumentDropEditProvider (insert).
     dataTransfer.set(CAPTURE_DRAG_MIME, new vscode.DataTransferItem(
       items.map(i => i.record.id).join(','),
     ));
 
-    // text/plain → VS Code inserts this verbatim when dropped onto any editor,
-    // no confirmation popup needed.  Multiple items separated by a divider comment.
-    const separator = '\n\n// ── AI capture ──────────────────────────────\n\n';
-    dataTransfer.set('text/plain', new vscode.DataTransferItem(
-      items.map(i => i.record.insertedCode).join(separator),
-    ));
+    // text/plain — VS Code 1.92+ inserts this directly when dropped on an editor.
+    dataTransfer.set('text/plain', new vscode.DataTransferItem(code));
+
+    // Clipboard fallback: regardless of whether the drop widget fires, the user
+    // can always Ctrl+V to paste.  A transient status-bar hint explains this.
+    vscode.env.clipboard.writeText(code).then(() => {
+      vscode.window.setStatusBarMessage(
+        `$(clippy) LineageLens: captured code copied — drop on editor or press Ctrl+V`,
+        4000,
+      );
+    }).catch(() => {/* ignore clipboard errors */});
   }
 
   // ── Drop (in-tree reorder) ───────────────────────────────────────────────────

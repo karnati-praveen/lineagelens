@@ -36,12 +36,22 @@ export function activate(context: vscode.ExtensionContext): void {
     canSelectMany: true,
     showCollapseAll: false,
   });
+
+  // Description appears permanently under the "AI CAPTURES" title — shows live count.
+  const refreshDescription = () => {
+    treeView.description = store.count > 0
+      ? `${store.count} capture${store.count !== 1 ? 's' : ''}`
+      : undefined;
+  };
+  refreshDescription();
+
   context.subscriptions.push(treeView);
   context.subscriptions.push(treeProvider);
 
   // Capture service
   const captureService = new CaptureService(store, statusBar, () => {
     treeProvider.refresh();
+    refreshDescription();
     statusBar.text = `$(history) ${store.count} captures`;
   });
   captureService.start();
@@ -85,6 +95,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (answer === 'Clear All') {
         store.clear();
         treeProvider.refresh();
+        refreshDescription();
         statusBar.text = `$(history) 0 captures`;
         vscode.window.showInformationMessage('LineageLens: All captures cleared.');
       }
@@ -147,11 +158,12 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  // Editor drop handler — when the user drags a capture from the sidebar and drops
-  // it onto an open editor tab, this inserts the captured code at the drop position.
+  // Editor drop handler — fires when the user drops a capture onto any open editor.
+  // Checks our custom MIME first (carries IDs → look up fresh code from store).
+  // Falls back to text/plain (carries the code directly, set in handleDrag).
   context.subscriptions.push(
     vscode.languages.registerDocumentDropEditProvider(
-      { language: '*' },
+      '*',   // matches every document — plain '*' is the correct catch-all selector
       {
         async provideDocumentDropEdits(
           _document: vscode.TextDocument,
@@ -159,19 +171,36 @@ export function activate(context: vscode.ExtensionContext): void {
           dataTransfer: vscode.DataTransfer,
           _token: vscode.CancellationToken,
         ): Promise<vscode.DocumentDropEdit | undefined> {
-          const item = dataTransfer.get(CAPTURE_DRAG_MIME);
-          if (!item) { return undefined; }
-          const ids = (await item.asString()).split(',').filter(Boolean);
-          const codes = ids
-            .map(id => store.getById(id)?.insertedCode)
-            .filter((c): c is string => c !== undefined);
-          if (codes.length === 0) { return undefined; }
-          const edit = new vscode.DocumentDropEdit(codes.join('\n'));
-          const firstName = ids.length === 1 ? store.getById(ids[0])?.fileName : undefined;
-          edit.label = firstName
-            ? `Insert AI capture — ${firstName}`
-            : `Insert ${ids.length} AI captures`;
-          return edit;
+          // Path 1 — custom MIME with IDs (most reliable, IDs are always fresh)
+          const mimeItem = dataTransfer.get(CAPTURE_DRAG_MIME);
+          if (mimeItem) {
+            const ids = (await mimeItem.asString()).split(',').filter(Boolean);
+            const codes = ids
+              .map(id => store.getById(id)?.insertedCode)
+              .filter((c): c is string => c !== undefined);
+            if (codes.length > 0) {
+              const separator = '\n\n// ── AI capture ──────────────────────────────\n\n';
+              const edit = new vscode.DocumentDropEdit(codes.join(separator));
+              const firstName = ids.length === 1 ? store.getById(ids[0])?.fileName : undefined;
+              edit.label = firstName
+                ? `$(file-code) Insert AI capture — ${firstName}`
+                : `$(file-code) Insert ${ids.length} AI captures`;
+              return edit;
+            }
+          }
+
+          // Path 2 — text/plain fallback (carries code directly from handleDrag)
+          const textItem = dataTransfer.get('text/plain');
+          if (textItem) {
+            const code = await textItem.asString();
+            if (code.trim()) {
+              const edit = new vscode.DocumentDropEdit(code);
+              edit.label = '$(file-code) Insert AI capture';
+              return edit;
+            }
+          }
+
+          return undefined;
         },
       },
     ),
