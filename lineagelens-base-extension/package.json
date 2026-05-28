@@ -53,7 +53,8 @@
       },
       {
         "command": "lineagelens.clearAll",
-        "title": "LineageLens: Clear All Captures"
+        "title": "LineageLens: Clear All Captures",
+        "icon": "$(trash)"
       },
       {
         "command": "lineagelens.exportJson",
@@ -67,7 +68,7 @@
       {
         "command": "lineagelens.insertAtCursor",
         "title": "Insert at Cursor",
-        "icon": "$(insert)"
+        "icon": "$(pencil)"
       },
       {
         "command": "lineagelens.copyCode",
@@ -86,10 +87,25 @@
         {
           "command": "lineagelens.refreshSidebar",
           "when": "view == lineagelens.captures",
-          "group": "navigation"
+          "group": "navigation@1"
+        },
+        {
+          "command": "lineagelens.clearAll",
+          "when": "view == lineagelens.captures",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
+        {
+          "command": "lineagelens.insertAtCursor",
+          "when": "view == lineagelens.captures && viewItem == captureRecord",
+          "group": "inline@1"
+        },
+        {
+          "command": "lineagelens.copyCode",
+          "when": "view == lineagelens.captures && viewItem == captureRecord",
+          "group": "inline@2"
+        },
         {
           "command": "lineagelens.insertAtCursor",
           "when": "view == lineagelens.captures && viewItem == captureRecord",

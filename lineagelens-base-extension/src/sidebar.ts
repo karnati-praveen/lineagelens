@@ -4,35 +4,39 @@ import { CaptureRecord, CaptureStore } from './store';
 /** Custom MIME type used to carry capture IDs across the drag-and-drop boundary. */
 export const CAPTURE_DRAG_MIME = 'application/vnd.lineagelens.capture';
 
-const LANG_ICONS: Record<string, string> = {
-  typescript: 'symbol-class',
-  javascript: 'symbol-method',
-  python: 'symbol-namespace',
-  rust: 'symbol-struct',
-  go: 'symbol-interface',
-  java: 'symbol-class',
-  cpp: 'symbol-struct',
-  c: 'symbol-struct',
-  csharp: 'symbol-class',
-  html: 'symbol-color',
-  css: 'symbol-color',
-  json: 'symbol-key',
-  yaml: 'symbol-key',
-  markdown: 'book',
-  shellscript: 'terminal',
-  bash: 'terminal',
-  powershell: 'terminal',
-  zsh: 'terminal',
-  fish: 'terminal',
-  sql: 'database',
+// Icon codename + VS Code chart color per language.
+// ThemeColor('charts.*') are the palette colors designed to be visually distinct
+// across both light and dark themes.
+const LANG_META: Record<string, [string, string]> = {
+  typescript:       ['symbol-class',     'charts.blue'],
+  typescriptreact:  ['symbol-class',     'charts.blue'],
+  javascript:       ['symbol-method',    'charts.yellow'],
+  javascriptreact:  ['symbol-method',    'charts.yellow'],
+  python:           ['symbol-namespace', 'charts.green'],
+  rust:             ['symbol-struct',    'charts.red'],
+  go:               ['symbol-interface', 'charts.purple'],
+  java:             ['symbol-class',     'charts.orange'],
+  kotlin:           ['symbol-class',     'charts.orange'],
+  cpp:              ['symbol-struct',    'charts.red'],
+  c:                ['symbol-struct',    'charts.red'],
+  csharp:           ['symbol-class',     'charts.purple'],
+  html:             ['symbol-color',     'charts.orange'],
+  css:              ['symbol-color',     'charts.blue'],
+  scss:             ['symbol-color',     'charts.blue'],
+  json:             ['symbol-key',       'charts.foreground'],
+  yaml:             ['symbol-key',       'charts.foreground'],
+  markdown:         ['book',             'charts.foreground'],
+  shellscript:      ['terminal',         'charts.green'],
+  bash:             ['terminal',         'charts.green'],
+  powershell:       ['terminal',         'charts.blue'],
+  zsh:              ['terminal',         'charts.green'],
+  sql:              ['database',         'charts.yellow'],
 };
 
 function langIcon(language: string): vscode.ThemeIcon {
-  if (!language || typeof language !== 'string') {
-    return new vscode.ThemeIcon('code');
-  }
-  const icon = LANG_ICONS[language.toLowerCase()] ?? 'code';
-  return new vscode.ThemeIcon(icon);
+  const lang = (language || '').toLowerCase();
+  const [icon, colorId] = LANG_META[lang] ?? ['code', 'charts.foreground'];
+  return new vscode.ThemeIcon(icon, new vscode.ThemeColor(colorId));
 }
 
 function relativeTime(isoString: string): string {
@@ -53,15 +57,30 @@ export class CaptureTreeItem extends vscode.TreeItem {
   constructor(public readonly record: CaptureRecord) {
     super(record.fileName, vscode.TreeItemCollapsibleState.None);
 
-    this.description = `${relativeTime(record.timestamp)} · +${record.linesAdded} lines`;
+    // Secondary text: relative time + line count
+    this.description = `${relativeTime(record.timestamp)}  +${record.linesAdded}`;
 
-    this.tooltip = new vscode.MarkdownString(
-      `**${record.fileName}**\n\n` +
-      `\`\`\`${record.language}\n${record.insertedCode.slice(0, 300)}${record.insertedCode.length > 300 ? '\n…' : ''}\n\`\`\``
-    );
+    // Hover tooltip — rich markdown with a code preview
+    const preview = record.insertedCode.slice(0, 400);
+    const truncated = record.insertedCode.length > 400 ? '\n…' : '';
+    const tip = new vscode.MarkdownString();
+    tip.isTrusted = true;
+    tip.appendMarkdown(`**$(file-code) ${record.fileName}**\n\n`);
+    tip.appendMarkdown(`\`${record.language}\` · \`+${record.linesAdded} lines\`\n\n`);
+    tip.appendCodeblock(preview + truncated, record.language);
+    if (record.workspaceFolder) {
+      tip.appendMarkdown(`\n*${record.workspaceFolder}*`);
+    }
+    this.tooltip = tip;
 
+    // Colored language icon
     this.iconPath = langIcon(record.language);
+
+    // contextValue drives the "when" clause in package.json menus
     this.contextValue = 'captureRecord';
+
+    // Single-click → open detail panel (arguments uses the id string so the
+    // command handler gets a plain string, avoiding the context-menu ambiguity)
     this.command = {
       command: 'lineagelens.openCapture',
       title: 'View Capture',
