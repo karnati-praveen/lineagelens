@@ -36,6 +36,21 @@ MAX_EXPORT_ROWS = 10_000
 
 _background_tasks: set[asyncio.Task] = set()
 
+# Characters that trigger formula execution in spreadsheet applications.
+_CSV_FORMULA_PREFIXES = frozenset("=+-@\t\r")
+
+
+def _safe_csv_value(value: str) -> str:
+    """Prefix formula-injection characters so they are treated as plain text.
+
+    Spreadsheets (Excel, LibreOffice Calc, Google Sheets) execute cell values
+    starting with ``=``, ``+``, ``-``, or ``@`` as formulas.  Prepending a
+    single quote disarms this without altering the visible cell content.
+    """
+    if value and value[0] in _CSV_FORMULA_PREFIXES:
+        return "'" + value
+    return value
+
 
 def _pick(record: dict, *keys: str) -> str:
     for k in keys:
@@ -92,19 +107,19 @@ def _build_audit_csv_row(r: dict) -> list:
     risk_block = r.get("riskAssessment") or {}
     risk_level = str(risk_block.get("level", "")) if isinstance(risk_block, dict) else ""
     return [
-        _pick(r, "uuid"),
-        _pick(r, "timestampIso"),
-        _pick(r, "filePath"),
-        model_val,
-        snap.get("gitUser") or snap.get("username") or "",
-        snap.get("gitBranch", ""),
-        _pick(source, "toolName"),
-        _pick(source, "adapterName"),
-        str(diff_block.get("netAddedLines") or r.get("netAddedLines") or ""),
-        _prompt_summary(r.get("promptMessages")),
-        str(r.get("insertedCode") or "")[:300],
-        risk_level,
-        _pick(capture_block, "promptStatus"),
+        _safe_csv_value(_pick(r, "uuid")),
+        _safe_csv_value(_pick(r, "timestampIso")),
+        _safe_csv_value(_pick(r, "filePath")),
+        _safe_csv_value(model_val),
+        _safe_csv_value(snap.get("gitUser") or snap.get("username") or ""),
+        _safe_csv_value(snap.get("gitBranch", "")),
+        _safe_csv_value(_pick(source, "toolName")),
+        _safe_csv_value(_pick(source, "adapterName")),
+        _safe_csv_value(str(diff_block.get("netAddedLines") or r.get("netAddedLines") or "")),
+        _safe_csv_value(_prompt_summary(r.get("promptMessages"))),
+        _safe_csv_value(str(r.get("insertedCode") or "")[:300]),
+        _safe_csv_value(risk_level),
+        _safe_csv_value(_pick(capture_block, "promptStatus")),
     ]
 
 

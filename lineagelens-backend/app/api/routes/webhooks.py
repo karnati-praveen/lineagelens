@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import ipaddress
 import json
 import logging
+import socket
 import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import Annotated
@@ -18,6 +20,84 @@ from app.core.security import AuthContext, ensure_workspace_scope, get_current_a
 
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+
+# Hostnames that are always internal regardless of DNS resolution.
+_BLOCKED_WEBHOOK_NAMES = frozenset({
+    "localhost", "ip6-localhost", "ip6-loopback", "broadcasthost", "0.0.0.0",
+})
+
+
+async def _validate_webhook_url_no_ssrf(url: str) -> None:
+    """Validate that a webhook URL targets a publicly routable address.
+
+    Blocks:
+    - Non-HTTP/HTTPS schemes
+    - Known-internal hostnames (localhost, broadcasthost, 0.0.0.0 …)
+    - Bare private / loopback / link-local / unspecified IP literals
+    - Hostnames that resolve to any private or loopback IP (DNS-rebinding defence)
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Webhook URL must be a valid http:// or https:// URL.",
+        )
+
+    host = (parsed.hostname or "").lower()
+
+    if host in _BLOCKED_WEBHOOK_NAMES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Webhook URL must not target internal addresses.",
+        )
+
+    # Check bare IP literals first.
+    try:
+        addr = ipaddress.ip_address(host)
+        if (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_multicast
+            or addr.is_unspecified
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Webhook URL must not target private, loopback, or reserved addresses.",
+            )
+        return  # Valid public IP literal — no DNS resolution needed.
+    except ValueError:
+        pass  # Not a bare IP; fall through to DNS resolution.
+
+    # Resolve the hostname and inspect every returned address.
+    try:
+        loop = asyncio.get_running_loop()
+        infos: list = await loop.run_in_executor(
+            None, lambda: socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        )
+    except (socket.gaierror, OSError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Webhook URL hostname '{host}' could not be resolved.",
+        )
+
+    for _family, _type, _proto, _canonname, sockaddr in infos:
+        ip_str = sockaddr[0]
+        try:
+            addr = ipaddress.ip_address(ip_str)
+            if (
+                addr.is_private
+                or addr.is_loopback
+                or addr.is_link_local
+                or addr.is_multicast
+                or addr.is_unspecified
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Webhook URL resolves to a private or reserved address.",
+                )
+        except ValueError:
+            pass  # Malformed IP string from getaddrinfo — skip.
 logger = logging.getLogger(__name__)
 
 
@@ -77,22 +157,7 @@ async def register_webhook(
     auth: Annotated[AuthContext, Depends(require_admin)],
 ) -> WebhookConfigPublic:
     """Register a new webhook for the authenticated workspace (admin only)."""
-    parsed_url = urlparse(body.url)
-    if parsed_url.scheme not in ("http", "https") or not parsed_url.netloc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Webhook URL must be a valid http:// or https:// URL.",
-        )
-    _host = parsed_url.hostname or ""
-    try:
-        _addr = ipaddress.ip_address(_host)
-        if _addr.is_private or _addr.is_loopback or _addr.is_link_local or _addr.is_multicast:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Webhook URL must not target private, loopback, or multicast addresses.",
-            )
-    except ValueError:
-        pass  # hostname is a domain name, not a bare IP — allow it
+    await _validate_webhook_url_no_ssrf(body.url)
     config = WebhookConfig(
         id=str(uuid_pkg.uuid4()),
         workspace_id=auth.workspace_id,

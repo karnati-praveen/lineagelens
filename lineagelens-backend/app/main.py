@@ -114,6 +114,12 @@ class SecurityHeadersMiddleware:
                     b"permissions-policy",
                     b"geolocation=(), microphone=(), camera=(), payment=()",
                 )
+                _add_header(
+                    b"content-security-policy",
+                    b"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                    b"img-src 'self' data: blob:; font-src 'self'; object-src 'none'; "
+                    b"base-uri 'self'; frame-ancestors 'none'; form-action 'self';",
+                )
 
                 app_state = scope.get("app").state if scope.get("app") is not None else None
                 current_settings = getattr(app_state, "settings", None)
@@ -482,6 +488,9 @@ async def dashboard() -> FileResponse:
     return FileResponse(os.path.join(_STATIC_DIR, "dashboard.html"), media_type="text/html")
 
 
+_LOOPBACK_IPS = frozenset({"127.0.0.1", "::1", "localhost", ""})
+
+
 @app.get("/health")
 async def health(request: Request) -> dict[str, object]:
     current_settings = get_runtime_settings(request)
@@ -493,7 +502,10 @@ async def health(request: Request) -> dict[str, object]:
         # which tier is running and hide unavailable UI controls accordingly.
         "productMode": current_settings.product_mode,
     }
-    if current_settings.app_env.strip().lower() != "production":
+    # Internal topology details are only returned to loopback clients to prevent
+    # infrastructure enumeration if a non-production instance is internet-accessible.
+    client_ip = get_client_ip(request, current_settings) or ""
+    if current_settings.app_env.strip().lower() != "production" and client_ip in _LOOPBACK_IPS:
         body.update(
             {
                 "environment": current_settings.app_env,

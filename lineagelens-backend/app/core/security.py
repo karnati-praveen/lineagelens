@@ -482,6 +482,36 @@ def build_record_visibility_clause(
     return or_(user_permission_exists, ~any_permission_exists)
 
 
+async def require_auth_rate_limit(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """FastAPI dependency: strict per-IP rate limit for authentication endpoints.
+
+    Applies AUTH_RATE_LIMIT_MAX_REQUESTS / AUTH_RATE_LIMIT_WINDOW_SECONDS (default
+    10 req / 60 s) per client IP, independent of the global HTTP rate limit.
+    This limits password-guessing attacks without affecting normal API traffic.
+    """
+    if not settings.rate_limit_enabled:
+        return
+    limiter = getattr(request.app.state, "rate_limiter", None)
+    if limiter is None:
+        return
+    client_ip = get_client_ip(request, settings) or "unknown"
+    key = f"auth:{client_ip}"
+    decision = await limiter.acheck(
+        key=key,
+        limit=settings.auth_rate_limit_max_requests,
+        window_seconds=settings.auth_rate_limit_window_seconds,
+    )
+    if not decision.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many authentication attempts. Please try again later.",
+            headers={"Retry-After": str(decision.retry_after_seconds)},
+        )
+
+
 def ensure_workspace_scope(auth: AuthContext, workspace_id: str | None) -> None:
     if workspace_id is not None and workspace_id != auth.workspace_id:
         raise HTTPException(

@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,7 @@ from app.core.security import (
     decode_token,
     get_current_auth_context,
     hash_password,
+    require_auth_rate_limit,
     verify_password,
 )
 from app.db.models import UserAccount, Workspace
@@ -37,6 +39,36 @@ from app.schemas.auth import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+@router.post("/token", dependencies=[Depends(require_auth_rate_limit)])
+async def token_login(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AuthTokenResponse:
+    """OAuth2 form-based login (POST /auth/token).
+
+    Accepts application/x-www-form-urlencoded with `username` and `password`
+    fields, identical to the OAuth2 password flow used by FastAPI's
+    auto-generated swagger UI and standard test clients.
+    """
+    username = normalize_username(form_data.username)
+    user = await get_user_by_username(session, username)
+
+    if user is None or not verify_password(form_data.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password.",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password.",
+        )
+
+    return await issue_token_response(session, user, settings)
+
+
 def _registration_conflict_detail(exc: IntegrityError) -> str:
     """Return a precise 409 message by inspecting which constraint fired."""
     msg = str(getattr(exc, "orig", exc)).lower()
@@ -45,7 +77,7 @@ def _registration_conflict_detail(exc: IntegrityError) -> str:
     return "Workspace ID already taken."
 
 
-@router.post("/register", status_code=status.HTTP_201_CREATED)
+@router.post("/register", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_auth_rate_limit)])
 async def register_user(
     payload: RegisterRequest,
     session: Annotated[AsyncSession, Depends(get_db_session)],
@@ -94,7 +126,7 @@ async def register_user(
     return await issue_token_response(session, user, settings)
 
 
-@router.post("/login")
+@router.post("/login", dependencies=[Depends(require_auth_rate_limit)])
 async def login_user(
     payload: LoginRequest,
     session: Annotated[AsyncSession, Depends(get_db_session)],
@@ -111,8 +143,8 @@ async def login_user(
 
     if not user.is_active:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive.",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password.",
         )
 
     requested_workspace = normalize_workspace_id(payload.workspace_id)
@@ -370,4 +402,24 @@ def validate_password_strength(password: str, settings: Settings) -> None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Password must be at least {minimum_length} characters long.",
+        )
+    if not re.search(r"[A-Z]", password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must contain at least one uppercase letter.",
+        )
+    if not re.search(r"[a-z]", password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must contain at least one lowercase letter.",
+        )
+    if not re.search(r"[0-9]", password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must contain at least one digit.",
+        )
+    if not re.search(r"[^A-Za-z0-9]", password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must contain at least one special character.",
         )

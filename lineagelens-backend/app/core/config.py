@@ -117,6 +117,17 @@ class Settings(BaseSettings):
 
     proxy_static_token: str = Field(default="", alias="PROXY_STATIC_TOKEN")
 
+    # Field-level encryption key for sensitive DB columns (GitHub tokens, webhook secrets).
+    # If unset the system falls back to deriving a key from JWT_SECRET_KEY.
+    # Set explicitly in production to decouple field encryption from JWT rotation.
+    field_encryption_key: str | None = Field(default=None, alias="FIELD_ENCRYPTION_KEY")
+
+    # Tighter per-IP rate limit applied exclusively to authentication endpoints.
+    # This is separate from the global HTTP rate limit so that login brute-force
+    # attempts are throttled independently of normal API traffic.
+    auth_rate_limit_max_requests: int = Field(default=10, alias="AUTH_RATE_LIMIT_MAX_REQUESTS")
+    auth_rate_limit_window_seconds: int = Field(default=60, alias="AUTH_RATE_LIMIT_WINDOW_SECONDS")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

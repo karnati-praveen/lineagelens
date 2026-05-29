@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import log_audit_event
+from app.core.encryption import decrypt_field, encrypt_field
 from app.core.security import AuthContext, get_current_auth_context, require_admin
 from app.db.models import ApiKey, GithubIntegration
 from app.db.session import get_db_session
@@ -156,9 +157,9 @@ async def update_github_config(
     config.block_on_high_risk = payload.block_on_high_risk
     config.allowed_repos = payload.allowed_repos
     if payload.token is not None:
-        config.token = payload.token
+        config.token = encrypt_field(payload.token)
     if payload.webhook_secret is not None:
-        config.webhook_secret = payload.webhook_secret
+        config.webhook_secret = encrypt_field(payload.webhook_secret)
 
     await log_audit_event(
         session,
@@ -198,9 +199,10 @@ async def receive_github_webhook(
 
     body = await request.body()
 
+    raw_secret = decrypt_field(config.webhook_secret or "")
     sig_header = request.headers.get("X-Hub-Signature-256", "")
     expected_sig = "sha256=" + hmac.new(
-        config.webhook_secret.encode(), body, hashlib.sha256
+        raw_secret.encode(), body, hashlib.sha256
     ).hexdigest()
     if not hmac.compare_digest(sig_header, expected_sig):
         raise HTTPException(status_code=401, detail="Invalid webhook signature.")

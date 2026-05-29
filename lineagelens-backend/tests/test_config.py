@@ -67,3 +67,15 @@ def test_settings_maps_full_backend_to_enterprise_product_mode() -> None:
     settings = build_settings(BACKEND_MODE="full")
 
     assert settings.product_mode == "max"
+
+
+def test_settings_registration_enabled_by_default() -> None:
+    settings = build_settings()
+
+    assert settings.registration_enabled is True
+
+
+def test_settings_registration_can_be_disabled() -> None:
+    settings = build_settings(REGISTRATION_ENABLED=False)
+
+    assert settings.registration_enabled is False

@@ -26,11 +26,11 @@ from app.db.models import OidcProvider, UserAccount
 from app.db.session import get_db_session
 from app.services.oidc_service import (
     build_auth_url,
-    consume_state,
+    consume_state_async,
     exchange_code,
     fetch_discovery_doc,
     fetch_userinfo,
-    store_state,
+    store_state_async,
 )
 
 router = APIRouter(prefix="/auth/sso", tags=["sso"])
@@ -175,7 +175,8 @@ async def sso_login(
         raise HTTPException(status_code=502, detail=f"OIDC discovery failed: {exc}")
 
     state = secrets.token_urlsafe(32)
-    store_state(state, {
+    kv_store = request.app.state.kv_store
+    await store_state_async(kv_store, state, {
         "provider_id": str(provider.id),
         "workspace_id": provider.workspace_id,
     })
@@ -208,7 +209,8 @@ async def sso_callback(
     if not code or not state:
         raise HTTPException(status_code=400, detail="Missing code or state parameter.")
 
-    state_data = consume_state(state)
+    kv_store = request.app.state.kv_store
+    state_data = await consume_state_async(kv_store, state)
     if state_data is None:
         raise HTTPException(status_code=400, detail="Invalid or expired state parameter.")
 

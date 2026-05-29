@@ -14,6 +14,8 @@ Setup:
 """
 import asyncio
 import hashlib
+import hmac
+import ipaddress
 import json
 import logging
 import os
@@ -66,6 +68,26 @@ PROXY_CONNECT_PORT    = int(os.environ.get("PROXY_CONNECT_PORT", "8789"))
 # Optional CA cert for HTTPS CONNECT MITM. When unset, CONNECT falls back to transparent relay.
 PROXY_CA_CERT_PATH    = os.environ.get("PROXY_CA_CERT_PATH", "")
 PROXY_CA_KEY_PATH     = os.environ.get("PROXY_CA_KEY_PATH", "")
+# When set, CONNECT clients MUST present this token as "Proxy-Authorization: Bearer <token>".
+# Strongly recommended whenever the CONNECT port is reachable from untrusted networks.
+PROXY_CONNECT_TOKEN   = os.environ.get("PROXY_CONNECT_TOKEN", "").strip()
+
+# Hostnames that are always blocked as CONNECT targets regardless of PROXY_CONNECT_TOKEN.
+_BLOCKED_CONNECT_HOSTS = frozenset({
+    "localhost", "ip6-localhost", "ip6-loopback", "broadcasthost", "0.0.0.0",
+})
+
+# Well-known LLM API domains.  UPSTREAM_URL pointing elsewhere triggers a startup warning.
+_KNOWN_LLM_DOMAINS = frozenset({
+    "api.anthropic.com",
+    "api.openai.com",
+    "generativelanguage.googleapis.com",
+    "api.together.xyz",
+    "api.groq.com",
+    "api.fireworks.ai",
+    "api.mistral.ai",
+    "openai.azure.com",
+})
 
 _background_tasks: set[asyncio.Task] = set()
 # Cache of per-host generated certs: hostname -> (cert_pem, key_pem)
@@ -2519,13 +2541,42 @@ async def _pipe(
             pass
 
 
+def _is_connect_host_allowed(host: str) -> bool:
+    """Return False if the CONNECT target is a private, loopback, or blocked address.
+
+    Domain names that are not bare IPs are allowed through — DNS is not resolved
+    at the CONNECT layer.  The explicit blocklist covers the most common internal
+    aliases (localhost, 0.0.0.0, …).
+    """
+    host_lower = host.strip().lower()
+    if host_lower in _BLOCKED_CONNECT_HOSTS:
+        return False
+    try:
+        addr = ipaddress.ip_address(host_lower)
+        return not (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_unspecified
+        )
+    except ValueError:
+        pass  # Domain name — allow.
+    return True
+
+
 async def _parse_connect_request(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
 ) -> tuple[str, int] | None:
-    """Read and parse the CONNECT request line and drain headers.
+    """Read and parse the CONNECT request line, drain headers, and enforce auth + host checks.
 
-    Returns (host, port) on success, or None after writing a 400 response.
+    Returns (host, port) on success, or None after writing an error response.
+
+    Security controls applied here:
+    - If PROXY_CONNECT_TOKEN is set, the client MUST supply a matching
+      ``Proxy-Authorization: Bearer <token>`` header (timing-safe comparison).
+    - The target host is checked against a blocklist of internal hostnames and
+      private/loopback IP literals to prevent using the proxy as an internal relay.
     """
     line = await asyncio.wait_for(reader.readline(), timeout=15.0)
     parts = line.rstrip(b"\r\n").split(b" ")
@@ -2538,13 +2589,37 @@ async def _parse_connect_request(
     host, _, port_str = host_port.rpartition(":")
     port = int(port_str) if port_str.isdigit() else 443
 
-    # Drain remaining request headers; cap at 100 lines to prevent slow-header DoS.
+    # Drain request headers; capture Proxy-Authorization for auth check.
+    proxy_auth_value = ""
     for _ in range(100):
         hline = await asyncio.wait_for(reader.readline(), timeout=5.0)
         if hline in (b"\r\n", b"\n", b""):
             break
+        if b":" in hline:
+            name_b, _, val_b = hline.partition(b":")
+            if name_b.strip().lower() == b"proxy-authorization":
+                proxy_auth_value = val_b.strip().decode("latin-1", errors="replace")
     else:
         writer.write(b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n")
+        await writer.drain()
+        return None
+
+    # Enforce Proxy-Authorization when PROXY_CONNECT_TOKEN is configured.
+    if PROXY_CONNECT_TOKEN:
+        expected = f"Bearer {PROXY_CONNECT_TOKEN}"
+        if not hmac.compare_digest(proxy_auth_value, expected):
+            writer.write(
+                b"HTTP/1.1 407 Proxy Authentication Required\r\n"
+                b"Proxy-Authenticate: Bearer realm=\"LineageLens\"\r\n"
+                b"content-length: 0\r\n\r\n"
+            )
+            await writer.drain()
+            return None
+
+    # Block CONNECT to private / loopback hosts to prevent internal relay abuse.
+    if not _is_connect_host_allowed(host):
+        logger.warning("CONNECT to internal host blocked: %s:%d", host, port)
+        writer.write(b"HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n")
         await writer.drain()
         return None
 
@@ -2710,6 +2785,31 @@ async def _run_connect_server() -> None:
 
 # ── entry point ───────────────────────────────────────────────────────────────
 
+def _warn_if_unusual_upstream(url: str, var_name: str) -> None:
+    """Log a warning when an upstream URL points to an unrecognized host.
+
+    Client API keys (Authorization / x-api-key headers) are forwarded to upstream
+    URLs, so a misconfigured or typo'd URL would exfiltrate credentials.
+    """
+    if not url:
+        return
+    try:
+        parsed = urllib.parse.urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return
+        if not any(host == d or host.endswith("." + d) for d in _KNOWN_LLM_DOMAINS):
+            logger.warning(
+                "%s points to an unrecognized host (%s). "
+                "Client API keys (Authorization/x-api-key) will be forwarded there — "
+                "verify this is the intended LLM endpoint.",
+                var_name,
+                host,
+            )
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     import uvicorn
 
@@ -2721,7 +2821,14 @@ if __name__ == "__main__":
         logger.info("Backend  : %s", BACKEND_URL)
         logger.info("Workspace: %s", WORKSPACE_ID)
         logger.info("Token    : %s", "configured" if INGEST_TOKEN else "NOT SET — captures will be skipped")
-        logger.info("CONNECT  : port %d", PROXY_CONNECT_PORT)
+        logger.info("CONNECT  : port %d (%s)", PROXY_CONNECT_PORT,
+                    "auth enabled" if PROXY_CONNECT_TOKEN else "no auth — set PROXY_CONNECT_TOKEN for production")
+
+        # Warn if upstream URLs point to unrecognized hosts.
+        _warn_if_unusual_upstream(UPSTREAM_URL, "UPSTREAM_URL")
+        _warn_if_unusual_upstream(_ANTHROPIC_UPSTREAM_URL, "ANTHROPIC_UPSTREAM_URL")
+        _warn_if_unusual_upstream(_OPENAI_UPSTREAM_URL, "OPENAI_UPSTREAM_URL")
+        _warn_if_unusual_upstream(_GEMINI_UPSTREAM_URL, "GEMINI_UPSTREAM_URL")
 
         # Guard: BACKEND_URL must not point at the proxy itself.
         if _backend_url_points_to_proxy():
