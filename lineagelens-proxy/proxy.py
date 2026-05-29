@@ -2544,13 +2544,22 @@ async def _pipe(
 def _is_connect_host_allowed(host: str) -> bool:
     """Return False if the CONNECT target is a private, loopback, or blocked address.
 
-    Domain names that are not bare IPs are allowed through — DNS is not resolved
-    at the CONNECT layer.  The explicit blocklist covers the most common internal
-    aliases (localhost, 0.0.0.0, …).
+    Handles both bare hostnames/IPs and RFC 7230 bracketed IPv6 literals such as
+    ``[::1]`` or ``[fe80::1%eth0]``.  Without stripping the brackets,
+    ``ipaddress.ip_address()`` raises ``ValueError`` and the check is silently
+    bypassed — allowing CONNECT to any IPv6 loopback / ULA / link-local address.
     """
     host_lower = host.strip().lower()
+
+    # Strip RFC 7230 brackets from IPv6 literals: "[::1]" → "::1".
+    # Also drop any zone-ID suffix (e.g. "fe80::1%eth0") before parsing.
+    if host_lower.startswith("[") and host_lower.endswith("]"):
+        host_lower = host_lower[1:-1]
+    host_lower = host_lower.split("%")[0]  # strip zone ID
+
     if host_lower in _BLOCKED_CONNECT_HOSTS:
         return False
+
     try:
         addr = ipaddress.ip_address(host_lower)
         return not (
@@ -2558,9 +2567,11 @@ def _is_connect_host_allowed(host: str) -> bool:
             or addr.is_loopback
             or addr.is_link_local
             or addr.is_unspecified
+            or addr.is_multicast
+            or addr.is_reserved
         )
     except ValueError:
-        pass  # Domain name — allow.
+        pass  # Domain name — allow (DNS not resolved at CONNECT layer).
     return True
 
 
