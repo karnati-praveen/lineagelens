@@ -1,74 +1,93 @@
-# LineageLens
+<div align="center">
 
-**Self-hosted provenance for AI-generated code.**
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,40:1a1a3e,100:0d1117&height=220&section=header&text=LineageLens&fontSize=80&fontColor=58a6ff&animation=fadeIn&fontAlignY=42&desc=Git%20blame%20for%20AI-generated%20code.%20Self-hosted.%20Open%20source.&descSize=20&descAlignY=65&descColor=8b949e" alt="LineageLens" />
 
-Captures the prompt, model, tool, file, and accept/reject status from every AI coding session — across Claude Code, Codex CLI, Gemini CLI, and VS Code-based editors — and stores it in your own infrastructure so you can answer "which code did AI write, with what prompt, by which model" without sending anything to a SaaS.
+<br/>
 
-[LineageLens website](https://lineage-website.vercel.app/)
+[![readme-typing-svg](https://readme-typing-svg.demolab.com/?font=Fira+Code&size=20&pause=1200&color=58A6FF&center=true&vCenter=true&width=700&height=50&lines=Which+code+did+the+AI+write%3F;With+what+prompt%3F;Which+model+generated+it%3F;LineageLens+answers+all+three.)](https://lineage-website.vercel.app/)
 
-## Install (pick one)
+<br/>
 
-```bash
-# 1. Free VS Code extension — also works in Cursor and Windsurf
-code --install-extension karnatipraveen.lineagelens
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/i/karnatipraveen.lineagelens?label=VS%20Code%20installs&color=007ACC&logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=karnatipraveen.lineagelens)
+[![GitHub Stars](https://img.shields.io/github/stars/karnati-praveen/lineagelens?style=flat&color=f9a825&logo=github)](https://github.com/karnati-praveen/lineagelens/stargazers)
+[![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?logo=opensourceinitiative&logoColor=white)](./LICENSE)
+[![Extension Version](https://img.shields.io/visual-studio-marketplace/v/karnatipraveen.lineagelens?label=extension&color=7c3aed)](https://marketplace.visualstudio.com/items?itemName=karnatipraveen.lineagelens)
+[![OpenVSX](https://img.shields.io/badge/OpenVSX-available-c084fc)](https://open-vsx.org/extension/karnatipraveen/lineagelens)
 
-# 2. Lite backend — single Docker container with proxy + dashboard
-git clone https://github.com/karnati-praveen/lineagelens && cd lineagelens
-bash lineagelens-scripts/quickstart-lite.sh
+<br/>
 
-# 3. Plus / Max — Postgres team backend, optional Neo4j lineage graph
-bash lineagelens-scripts/quickstart-plus.sh    # or quickstart-max.sh
+**[Website](https://lineage-website.vercel.app/) · [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=karnatipraveen.lineagelens) · [Report a Bug](https://github.com/karnati-praveen/lineagelens/issues) · [Roadmap](#roadmap)**
+
+</div>
+
+---
+
+## The problem
+
+It's 2026. You used Claude Code to write the JWT verifier in `auth.py` on Tuesday, Cursor to refactor the payment handler on Wednesday, and Copilot to fill in the test stubs Thursday morning.
+
+By Friday your PR has 400 lines across 12 files. Your reviewer asks: **"Did you write this or did AI?"**
+
+You answer honestly: "Mostly AI."
+
+They ask: **"Which one? With what prompt?"**
+
+And you have no idea.
+
+`git blame` says you wrote it. Git history was designed in 2005, before any of this existed.
+
+---
+
+## What LineageLens does
+
+LineageLens is a **self-hosted proxy + VS Code extension** that sits between your AI tools and the provider APIs. It captures every edit — the prompt that triggered it, the model that generated it, the file it landed in, and whether it was accepted or rejected — and stores everything in your own infrastructure.
+
+```
+Before LineageLens:  "Claude wrote... some of it? I think?"
+After LineageLens:   prompt=... model=claude-opus-4-5 file=auth.py status=applied
 ```
 
----
-
-## Why this exists
-
-It's 2026. You used Claude Code to write the JWT verifier in `auth.py` on Tuesday, Cursor to refactor the payment handler on Wednesday, and Copilot to fill in the test stubs Thursday morning. By Friday your PR has 400 lines of code across 12 files. Your reviewer asks: "did you write this or did AI?" You answer honestly: "mostly AI." They ask: "which one? With what prompt?" And you have no idea.
-
-Git blame says you wrote it. Git history was designed in 2005, before any of this existed.
-
-GitHub Copilot Audit Log (launched Q4 2025) and Cursor's team activity dashboard partially fill the gap — for *their* tools only. If your team uses Claude Code in the terminal AND Copilot in VS Code, you need two SaaS subscriptions and you still don't see the third tool one of your engineers is trying out. And in any case, your prompts get sent to the vendor. For fintech, healthtech, and defense teams that's not acceptable.
-
-LineageLens is the open-source, self-hosted answer. The universal proxy parses each provider's *native* tool-calling protocol — Anthropic `tool_use` blocks, OpenAI Responses API `function_call` items with the `apply_patch` DSL, and Gemini `functionCall` parts — and correlates each edit with the next turn's `tool_result` so every capture is resolved to `applied`, `rejected`, or `errored`. Not "the AI said this once" — but "this edit landed and the harness confirmed it."
-
-Self-hosted. MIT licensed. Free Base extension on the VS Code Marketplace and Open VSX. Backend tiers from one Docker container up to a Postgres + Neo4j compliance setup.
+No SaaS. No vendor lock-in. No prompts leaving your network. MIT licensed.
 
 ---
 
-## Supported tools
+## Demo
 
-| Tool | Capture method | What you get |
-|---|---|---|
-| **Claude Code** (terminal) | Proxy (`ANTHROPIC_BASE_URL`) | Full — prompt, model, edit, applied/rejected status |
-| **OpenAI Codex CLI** | Proxy (`OPENAI_BASE_URL`) — parses Responses API + `apply_patch` DSL | Full |
-| **Gemini CLI** | Proxy — parses `functionCall` / `functionResponse` | Full |
-| **Goose** (Block) | Proxy — rides on Anthropic or OpenAI provider format | Full |
-| **VS Code Copilot** | Free VS Code extension | Editor-only — file path + inserted lines, no prompt |
-| **Cursor** | Free VS Code extension (Cursor is a VS Code fork) | Editor-only — Cursor's agent traffic goes to api.cursor.sh and can't be proxied |
-| **Windsurf** | Free VS Code extension (Windsurf is a VS Code fork) | Editor-only — same proprietary backend reason as Cursor |
-| **Continue** | Proxy when configured for a native-tool-call provider | Full or editor-only depending on the model used |
-| **Aider** | *Not yet — Tier 2 adapter planned (git-log + .aider.chat.history.md)* | — |
-| **Cline / Roo Code** | *Not yet — Tier 2 adapter planned (parses Cline's XML tool format)* | — |
-| **GitHub Copilot CLI** | Not supported. Proprietary endpoints, no public route. | — |
-| **Amazon Q Developer** | Not supported. AWS proprietary protocol. | — |
+> **[Live demo → lineage-website.vercel.app](https://lineage-website.vercel.app/)**
 
-If the tool you use isn't here, open an issue.
+<!-- Add a demo GIF here by recording your terminal with `asciinema` or `ttyrec`, converting to GIF, and dropping it in the `lineagelens-media/` folder. Suggested command: `agg lineagelens-media/demo.cast lineagelens-media/demo.gif` -->
 
----
+<div align="center">
 
-## Operating modes
+```
+$ export ANTHROPIC_BASE_URL=http://localhost:8788
+$ claude "add rate limiting to the /api/login endpoint"
 
-| Mode | Use case | Storage | Setup |
-|---|---|---|---|
-| **Base** | Solo developer, no backend, fully local | VS Code global state (JSON) | Install the extension |
-| **Lite** | Small team (≤ 10), one box, low friction | SQLite, single Docker container | `bash quickstart-lite.sh` |
-| **Plus** | Teams (10–100), governance dashboard, MCP server, GitHub Actions risk gate | PostgreSQL + pgvector | `bash quickstart-plus.sh` |
-| **Max** | Compliance-heavy teams, audit lineage graph | PostgreSQL + pgvector + Neo4j | `bash quickstart-max.sh` |
+  LineageLens captured:
+  ┌─────────────────────────────────────────────────────┐
+  │  model   claude-opus-4-5                           │
+  │  prompt  add rate limiting to the /api/login…      │
+  │  file    src/routes/auth.py  (+47 lines)           │
+  │  status  applied ✓                                 │
+  │  risk    HIGH  (auth + network pattern)            │
+  └─────────────────────────────────────────────────────┘
+```
+
+</div>
 
 ---
 
-## Quick start (Lite)
+## Install
+
+### Free VS Code extension (no backend needed)
+
+```bash
+code --install-extension karnatipraveen.lineagelens
+```
+
+Works in **VS Code**, **Cursor**, and **Windsurf**. Captures editor-level edits locally — no proxy, no API key, no account.
+
+### Lite backend (recommended for solo devs / small teams)
 
 ```bash
 git clone https://github.com/karnati-praveen/lineagelens
@@ -76,14 +95,68 @@ cd lineagelens
 bash lineagelens-scripts/quickstart-lite.sh
 ```
 
-Open <http://localhost:8787/setup>, create an admin in the wizard, then point any AI CLI tool at the proxy:
+Open **http://localhost:8787/setup**, create an admin, then point your AI tools at the proxy:
 
 ```bash
-export ANTHROPIC_BASE_URL=http://localhost:8788
-export OPENAI_BASE_URL=http://localhost:8788
+export ANTHROPIC_BASE_URL=http://localhost:8788   # Claude Code / claude CLI
+export OPENAI_BASE_URL=http://localhost:8788       # Codex CLI / Goose
 ```
 
-Use Claude Code (or any of the supported CLI tools) as normal. Open <http://localhost:8787/dashboard> to see captures appear.
+Open **http://localhost:8787/dashboard** — captures appear as you code.
+
+### Plus / Max (teams with governance needs)
+
+```bash
+bash lineagelens-scripts/quickstart-plus.sh   # Postgres + pgvector + dashboard + MCP server
+bash lineagelens-scripts/quickstart-max.sh    # + Neo4j lineage graph for compliance
+```
+
+---
+
+## What you capture
+
+| Field | Example |
+|---|---|
+| Prompt | `"add rate limiting to /api/login"` |
+| Model | `claude-opus-4-5` |
+| Tool | Claude Code |
+| File | `src/routes/auth.py` |
+| Lines | `+47 / -3` |
+| Status | `applied` / `rejected` / `errored` |
+| Risk score | `HIGH` (auth + network pattern) |
+| Timestamp | `2026-05-29T14:22:11Z` |
+
+The proxy parses each provider's **native** tool-calling protocol — Anthropic `tool_use` blocks, OpenAI Responses API `function_call` items with the `apply_patch` DSL, and Gemini `functionCall` parts — and correlates each edit with the next turn's `tool_result` to resolve status. Not "the AI said this once" — but "this edit landed and the harness confirmed it."
+
+---
+
+## Supported tools
+
+| Tool | Capture method | What you get |
+|---|---|---|
+| **Claude Code** (terminal) | Proxy (`ANTHROPIC_BASE_URL`) | Full — prompt, model, edit, applied/rejected |
+| **OpenAI Codex CLI** | Proxy (`OPENAI_BASE_URL`) | Full — Responses API + `apply_patch` DSL |
+| **Gemini CLI** | Proxy — parses `functionCall` / `functionResponse` | Full |
+| **Goose** (Block) | Proxy — rides Anthropic/OpenAI format | Full |
+| **VS Code Copilot** | Free VS Code extension | Editor-only — file + inserted lines, no prompt |
+| **Cursor** | Free VS Code extension | Editor-only — agent traffic goes to api.cursor.sh |
+| **Windsurf** | Free VS Code extension | Editor-only — same proprietary backend |
+| **Continue** | Proxy (native-tool-call provider) | Full or editor-only depending on model |
+| **Aider** | Planned — git-log + `.aider.chat.history.md` | — |
+| **Cline / Roo Code** | Planned — XML tool format parser | — |
+| **GitHub Copilot CLI** | Not supported — proprietary endpoints | — |
+| **Amazon Q Developer** | Not supported — AWS proprietary protocol | — |
+
+---
+
+## Operating modes
+
+| Mode | Who it's for | Storage | One-liner |
+|---|---|---|---|
+| **Base** | Solo, no server, fully local | VS Code global state (JSON) | `code --install-extension karnatipraveen.lineagelens` |
+| **Lite** | Teams ≤ 10, one box | SQLite + Docker | `bash quickstart-lite.sh` |
+| **Plus** | Teams 10–100, governance, MCP server, GitHub Actions gate | PostgreSQL + pgvector | `bash quickstart-plus.sh` |
+| **Max** | Compliance-heavy, full audit lineage | PostgreSQL + pgvector + Neo4j | `bash quickstart-max.sh` |
 
 ---
 
@@ -119,41 +192,64 @@ Use Claude Code (or any of the supported CLI tools) as normal. Open <http://loca
        └─────────┘    └─────────────┘    └─────────┘
 ```
 
-The proxy intercepts traffic going to the AI provider. It does *not* modify requests or responses — it forwards them untouched. It also parses each provider's native tool-calling protocol to extract structured edits, then correlates them with the next turn's tool_result to determine whether the edit landed.
+The proxy forwards requests untouched — it does not modify them. It also watches responses to resolve each edit's final status from the `tool_result` turn.
 
-The VS Code extension is independent. It watches `onDidChangeTextDocument` for 4+ line insertions and stores them locally or POSTs them to the backend when configured. No proxy involvement, no API key required for the free Base mode.
+The VS Code extension works independently. It watches `onDidChangeTextDocument` for 4+ line insertions and stores them locally or POSTs them to the backend when configured.
 
 ---
 
 ## What this isn't
 
-- **Not a SAST scanner.** The risk score is heuristic — based on file path, language, keyword density, and known-risky patterns. It is *not* a replacement for Snyk, Semgrep, or your security team. Pair it with one; don't replace one with this.
-- **Not enterprise-ready in v1.1.5.** RBAC and SSO exist but haven't been validated against SOC 2 / ISO 27001 controls. Don't tell your auditor it's compliant. Treat it as a developer-feedback tool until that work is done.
-- **Not multi-tenant.** One LineageLens instance serves one workspace (or one organization with a small number of workspaces). If you need to host this for multiple unrelated customers, run separate instances. There is no tenant-level data isolation beyond `workspace_id` in JWT claims.
-- **Single bus factor.** This is one person's project. Bug reports get fast turnaround during the week; weekends are slower. If you're an enterprise considering this, factor in the maintainer count.
-- **Cursor agent mode and Copilot CLI are partially out of scope.** Their requests route through their own proprietary backends (api.cursor.sh, api.githubcopilot.com) and can't be intercepted at the network layer. You get editor-level capture via the VS Code extension; you don't get the prompt or model.
+Being honest about limits is more useful than hiding them.
 
-I'd rather you find this list before you find these limits in production.
+- **Not a SAST scanner.** The risk score is heuristic — file path, language, keyword density, known-risky patterns. Pair it with Snyk or Semgrep; don't replace them.
+- **Not enterprise-ready yet.** RBAC and SSO exist but haven't been validated against SOC 2 / ISO 27001 controls. Treat it as a developer-feedback tool until that work is done.
+- **Not multi-tenant.** One instance serves one workspace. For multiple unrelated customers, run separate instances.
+- **Single maintainer.** Bug reports get fast turnaround on weekdays; weekends are slower. Factor this in if you're an enterprise evaluating this.
+- **Cursor agent / Copilot CLI are partially out of scope.** Requests route through proprietary backends (`api.cursor.sh`, `api.githubcopilot.com`). You get editor-level capture; you don't get the prompt or model.
 
----
 ---
 
 ## Roadmap
 
-Short, no dates promised. Things that are next, roughly in order of intent:
+In rough priority order:
 
-- **Tier 2 adapters** — Aider via git-log fingerprinting, Cline / Roo Code via XML tool-format parser, Continue's text-fallback path.
-- **CLI wrapper** — `lineagelens run -- <ai-tool> "..."` for capture without setting up a proxy. Useful for batch/CI usage.
-- **Risk scoring v2** — heuristic + lightweight static analysis. Still not SAST; closer to "this file is sensitive" detection.
-- **OpenVSX listing** — already submitted, awaiting verified-namespace approval.
-- **Dedicated docs site** — current docs are scattered across `lineagelens-docs/`; a single navigable site is overdue.
+- **Tier 2 adapters** — Aider (git-log fingerprinting), Cline / Roo Code (XML tool format), Continue's text-fallback path
+- **CLI wrapper** — `lineagelens run -- <ai-tool> "..."` for capture without a full proxy setup
+- **Risk scoring v2** — heuristic + lightweight static analysis, closer to "this file is sensitive" detection
+- **Dedicated docs site** — current docs are in `lineagelens-docs/`; a navigable site is overdue
 
-Things deliberately *not* on the roadmap:
-
-- A hosted SaaS version (until 10+ teams are running self-hosted in production).
-- Cursor or Windsurf agent-mode full capture (their proprietary backends make this structurally fragile; not worth the maintenance cost).
-- AIBOM compliance certification (real money in this someday, but post-launch).
+Not on the roadmap (yet): hosted SaaS, Cursor/Windsurf full agent capture, AIBOM compliance certification.
 
 ---
 
-If you're trying this and it doesn't work, please open an issue. Hard for me to fix what I don't know is broken.
+## Contributing
+
+Issues and PRs welcome. If something doesn't work, please open an issue — hard to fix what I don't know is broken.
+
+```bash
+git clone https://github.com/karnati-praveen/lineagelens
+cd lineagelens
+# backend
+cd lineagelens-backend && pip install -r requirements.txt && uvicorn app.main:app --reload
+# proxy
+cd lineagelens-proxy && npm install && npm run dev
+# extension
+cd lineagelens-src && npm install && code --extensionDevelopmentPath=$(pwd)
+```
+
+---
+
+<div align="center">
+
+**If LineageLens saved you 30 minutes of "wait, which AI wrote this?" — consider giving it a star.**
+
+[![Star this repo](https://img.shields.io/github/stars/karnati-praveen/lineagelens?style=for-the-badge&color=f9a825&logo=github&label=Star%20LineageLens)](https://github.com/karnati-praveen/lineagelens/stargazers)
+
+<br/>
+
+Built by [Karnati Praveen](https://github.com/karnati-praveen) · MIT License · [lineage-website.vercel.app](https://lineage-website.vercel.app/)
+
+</div>
+
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,40:1a1a3e,100:0d1117&height=120&section=footer" alt="footer" />
