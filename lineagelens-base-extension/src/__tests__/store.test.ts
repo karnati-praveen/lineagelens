@@ -93,3 +93,85 @@ test('enforces maxCaptures (default 1000)', () => {
   }
   expect(store.count).toBe(1000);
 });
+
+// ── reorder() ─────────────────────────────────────────────────────────────────
+
+function makeThree() {
+  const ctx = { globalStorageUri: { fsPath: fs.mkdtempSync(require('path').join(require('os').tmpdir(), 'll-ro-')) } } as any;
+  const store = new CaptureStore(ctx);
+  // add returns newest-first, so after three adds the order is c, b, a
+  const a = store.add({ filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'a', linesAdded: 1, workspaceFolder: null });
+  const b = store.add({ filePath: '/b.ts', fileName: 'b.ts', language: 'typescript', insertedCode: 'b', linesAdded: 1, workspaceFolder: null });
+  const c = store.add({ filePath: '/c.ts', fileName: 'c.ts', language: 'typescript', insertedCode: 'c', linesAdded: 1, workspaceFolder: null });
+  return { store, ctx, a, b, c };
+}
+
+test('reorder null targetId moves item to top', () => {
+  const { store, a, b, c } = makeThree();
+  // initial order: c, b, a
+  store.reorder([a.id], null);
+  const names = store.getAll().map(r => r.fileName);
+  expect(names[0]).toBe('a.ts');
+  expect(names).toHaveLength(3);
+});
+
+test('reorder undefined targetId moves item to bottom', () => {
+  const { store, a, b, c } = makeThree();
+  store.reorder([c.id], undefined);
+  const names = store.getAll().map(r => r.fileName);
+  expect(names[names.length - 1]).toBe('c.ts');
+  expect(names).toHaveLength(3);
+});
+
+test('reorder string targetId inserts before target', () => {
+  const { store, a, b, c } = makeThree();
+  // order: c, b, a — move a before b
+  store.reorder([a.id], b.id);
+  const names = store.getAll().map(r => r.fileName);
+  const aIdx = names.indexOf('a.ts');
+  const bIdx = names.indexOf('b.ts');
+  expect(aIdx).toBeLessThan(bIdx);
+  expect(names).toHaveLength(3);
+});
+
+test('reorder targetId in dragged set uses original position', () => {
+  const { store, a, b, c } = makeThree();
+  // drag b, drop onto b — no corruption, b stays somewhere in the list
+  store.reorder([b.id], b.id);
+  const names = store.getAll().map(r => r.fileName);
+  expect(names).toHaveLength(3);
+  expect(names).toContain('a.ts');
+  expect(names).toContain('b.ts');
+  expect(names).toContain('c.ts');
+});
+
+test('reorder empty draggedIds is a no-op', () => {
+  const { store, a, b, c } = makeThree();
+  const before = store.getAll().map(r => r.id);
+  store.reorder([], null);
+  expect(store.getAll().map(r => r.id)).toEqual(before);
+});
+
+test('reorder unknown draggedId is a no-op', () => {
+  const { store } = makeThree();
+  const before = store.getAll().map(r => r.id);
+  store.reorder(['does-not-exist'], null);
+  expect(store.getAll().map(r => r.id)).toEqual(before);
+});
+
+test('reorder multi-select with null puts all dragged items at top in drag order', () => {
+  const { store, a, b, c } = makeThree();
+  // order: c, b, a — drag a and c to top
+  store.reorder([a.id, c.id], null);
+  const names = store.getAll().map(r => r.fileName);
+  expect(names[0]).toBe('a.ts');
+  expect(names[1]).toBe('c.ts');
+  expect(names[2]).toBe('b.ts');
+});
+
+test('reorder persists to disk', () => {
+  const { store, ctx, a, b, c } = makeThree();
+  store.reorder([a.id], null);
+  const store2 = new CaptureStore(ctx);
+  expect(store2.getAll()[0].fileName).toBe('a.ts');
+});
