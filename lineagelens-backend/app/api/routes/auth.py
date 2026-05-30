@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
+import secrets
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -22,13 +23,17 @@ from app.core.security import (
     get_current_auth_context,
     hash_password,
     require_auth_rate_limit,
+    require_role,
     verify_password,
 )
 from app.db.models import UserAccount, Workspace
 from app.db.session import get_db_session
 from app.schemas.auth import (
+    AcceptInviteRequest,
     AuthTokenResponse,
     AuthUserResponse,
+    CreateInviteRequest,
+    CreateInviteResponse,
     LoginRequest,
     LogoutResponse,
     RefreshRequest,
@@ -260,6 +265,114 @@ async def get_authenticated_user(
         "role": user.role or "member",
         "scopes": sorted(auth.scopes),
     }
+
+
+_INVITE_PREFIX = "invite:"
+
+
+@router.post(
+    "/invite",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def create_invite(
+    payload: CreateInviteRequest,
+    request: Request,
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> CreateInviteResponse:
+    """Admin-only: generate a one-time invite link token for a workspace."""
+    workspace_id = normalize_workspace_id(payload.workspace_id)
+    if not workspace_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspaceId is required.")
+
+    # Admins may only invite into their own workspace unless they are a super-admin.
+    if workspace_id != auth.workspace_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You may only create invites for your own workspace.",
+        )
+
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(tz=UTC) + timedelta(minutes=payload.ttl_minutes)
+    kv_store = request.app.state.kv_store
+    await kv_store.set(
+        f"{_INVITE_PREFIX}{token}",
+        {
+            "workspace_id": workspace_id,
+            "role": payload.role,
+            "max_uses": payload.max_uses,
+            "used": 0,
+            "expires_at": expires_at.isoformat(),
+        },
+        ttl=payload.ttl_minutes * 60,
+    )
+
+    return CreateInviteResponse(
+        token=token,
+        workspaceId=workspace_id,
+        role=payload.role,
+        maxUses=payload.max_uses,
+        expiresAt=expires_at.isoformat(),
+    )
+
+
+@router.post("/invite/accept", status_code=status.HTTP_201_CREATED)
+async def accept_invite(
+    payload: AcceptInviteRequest,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AuthTokenResponse:
+    """Accept an invite token and create a new user account in the target workspace."""
+    from sqlalchemy.exc import IntegrityError
+
+    kv_store = request.app.state.kv_store
+    invite = await kv_store.get(f"{_INVITE_PREFIX}{payload.token}")
+
+    if invite is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invite token not found or expired.")
+
+    expires_at = datetime.fromisoformat(invite["expires_at"])
+    if datetime.now(tz=UTC) > expires_at:
+        await kv_store.delete(f"{_INVITE_PREFIX}{payload.token}")
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Invite token has expired.")
+
+    if invite["used"] >= invite["max_uses"]:
+        await kv_store.delete(f"{_INVITE_PREFIX}{payload.token}")
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Invite token has already been fully used.")
+
+    username = normalize_username(payload.username)
+    validate_password_strength(payload.password, settings)
+
+    workspace_id: str = invite["workspace_id"]
+    role: str = invite["role"]
+
+    user = UserAccount(
+        username=username,
+        password_hash=hash_password(payload.password),
+        workspace_id=workspace_id,
+        role=role,
+        is_active=True,
+    )
+    session.add(user)
+
+    try:
+        await session.flush()
+        await session.refresh(user)
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken.")
+
+    # Mark invite as used; delete when exhausted.
+    invite["used"] += 1
+    if invite["used"] >= invite["max_uses"]:
+        await kv_store.delete(f"{_INVITE_PREFIX}{payload.token}")
+    else:
+        remaining_ttl = max(1, int((expires_at - datetime.now(tz=UTC)).total_seconds()))
+        await kv_store.set(f"{_INVITE_PREFIX}{payload.token}", invite, ttl=remaining_ttl)
+
+    return await issue_token_response(session, user, settings)
 
 
 async def issue_token_response(

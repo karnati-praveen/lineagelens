@@ -2,7 +2,8 @@
   "name": "lineagelens",
   "displayName": "LineageLens",
   "description": "Lightweight AI code provenance \u00e2\u20ac\u201d capture and review every AI-generated insertion locally, no server required.",
-  "version": "1.2.2",
+  "_extensionRole": "BASE \u2014 zero-server standalone edition published to VS Code Marketplace. The full server-connected edition lives in the repo root package.json.",
+  "version": "1.2.3",
   "publisher": "karnatipraveen",
   "license": "MIT",
   "repository": {

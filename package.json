@@ -2,6 +2,7 @@
   "name": "lineagelens",
   "displayName": "LineageLens",
   "description": "AI code intelligence platform — git blame for AI-generated code. Captures every AI insertion and traces it back to its prompt, model, and developer. Works with any editor, any AI tool, any team.",
+  "_extensionRole": "FULL — server-connected edition published to VS Code Marketplace. The standalone zero-server edition lives in lineagelens-base-extension/.",
   "keywords": [
     "ai",
     "provenance",
@@ -20,7 +21,7 @@
     "pgvector",
     "neo4j"
   ],
-  "version": "1.2.0",
+  "version": "1.2.3",
   "publisher": "karnatipraveen",
   "icon": "lineagelens-media/icon.png",
   "repository": {

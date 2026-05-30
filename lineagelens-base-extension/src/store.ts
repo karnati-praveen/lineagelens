@@ -3,6 +3,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 
+export type CaptureSource = 'ai' | 'paste' | 'unknown';
+
 export interface CaptureRecord {
   id: string;
   timestamp: string;
@@ -12,6 +14,10 @@ export interface CaptureRecord {
   insertedCode: string;
   linesAdded: number;
   workspaceFolder: string | null;
+  /** 0.0–1.0 likelihood this insertion came from an AI tool */
+  confidence: number;
+  /** best-guess origin of the insertion */
+  source: CaptureSource;
 }
 
 const STORE_FILE = 'captures.json';
@@ -35,7 +41,13 @@ export class CaptureStore {
     try {
       if (fs.existsSync(this.storePath)) {
         const raw = fs.readFileSync(this.storePath, 'utf-8');
-        this.records = JSON.parse(raw) as CaptureRecord[];
+        const parsed = JSON.parse(raw) as CaptureRecord[];
+        // Backfill fields added in v1.2.3 so older stored records stay valid.
+        this.records = parsed.map(r => ({
+          confidence: 0.5,
+          source: 'unknown' as CaptureSource,
+          ...r,
+        }));
       }
     } catch {
       this.records = [];
@@ -57,8 +69,10 @@ export class CaptureStore {
     }
   }
 
-  add(data: Omit<CaptureRecord, 'id' | 'timestamp'>): CaptureRecord {
+  add(data: Omit<CaptureRecord, 'id' | 'timestamp'> & { confidence?: number; source?: CaptureSource }): CaptureRecord {
     const record: CaptureRecord = {
+      confidence: 0.5,
+      source: 'unknown',
       id: randomUUID(),
       timestamp: new Date().toISOString(),
       ...data,

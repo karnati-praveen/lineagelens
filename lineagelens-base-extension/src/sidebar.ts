@@ -88,8 +88,10 @@ export class CaptureTreeItem extends vscode.TreeItem {
     const preview = record.insertedCode.slice(0, 400);
     const tip = new vscode.MarkdownString();
     tip.isTrusted = true;
+    const pct = Math.round((record.confidence ?? 0.5) * 100);
+    const sourceLabel = record.source === 'ai' ? '🤖 AI' : record.source === 'paste' ? '📋 Paste' : '❓ Unknown';
     tip.appendMarkdown(`**$(file-code) ${record.fileName}**\n\n`);
-    tip.appendMarkdown(`\`${record.language}\`  ·  \`+${record.linesAdded} lines\`\n\n`);
+    tip.appendMarkdown(`\`${record.language}\`  ·  \`+${record.linesAdded} lines\`  ·  ${sourceLabel} \`${pct}%\`\n\n`);
     tip.appendCodeblock(preview + (record.insertedCode.length > 400 ? '\n…' : ''), record.language);
     if (record.workspaceFolder) {
       tip.appendMarkdown(`\n\n*${record.workspaceFolder}*`);
@@ -197,6 +199,8 @@ export function buildDetailPanel(panel: vscode.WebviewPanel, record: CaptureReco
   const date = new Date(record.timestamp).toLocaleString();
   const esc  = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const pct = Math.round((record.confidence ?? 0.5) * 100);
+  const sourceLabel = record.source === 'ai' ? '🤖 AI' : record.source === 'paste' ? '📋 Paste' : '❓ Unknown';
 
   const langColors: Record<string, string> = {
     typescript: '#3178c6', javascript: '#f7df1e', python: '#3572a5',
@@ -311,6 +315,14 @@ export function buildDetailPanel(panel: vscode.WebviewPanel, record: CaptureReco
     <div class="card" style="grid-column:1/-1">
       <div class="card-label">File Path</div>
       <div class="card-value path">${esc(record.filePath)}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Source</div>
+      <div class="card-value">${sourceLabel}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">AI Confidence</div>
+      <div class="card-value">${pct}%</div>
     </div>
     ${record.workspaceFolder ? `<div class="card" style="grid-column:1/-1"><div class="card-label">Workspace</div><div class="card-value">${esc(record.workspaceFolder)}</div></div>` : ''}
   </div>

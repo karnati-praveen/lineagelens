@@ -13,6 +13,7 @@ __pycache__/
 .mypy_cache/
 .coverage
 coverage.xml
+lineagelens-backend/data/
 
 # VS Code local data
 .vscode/ai-provenance/
@@ -41,6 +42,7 @@ lineagelens-ad/
 
 # Launch / docs working files
 pracodx
+prav2
 lineagelens-prafea
 lineagelens-docs/
 

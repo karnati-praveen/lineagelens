@@ -12,7 +12,8 @@ from uuid import UUID as PyUUID
 
 from fastapi import Depends, HTTPException, Request, WebSocket, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import ExpiredSignatureError, JWTError, jwt
+import jwt
+from jwt import ExpiredSignatureError, PyJWTError as JWTError
 from sqlalchemy import Text, cast, exists, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 

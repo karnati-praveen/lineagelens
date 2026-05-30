@@ -94,6 +94,33 @@ test('enforces maxCaptures (default 1000)', () => {
   expect(store.count).toBe(1000);
 });
 
+// ── confidence / source fields ────────────────────────────────────────────────
+
+test('add defaults confidence to 0.5 and source to unknown when omitted', () => {
+  const store = new CaptureStore(makeContext());
+  const rec = store.add({ filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'x', linesAdded: 1, workspaceFolder: null });
+  expect(rec.confidence).toBe(0.5);
+  expect(rec.source).toBe('unknown');
+});
+
+test('add persists explicit confidence and source', () => {
+  const store = new CaptureStore(makeContext());
+  const rec = store.add({ filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'x', linesAdded: 4, workspaceFolder: null, confidence: 0.8, source: 'ai' });
+  expect(rec.confidence).toBe(0.8);
+  expect(rec.source).toBe('ai');
+});
+
+test('load backfills confidence and source for legacy records lacking them', () => {
+  const ctx = makeContext();
+  // Write a legacy-format captures.json without confidence/source.
+  const legacyRecords = [{ id: 'aaa', timestamp: new Date().toISOString(), filePath: '/x.ts', fileName: 'x.ts', language: 'typescript', insertedCode: 'hi', linesAdded: 2, workspaceFolder: null }];
+  fs.writeFileSync(require('path').join(tmpDir, 'captures.json'), JSON.stringify(legacyRecords), 'utf-8');
+  const store = new CaptureStore(ctx);
+  const rec = store.getById('aaa');
+  expect(rec?.confidence).toBe(0.5);
+  expect(rec?.source).toBe('unknown');
+});
+
 // ── reorder() ─────────────────────────────────────────────────────────────────
 
 function makeThree() {

@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     auth_password_min_length: int = Field(default=8, alias="AUTH_PASSWORD_MIN_LENGTH")
     registration_enabled: bool = Field(default=True, alias="REGISTRATION_ENABLED")
 
+    # Admin auto-seed: if set and no users exist yet, a first admin account is created on startup.
+    admin_seed_username: str | None = Field(default=None, alias="ADMIN_SEED_USERNAME")
+    admin_seed_password: str | None = Field(default=None, alias="ADMIN_SEED_PASSWORD")
+    admin_seed_workspace_id: str | None = Field(default=None, alias="ADMIN_SEED_WORKSPACE_ID")
+
     backend_cors_origins: str = Field(
         default="http://127.0.0.1:3000,http://localhost:3000",
         alias="BACKEND_CORS_ORIGINS",

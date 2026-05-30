@@ -30,11 +30,7 @@ jobs:
         run: npm run lint
 
       - name: Run extension tests
-        # Tests that exercise tree-sitter at runtime may be skipped by tsx when
-        # the native binary is absent; mark continue-on-error so the build step
-        # always runs
         run: npm run test
-        continue-on-error: true
 
       - name: Compile extension bundle
         run: npm run compile
@@ -48,8 +44,30 @@ jobs:
           name: lineagelens-vsix
           path: "*.vsix"
 
+  extension-base:
+    name: Base Extension Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lineagelens-base-extension
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install base extension dependencies
+        run: npm ci
+
+      - name: Run base extension tests
+        run: npm test
+
   backend:
-    name: Backend Unit Tests
+    name: Backend Unit Tests (SQLite)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -61,7 +79,6 @@ jobs:
       VECTOR_SEARCH_ENABLED: "false"
       LINEAGE_STRICT_MODE: "false"
       BACKEND_CORS_ORIGINS: http://localhost:3000
-      # SQLite for CI — no Postgres service or Alembic migrations needed
       DATABASE_URL: sqlite+aiosqlite:///./data/test.db
       PYTHONPATH: .
 
@@ -85,4 +102,61 @@ jobs:
           echo "JWT_REFRESH_SECRET_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(48))')" >> "$GITHUB_ENV"
 
       - name: Run backend tests
+        run: pytest tests -q
+
+  backend-postgres:
+    name: Backend Integration Tests (Postgres + pgvector)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lineagelens-backend
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: ll_test
+          POSTGRES_PASSWORD: ll_test_pw
+          POSTGRES_DB: lineagelens_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ll_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      APP_ENV: test
+      BACKEND_MODE: team
+      NEO4J_ENABLED: "false"
+      VECTOR_SEARCH_ENABLED: "true"
+      LINEAGE_STRICT_MODE: "false"
+      BACKEND_CORS_ORIGINS: http://localhost:3000
+      DATABASE_URL: postgresql+asyncpg://ll_test:ll_test_pw@localhost:5432/lineagelens_test
+      PYTHONPATH: .
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Generate ephemeral test JWT secrets
+        run: |
+          echo "JWT_SECRET_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(48))')" >> "$GITHUB_ENV"
+          echo "JWT_REFRESH_SECRET_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(48))')" >> "$GITHUB_ENV"
+
+      - name: Run Alembic migrations
+        run: alembic upgrade head
+
+      - name: Run backend tests against Postgres
         run: pytest tests -q

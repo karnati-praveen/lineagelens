@@ -335,6 +335,45 @@ class StreamingBodyLimitMiddleware:
         await self.app(scope, receive_with_limit, send_unless_rejected)
 
 
+async def _seed_admin_user(session_factory, settings: Settings) -> None:
+    """Create a first admin account if ADMIN_SEED_USERNAME/PASSWORD are set and no users exist."""
+    username = (settings.admin_seed_username or "").strip().lower()
+    password = (settings.admin_seed_password or "").strip()
+    if not username or not password:
+        return
+
+    from sqlalchemy import func, select
+    from app.db.models import UserAccount, Workspace
+    from app.core.security import hash_password
+
+    async with session_factory() as session:
+        existing = await session.scalar(select(func.count()).select_from(UserAccount))
+        if existing and existing > 0:
+            logger.info("Admin seed: users already exist, skipping.")
+            return
+
+        workspace_id = (settings.admin_seed_workspace_id or "").strip().lower() or username
+        user = UserAccount(
+            username=username,
+            password_hash=hash_password(password),
+            workspace_id=workspace_id,
+            role="admin",
+            is_active=True,
+        )
+        workspace = Workspace(id=workspace_id, name=workspace_id)
+        session.add(workspace)
+        session.add(user)
+        await session.flush()
+        await session.refresh(user)
+        workspace.owner_id = str(user.id)
+        await session.commit()
+        logger.info(
+            "Admin seed: created admin user '%s' in workspace '%s'.",
+            username,
+            workspace_id,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Structured JSON logging when LOG_FORMAT=json
@@ -390,6 +429,7 @@ async def lifespan(app: FastAPI):
 
     try:
         await initialize_database(engine)
+        await _seed_admin_user(session_factory, settings)
         neo4j_service = await initialize_neo4j_service(settings)
         app.state.neo4j_service = neo4j_service
 
