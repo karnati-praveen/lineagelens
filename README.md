@@ -142,7 +142,7 @@ The proxy parses each provider's **native** tool-calling protocol — Anthropic 
 | **Cursor** | Free VS Code extension | Editor-only — agent traffic goes to api.cursor.sh |
 | **Windsurf** | Free VS Code extension | Editor-only — same proprietary backend |
 | **Continue** | Proxy (native-tool-call provider) | Full or editor-only depending on model |
-| **Aider** | Planned — git-log + `.aider.chat.history.md` | — |
+| **Aider** | Available — git-log + `.aider.chat.history.md` adapter shipped | Prompt history via `.aider.chat.history.md`; no proxy required |
 | **Cline / Roo Code** | Planned — XML tool format parser | — |
 | **GitHub Copilot CLI** | Not supported — proprietary endpoints | — |
 | **Amazon Q Developer** | Not supported — AWS proprietary protocol | — |
@@ -214,7 +214,7 @@ Being honest about limits is more useful than hiding them.
 
 In rough priority order:
 
-- **Tier 2 adapters** — Aider (git-log fingerprinting), Cline / Roo Code (XML tool format), Continue's text-fallback path
+- **Cline / Roo Code adapter** — XML tool-call format parser (both shipped adapters for Aider and Continue are already available)
 - **CLI wrapper** — `lineagelens run -- <ai-tool> "..."` for capture without a full proxy setup
 - **Risk scoring v2** — heuristic + lightweight static analysis, closer to "this file is sensitive" detection
 - **Dedicated docs site** — current docs are in `lineagelens-docs/`; a navigable site is overdue
