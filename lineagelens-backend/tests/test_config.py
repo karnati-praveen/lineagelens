@@ -54,8 +54,13 @@ def test_settings_rejects_vector_dimension_mismatch() -> None:
 
 
 def test_settings_rejects_vector_search_on_sqlite() -> None:
+    # Explicitly force SQLite so the DATABASE_URL env var from the Postgres CI
+    # job does not override the default and suppress the expected ValueError.
     with pytest.raises(ValueError, match="VECTOR_SEARCH_ENABLED requires PostgreSQL"):
-        build_settings(VECTOR_SEARCH_ENABLED=True)
+        build_settings(
+            VECTOR_SEARCH_ENABLED=True,
+            DATABASE_URL="sqlite+aiosqlite:///./data/test.db",
+        )
 
 
 def test_settings_rejects_invalid_backend_mode() -> None:
