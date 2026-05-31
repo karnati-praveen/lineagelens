@@ -1,0 +1,64 @@
+name: Feature request
+description: Suggest a new feature or improvement
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Start with the **problem** you're trying to solve, not the solution — it helps us understand whether there's a better way to address it.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the pain point clearly. The best feature requests start here.
+      placeholder: "When I review a PR, I can't tell which AI tool generated which block of code, so I have to ask the author manually..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: What solution are you proposing?
+      description: Describe what you'd like to see. Be as specific or as vague as you want here.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Which tier does this apply to?
+      multiple: true
+      options:
+        - Base
+        - Lite
+        - Plus
+        - Max
+        - All tiers
+        - Not sure
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - New AI tool adapter
+        - Backend / API
+        - VS Code extension
+        - Dashboard / UI
+        - Compliance / governance
+        - Performance
+        - Documentation
+        - Other
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+      description: Any workarounds or other tools you've tried?
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Mockups, examples, related issues, links to relevant specs (e.g. EU AI Act articles).

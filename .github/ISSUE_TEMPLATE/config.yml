@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/karnati-praveen/lineagelens/blob/main/SECURITY.md
+    about: Please report security vulnerabilities privately — do not open a public issue.
+  - name: Question / discussion
+    url: https://github.com/karnati-praveen/lineagelens/discussions
+    about: For general questions, use GitHub Discussions.

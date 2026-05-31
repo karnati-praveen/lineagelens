@@ -1,8 +1,8 @@
-{
-  "name": "lineagelens",
-  "displayName": "LineageLens",
+﻿{
+  "name": "lineagelens-base",
+  "displayName": "LineageLens Base",
   "description": "Lightweight AI code provenance \u00e2\u20ac\u201d capture and review every AI-generated insertion locally, no server required.",
-  "_extensionRole": "BASE \u2014 zero-server standalone edition published to VS Code Marketplace. The full server-connected edition lives in the repo root package.json.",
+  "_extensionRole": "BASE — zero-server standalone edition. Install for local-only capture with no backend, no proxy, and no account required. The full server-connected edition (Lite/Plus/Max) lives in the repo root package.json.",
   "version": "1.2.3",
   "publisher": "karnatipraveen",
   "license": "MIT",

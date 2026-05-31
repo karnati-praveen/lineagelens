@@ -79,10 +79,10 @@ $ claude "add rate limiting to the /api/login endpoint"
 
 ## Install
 
-### Free VS Code extension (no backend needed)
+### Base extension (local-only, no backend needed)
 
 ```bash
-code --install-extension karnatipraveen.lineagelens
+code --install-extension karnatipraveen.lineagelens-base
 ```
 
 Works in **VS Code**, **Cursor**, and **Windsurf**. Captures editor-level edits locally — no proxy, no API key, no account.
@@ -151,12 +151,14 @@ The proxy parses each provider's **native** tool-calling protocol — Anthropic 
 
 ## Operating modes
 
-| Mode | Who it's for | Storage | One-liner |
-|---|---|---|---|
-| **Base** | Solo, no server, fully local | VS Code global state (JSON) | `code --install-extension karnatipraveen.lineagelens` |
-| **Lite** | Teams ≤ 10, one box | SQLite + Docker | `bash quickstart-lite.sh` |
-| **Plus** | Teams 10–100, governance, MCP server, GitHub Actions gate | PostgreSQL + pgvector | `bash quickstart-plus.sh` |
-| **Max** | Compliance-heavy, full audit lineage | PostgreSQL + pgvector + Neo4j | `bash quickstart-max.sh` |
+| Mode | Who it's for | Storage | Captures prompt/model | One-liner |
+|---|---|---|---|---|
+| **Base** | Solo developer, fully local, zero setup | VS Code global state (JSON) | No — file + lines only | `code --install-extension karnatipraveen.lineagelens-base` |
+| **Lite** | Solo dev or team ≤ 10, one-box, best demo tier | SQLite + Docker | Yes | `bash lineagelens-scripts/quickstart-lite.sh` |
+| **Plus** | Teams 10–100, governance, MCP, GitHub Actions gate | PostgreSQL (keyword search) | Yes | `bash lineagelens-scripts/quickstart-plus.sh` |
+| **Max** | Compliance teams, full audit + graph lineage + SSO | PostgreSQL + Neo4j + vector search | Yes | `bash lineagelens-scripts/quickstart-max.sh` |
+
+Full capability matrix: [`lineagelens-config/tiers.json`](lineagelens-config/tiers.json)
 
 ---
 
@@ -198,6 +200,16 @@ The VS Code extension works independently. It watches `onDidChangeTextDocument` 
 
 ---
 
+## Why this matters now
+
+> **41% of all code merged globally in 2025 was AI-assisted** (GitHub Octoverse). Only 29.5% of those commits include explicit AI disclosure.
+
+**EU AI Act (Articles 11, 12, 14)** — enforceable August 2026 — requires enterprises to document which AI model generated code, what specification governed it, and what human review occurred. Violations carry fines of €35M or 7% of global annual revenue.
+
+LineageLens creates that audit trail automatically, at the point of generation, without changing your git workflow.
+
+---
+
 ## What this isn't
 
 Being honest about limits is more useful than hiding them.
@@ -225,18 +237,9 @@ Not on the roadmap (yet): hosted SaaS, Cursor/Windsurf full agent capture, AIBOM
 
 ## Contributing
 
-Issues and PRs welcome. If something doesn't work, please open an issue — hard to fix what I don't know is broken.
+Issues and PRs welcome. See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for setup instructions and contribution guidelines.
 
-```bash
-git clone https://github.com/karnati-praveen/lineagelens
-cd lineagelens
-# backend
-cd lineagelens-backend && pip install -r requirements.txt && uvicorn app.main:app --reload
-# proxy
-cd lineagelens-proxy && npm install && npm run dev
-# extension
-cd lineagelens-src && npm install && code --extensionDevelopmentPath=$(pwd)
-```
+If something doesn't work, open an issue — hard to fix what I don't know is broken. Security issues go to [SECURITY.md](SECURITY.md), not public issues.
 
 ---
 

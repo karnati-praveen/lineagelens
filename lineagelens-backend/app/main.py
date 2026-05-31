@@ -531,16 +531,30 @@ async def dashboard() -> FileResponse:
 _LOOPBACK_IPS = frozenset({"127.0.0.1", "::1", "localhost", ""})
 
 
+_TIER_LABELS: dict[str, str] = {
+    "lite": "LineageLens Lite",
+    "plus": "LineageLens Plus",
+    "max": "LineageLens Max",
+}
+
+# MCP server is available in Plus and Max tiers only.
+_TIER_MCP: dict[str, bool] = {"lite": False, "plus": True, "max": True}
+
+
 @app.get("/health")
 async def health(request: Request) -> dict[str, object]:
     current_settings = get_runtime_settings(request)
+    product_mode = current_settings.product_mode
     body: dict[str, object] = {
         "status": "ok",
         "app": current_settings.app_title,
         "version": current_settings.app_version,
-        # productMode is always included so the VS Code extension can detect
-        # which tier is running and hide unavailable UI controls accordingly.
-        "productMode": current_settings.product_mode,
+        # productMode and tierLabel are always included so the VS Code extension
+        # and dashboard can detect which tier is running and hide unavailable
+        # UI controls accordingly.
+        "productMode": product_mode,
+        "tierLabel": _TIER_LABELS.get(product_mode, product_mode),
+        "mcp": _TIER_MCP.get(product_mode, False),
     }
     # Internal topology details are only returned to loopback clients to prevent
     # infrastructure enumeration if a non-production instance is internet-accessible.
@@ -554,6 +568,7 @@ async def health(request: Request) -> dict[str, object]:
                     "neo4j": current_settings.neo4j_enabled,
                     "vectorSearch": current_settings.vector_search_enabled,
                     "lineageStrictMode": current_settings.lineage_strict_mode,
+                    "mcp": _TIER_MCP.get(product_mode, False),
                 },
             }
         )

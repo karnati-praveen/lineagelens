@@ -1,0 +1,96 @@
+name: Bug report
+description: Something is not working as expected
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Fill out as much as you can — the more detail you provide, the faster it gets fixed.
+
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Tier
+      description: Which LineageLens tier are you running?
+      options:
+        - Base (VS Code extension only, no backend)
+        - Lite (Docker + SQLite)
+        - Plus (Docker + PostgreSQL)
+        - Max (PostgreSQL + Neo4j)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: tool
+    attributes:
+      label: AI coding tool
+      description: Which tool were you using when the bug occurred?
+      multiple: true
+      options:
+        - Claude Code
+        - OpenAI Codex CLI
+        - Gemini CLI
+        - Goose
+        - GitHub Copilot (VS Code)
+        - Cursor
+        - Windsurf
+        - Continue
+        - Aider
+        - Cline / Roo Code
+        - Other
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of what went wrong.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start the proxy with `export ANTHROPIC_BASE_URL=http://localhost:8788`
+        2. Run `claude "..."`
+        3. Open dashboard at localhost:8787
+        4. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or error output
+      description: Paste any relevant logs from the backend, proxy, or VS Code Output panel. Redact any secrets.
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: LineageLens version
+      placeholder: e.g. v1.2.3 (check the extension or `GET /health`)
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, environment details, workarounds you've tried.
