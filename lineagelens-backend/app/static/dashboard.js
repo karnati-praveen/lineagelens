@@ -2,6 +2,7 @@
 let _tok = null;
 let _ref = null;
 let _user = null, _mode = 'plus', _rTimer = null;
+let _featureIntegrity = false, _featureAiBom = false;
 
 // ── Pagination state ──────────────────────────────────────────────────────────
 window._currentPage = 0;
@@ -114,6 +115,9 @@ async function initApp() {
   try {
     const h = await fetch('/health').then(r=>r.json());
     _mode = h.productMode || 'plus';
+    const _feat = h.features || {};
+    _featureIntegrity = _feat.provenanceIntegrity ?? (_mode === 'plus' || _mode === 'max');
+    _featureAiBom = _feat.aiBomExport ?? (_mode === 'plus' || _mode === 'max');
   } catch {}
 
   document.getElementById('uname').textContent = _user.username;
@@ -206,6 +210,7 @@ async function loadDash() {
     loadModelUsage();
     loadTokenCost();
     loadRoutingSavings();
+    if (_featureIntegrity) loadIntegrityCard();
   } catch(e) {
     el.innerHTML = `<div class="al err">Dashboard error: ${esc(e.message)}</div>`;
     setDataSourceBadge('unavailable');
@@ -466,6 +471,9 @@ function buildDash(d) {
         <td>${pct(t.promptCaptureRate)}</td></tr>`).join('') + '</tbody></table>');
   }
 
+  if (_featureIntegrity) {
+    h += '<div id="integrity-card-section" class="twrap" style="margin-top:12px"></div>';
+  }
   return h || '<div class="empty">No data yet. Start capturing AI insertions and refresh.</div>';
 }
 
@@ -474,6 +482,56 @@ function mc(lbl, val, cls) {
 }
 function tw(title, inner) {
   return `<div class="twrap"><div class="thead-row"><span class="ttitle">${esc(title)}</span></div>${inner}</div>`;
+}
+
+// ── PROVENANCE INTEGRITY CARD ─────────────────────────────────────────────────
+
+async function loadIntegrityCard() {
+  const ws = _user?.workspaceId;
+  if (!ws) return;
+  const sec = document.getElementById('integrity-card-section');
+  if (!sec) return;
+  sec.innerHTML = '<div style="padding:10px 14px;font-size:13px;color:var(--muted)"><div class="spin" aria-hidden="true"></div> Checking chain…</div>';
+  try {
+    const d = await req('GET', `/integrity/verify?workspace_id=${encodeURIComponent(ws)}`);
+    const ok = !!d.ok;
+    const checked = Number(d.records_checked ?? 0);
+    const breakUuid = d.first_break_uuid ? esc(String(d.first_break_uuid)) : '';
+    const statusLabel = ok
+      ? `Chain intact · ${checked} record${checked === 1 ? '' : 's'} verified`
+      : `Chain break at ${breakUuid}`;
+    const exportBtn = _featureAiBom
+      ? `<button class="s" style="margin-left:auto;font-size:12px;padding:3px 10px" onclick="exportAiBom()">Export AI‑BOM</button>`
+      : '';
+    sec.innerHTML =
+      `<div class="thead-row"><span class="ttitle">Provenance Integrity</span>${exportBtn}</div>` +
+      `<div style="padding:10px 14px;display:flex;align-items:center;gap:10px;font-size:13px">` +
+      `<span class="dot ${ok ? 'ok' : 'fail'}" style="flex-shrink:0"></span>` +
+      `<span>${statusLabel}</span>` +
+      `<span style="margin-left:auto;font-size:12px;color:var(--muted)">${checked} checked</span>` +
+      `</div>`;
+  } catch(e) {
+    sec.innerHTML = `<div style="padding:10px 14px;font-size:13px;color:var(--muted)">Integrity check unavailable: ${esc(e.message)}</div>`;
+  }
+}
+
+async function exportAiBom() {
+  const ws = _user?.workspaceId;
+  if (!ws) return;
+  try {
+    const d = await req('POST', `/integrity/aibom?workspace_id=${encodeURIComponent(ws)}`);
+    const blob = new Blob([JSON.stringify(d, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `aibom-${esc(ws.slice(0, 8))}-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch(e) {
+    alert(`AI-BOM export failed: ${e.message}`);
+  }
 }
 
 // ── ADVANCED FILTERS ──────────────────────────────────────────────────────────
@@ -1896,6 +1954,9 @@ async function createWorkspace() {
         _user = {username: user.username, role: user.role, workspace_id: user.workspaceId};
         const h = await fetch('/health').then(r => r.json()).catch(() => ({}));
         _mode = h.productMode || 'plus';
+        const _feat2 = h.features || {};
+        _featureIntegrity = _feat2.provenanceIntegrity ?? (_mode === 'plus' || _mode === 'max');
+        _featureAiBom = _feat2.aiBomExport ?? (_mode === 'plus' || _mode === 'max');
         document.getElementById('uname').textContent = _user.username;
         const rb = document.getElementById('role-bdg');
         rb.textContent = _user.role; rb.className = `bdg${_user.role === 'admin' ? ' adm' : ''}`;

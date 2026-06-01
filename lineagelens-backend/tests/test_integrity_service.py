@@ -192,3 +192,81 @@ def test_verify_aibom_signature_detects_mutation():
 def test_verify_aibom_signature_detects_wrong_sig():
     payload = '{"schema_version":"1.0"}'
     assert verify_aibom_signature(payload, "a" * 64) is False
+
+
+# ── Solo-mode ingest skips hash chain ─────────────────────────────────────────
+
+def test_solo_mode_skips_hash_chain(monkeypatch) -> None:
+    """ingest_provenance_event must not call _attach_hash_chain when is_solo_mode=True."""
+    import asyncio
+    from typing import cast
+    import app.services.provenance_service as ps
+    import app.services.insights_service as insights_svc
+    from app.core.config import Settings
+    from app.core.security import AuthContext
+    from app.services.ingest_normalizer import normalize_ingest_payload
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    class _Scalar:
+        def all(self): return []
+
+    class _Exec:
+        def scalars(self): return _Scalar()
+        def scalar_one_or_none(self): return None
+
+    class _Session:
+        def __init__(self): self.added = []
+        async def execute(self, _s): return _Exec()
+        def add(self, r): self.added.append(r)
+        async def flush(self): pass
+        async def commit(self): pass
+        async def rollback(self): pass
+        async def refresh(self, r): pass
+
+    attach_calls = []
+
+    async def _spy_attach(session, record):
+        attach_calls.append(True)
+
+    async def _fake_embedding(*a, **kw):
+        return [0.0] * 256
+
+    monkeypatch.setattr(ps, "_attach_hash_chain", _spy_attach)
+    monkeypatch.setattr(ps, "generate_embedding", _fake_embedding)
+    monkeypatch.setattr(insights_svc, "invalidate_insights_cache", lambda ws: None)
+
+    solo_settings = Settings.model_validate({
+        "APP_ENV": "test",
+        "JWT_SECRET_KEY": "pytest-jwt-secret-key-abcdefghijklmnopqrstuvwxyz0123456789",
+        "BACKEND_CORS_ORIGINS": "http://localhost:3000",
+        "BACKEND_MODE": "solo",
+    })
+
+    payload = normalize_ingest_payload(
+        {
+            "id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+            "timestampIso": "2026-06-01T10:00:00.000Z",
+            "workspaceId": "ws-solo",
+            "filePath": "src/demo.py",
+            "insertedText": "x = 1",
+        },
+        workspace_id="ws-solo",
+    )
+
+    asyncio.run(
+        ps.ingest_provenance_event(
+            session=cast(AsyncSession, _Session()),
+            payload=payload,
+            auth=AuthContext(
+                subject="proxy",
+                workspace_id="ws-solo",
+                scopes=set(),
+                token_type="api_key",
+                token_payload={},
+            ),
+            settings=solo_settings,
+            neo4j_service=None,
+        )
+    )
+
+    assert attach_calls == [], "hash chain must not be written in solo/Lite mode"
