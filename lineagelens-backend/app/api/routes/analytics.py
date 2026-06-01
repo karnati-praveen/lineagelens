@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +46,7 @@ class TokenCostRequest(BaseModel):
 @router.post("/analytics/risk-trend")
 async def analytics_risk_trend(
     payload: RiskTrendRequest,
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> dict:
@@ -65,6 +66,7 @@ async def analytics_risk_trend(
         date_from=payload.date_from,
         date_to=payload.date_to,
         bucket=bucket,
+        is_sqlite=request.app.state.settings.is_sqlite,
     )
     return {"results": rows, "bucket": bucket}
 
@@ -117,6 +119,7 @@ class AnomalyRequest(BaseModel):
 @router.post("/analytics/anomaly")
 async def analytics_anomaly(
     payload: AnomalyRequest,
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> dict:

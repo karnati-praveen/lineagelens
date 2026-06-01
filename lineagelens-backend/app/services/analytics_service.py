@@ -38,18 +38,26 @@ _BUCKET_MAP = {
 }
 
 
+_SQLITE_FMT = {"day": "%Y-%m-%d", "week": "%Y-%W", "month": "%Y-%m"}
+
+
 async def get_risk_trend(
     session: AsyncSession,
     workspace_id: str,
     date_from: str | None,
     date_to: str | None,
     bucket: str,
+    is_sqlite: bool = False,
 ) -> list[dict]:
     """Return risk counts grouped by time bucket and risk band."""
     trunc = _BUCKET_MAP.get(bucket, "day")
     filters = _base_filters(workspace_id, date_from, date_to)
 
-    period_expr = func.date_trunc(trunc, ProvenanceRecord.timestamp_iso).label("period")
+    if is_sqlite:
+        fmt = _SQLITE_FMT.get(trunc, "%Y-%m-%d")
+        period_expr = func.strftime(fmt, ProvenanceRecord.timestamp_iso).label("period")
+    else:
+        period_expr = func.date_trunc(trunc, ProvenanceRecord.timestamp_iso).label("period")
 
     critical_expr = func.count(
         case((ProvenanceRecord.risk_score >= 85, 1))
@@ -76,7 +84,7 @@ async def get_risk_trend(
 
     return [
         {
-            "period": row.period.isoformat() if row.period else None,
+            "period": str(row.period)[:10] if row.period else None,
             "critical": row.critical,
             "high": row.high,
             "medium": row.medium,
@@ -290,15 +298,15 @@ async def detect_anomalies(
         except ValueError:
             pass
 
-    _day_expr = func.date_trunc("day", ProvenanceRecord.timestamp_iso).label("day")
+    _day_expr = func.date(ProvenanceRecord.timestamp_iso).label("day")
     vol_result = await session.execute(
         select(
             _day_expr,
             func.count(ProvenanceRecord.id).label("count"),
         )
         .where(and_(*volume_filters))
-        .group_by(func.date_trunc("day", ProvenanceRecord.timestamp_iso))
-        .order_by(func.date_trunc("day", ProvenanceRecord.timestamp_iso))
+        .group_by(func.date(ProvenanceRecord.timestamp_iso))
+        .order_by(func.date(ProvenanceRecord.timestamp_iso))
     )
     volume_rows = vol_result.all()
     daily_counts = [r.count for r in volume_rows]
@@ -314,7 +322,7 @@ async def detect_anomalies(
     for row in volume_rows:
         if row.count >= vol_threshold and stddev_vol > 0:
             volume_spikes.append({
-                "day": row.day.isoformat() if row.day else None,
+                "day": str(row.day)[:10] if row.day else None,
                 "count": row.count,
                 "zScore": round((row.count - mean_vol) / stddev_vol, 2) if stddev_vol > 0 else 0,
             })

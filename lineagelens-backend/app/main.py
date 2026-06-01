@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
@@ -48,6 +49,7 @@ from app.api.routes.quality import router as quality_router
 from app.api.routes.scheduled_reports import router as scheduled_reports_router
 from app.api.routes.sso import router as sso_router
 from app.api.routes.setup import router as setup_router
+from app.api.routes.integrity import router as integrity_router
 from app.core.config import Settings, get_settings
 from app.core.rate_limit import InMemoryRateLimiter
 from app.db.session import create_engine_from_settings, create_session_factory, initialize_database
@@ -521,6 +523,9 @@ app.include_router(quality_router)
 app.include_router(scheduled_reports_router)
 app.include_router(sso_router)
 app.include_router(setup_router)
+app.include_router(integrity_router)
+
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
 
 @app.get("/dashboard", include_in_schema=False)
@@ -569,6 +574,8 @@ async def health(request: Request) -> dict[str, object]:
                     "vectorSearch": current_settings.vector_search_enabled,
                     "lineageStrictMode": current_settings.lineage_strict_mode,
                     "mcp": _TIER_MCP.get(product_mode, False),
+                    "provenanceIntegrity": not current_settings.is_solo_mode,
+                    "aiBomExport": not current_settings.is_solo_mode,
                 },
             }
         )

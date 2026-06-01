@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import (
@@ -117,3 +118,38 @@ async def get_explain_system_prompt(
     return {
         "systemPrompt": EXPLANATION_SYSTEM_PROMPT,
     }
+
+
+@router.get("/explain/llm-status")
+async def get_llm_status(
+    request: Request,
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+) -> dict:
+    _ = auth.workspace_id
+    settings = request.app.state.settings
+    return {
+        "configured": bool((settings.explain_llm_api_key or "").strip()),
+        "model": settings.explain_llm_model,
+    }
+
+
+class LlmKeyPayload(BaseModel):
+    api_key: str
+    model: str | None = None
+
+
+@router.post("/admin/llm-key")
+async def set_llm_key(
+    payload: LlmKeyPayload,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+) -> dict:
+    role = await get_verified_user_role(session, auth)
+    if role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required.")
+    settings = request.app.state.settings
+    settings.explain_llm_api_key = payload.api_key.strip()
+    if payload.model:
+        settings.explain_llm_model = payload.model.strip()
+    return {"ok": True, "model": settings.explain_llm_model}

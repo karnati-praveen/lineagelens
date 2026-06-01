@@ -21,6 +21,7 @@ from app.schemas.provenance import SearchRequest, decode_cursor, encode_cursor
 from app.services.ast_normalizer import normalize_ast_tokens
 from app.services.embedding_service import generate_embedding
 from app.services.ingest_normalizer import NormalizedIngestPayload
+from app.services.integrity_service import compute_prompt_sha256, compute_record_hash
 from app.services.neo4j_service import Neo4jLineageService
 from app.services.risk_service import compute_risk_score
 
@@ -149,6 +150,9 @@ async def ingest_provenance_event(
         session.add(record)
         await session.flush()
 
+        if not settings.is_solo_mode:
+            await _attach_hash_chain(session, record)
+
         lineage_version_id = await _write_lineage_node(
             record=record,
             ast_tokens=ast_tokens,
@@ -258,6 +262,50 @@ async def _commit_with_lineage_cleanup(
                     "Neo4j orphan cleanup failed after Postgres commit error: %s", cleanup_error
                 )
         raise
+
+
+async def _attach_hash_chain(
+    session: AsyncSession,
+    record: ProvenanceRecord,
+) -> None:
+    """Compute and store record_hash + prev_hash for the new record (Plus/Max only).
+
+    Uses SELECT FOR UPDATE on the previous record to serialise concurrent
+    ingests within the same workspace — each ingest waits for the prior one's
+    commit before reading prev_hash, keeping the chain append-only.
+    """
+    if record.id is None:
+        # No real DB row yet (e.g. stub session in tests) — skip silently.
+        return
+
+    prev_stmt = (
+        select(ProvenanceRecord.record_hash)
+        .where(
+            and_(
+                ProvenanceRecord.workspace_id == record.workspace_id,
+                ProvenanceRecord.id < record.id,
+                ProvenanceRecord.record_hash.is_not(None),
+            )
+        )
+        .order_by(desc(ProvenanceRecord.id))
+        .limit(1)
+        .with_for_update()
+    )
+    result = await session.execute(prev_stmt)
+    prev_hash = result.scalar_one_or_none()
+
+    prompt_sha = compute_prompt_sha256(record.prompt_messages)
+    record.prev_hash = prev_hash
+    record.record_hash = compute_record_hash(
+        record_uuid=str(record.uuid),
+        workspace_id=record.workspace_id,
+        file_path=record.file_path,
+        inserted_code=record.inserted_code,
+        model_name=record.model_name,
+        prompt_sha256=prompt_sha,
+        timestamp_iso=record.timestamp_iso.isoformat(),
+        prev_hash=prev_hash,
+    )
 
 
 async def find_existing_ingest_record(

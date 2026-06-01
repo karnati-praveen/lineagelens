@@ -89,6 +89,11 @@ class ProvenanceRecord(Base):
     # Schema: [{signal, value, weight, contribution, rationale}, ...]
     confidence_breakdown: Mapped[list | None] = mapped_column(_JSON_TYPE, nullable=True)
 
+    # Tamper-evident hash chain (Plus/Max only — NULL on Lite and pre-migration rows).
+    # record_hash = SHA-256 of canonical fields; prev_hash links to predecessor in workspace.
+    record_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    prev_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     provenance_payload: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(

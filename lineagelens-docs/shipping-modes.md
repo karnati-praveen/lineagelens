@@ -1,6 +1,6 @@
 # Shipping Modes
 
-LineageLens ships from one codebase in four release modes.
+LineageLens ships from one codebase in four release modes. The authoritative capability contract for all tiers is in [`lineagelens-config/tiers.json`](../lineagelens-config/tiers.json).
 
 ## LineageLens Base
 
@@ -28,9 +28,10 @@ Artifacts:
 
 ## LineageLens Plus
 
-- Proxy capture layer plus shared backend.
-- Adds shared ingest, auth, semantic search, and governance dashboard.
-- No Neo4j or vector search dependency.
+- Proxy capture layer plus shared backend on PostgreSQL.
+- Adds shared ingest, auth, keyword search, governance dashboard, team management, RBAC, reviews, webhooks, API keys, audit export, and MCP server.
+- No Neo4j or vector search — search is keyword-only (`VECTOR_SEARCH_ENABLED=false`).
+- For semantic/vector search, use Max.
 
 Artifacts:
 
@@ -65,10 +66,11 @@ PowerShell helpers:
 - `lineagelens-scripts/package-max.ps1`
 - `lineagelens-scripts/release.ps1` (all four in sequence)
 
-NPM wrappers:
+NPM wrappers (canonical names):
 
-- `npm run ship:base`
-- `npm run ship:plus`
-- `npm run ship:max`
+- `npm run package:base` (alias: `npm run ship:base`)
+- `npm run package:lite` (alias: `npm run ship:lite`)
+- `npm run package:plus` (alias: `npm run ship:plus`)
+- `npm run package:max` (alias: `npm run ship:max`)
 
 For the exact end-to-end commands, see [SHIP_PRODUCTS_COMMANDS.md](../SHIP_PRODUCTS_COMMANDS.md).

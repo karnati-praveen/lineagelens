@@ -135,19 +135,23 @@ The normalized event schema keeps records portable across providers, editors, an
 
 ## 8. Mode Matrix
 
-| Mode | Storage | Backend mode | Datastores | Search | Lineage |
-|------|---------|-------------|-----------|--------|---------|
-| Base | Local JSON | none | Local file | Keyword scoring | Local only |
-| Plus | Backend | `team` | PostgreSQL | Keyword fallback | Neo4j disabled |
-| Max | Backend | `enterprise` | PostgreSQL + Neo4j | Vector + filters | Neo4j enabled |
+| Mode | Storage | Backend mode | Datastores | Search | Lineage | Prompt/Model capture |
+|------|---------|-------------|-----------|--------|---------|---------------------|
+| Base | Local JSON | none | VS Code globalState | Keyword scoring | Local only | No |
+| Lite | Backend | `solo` | SQLite | Keyword only | Disabled | Yes |
+| Plus | Backend | `team` | PostgreSQL | Keyword only | Disabled | Yes |
+| Max | Backend | `enterprise` | PostgreSQL + Neo4j | Vector + keyword | Neo4j enabled | Yes |
 
 Mode wiring is controlled by config and environment:
 
 - Storage mode: `mode` in config (`local` or `backend`)
 - Backend URL: `backendUrl`
-- Backend mode: `BACKEND_MODE=team` or `BACKEND_MODE=enterprise`
+- Backend mode: `BACKEND_MODE=solo` (Lite), `BACKEND_MODE=team` (Plus), or `BACKEND_MODE=enterprise` (Max)
+- Lite flags: `NEO4J_ENABLED=false`, `VECTOR_SEARCH_ENABLED=false`
 - Plus flags: `NEO4J_ENABLED=false`, `VECTOR_SEARCH_ENABLED=false`
 - Max flags: `NEO4J_ENABLED=true`, `VECTOR_SEARCH_ENABLED=true`
+
+Canonical capability definitions live in `lineagelens-config/tiers.json`.
 
 ---
 
@@ -213,4 +217,4 @@ flowchart TD
 
 ## 11. One-Sentence Summary
 
-LineageLens uses a transparent proxy to capture AI coding tool traffic, correlates insertions to prompts and sessions via an adapter registry, normalizes them into a portable provenance record, and exposes trace, search, dashboard, and compliance export interfaces across Base, Plus, and Max modes — independent of any specific editor.
+LineageLens uses a transparent proxy to capture AI coding tool traffic, correlates insertions to prompts and sessions via an adapter registry, normalizes them into a portable provenance record, and exposes trace, search, dashboard, and compliance export interfaces across Base, Lite, Plus, and Max modes — independent of any specific editor.
