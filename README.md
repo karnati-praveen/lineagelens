@@ -95,9 +95,9 @@ $ claude "add rate limiting to the /api/login endpoint"
 code --install-extension karnatipraveen.lineagelens-base
 ```
 
-Works in **VS Code**, **Cursor**, and **Windsurf**. Captures AI insertions immediately — no proxy, no API key, no account required.
+**The extension activates in Easy Mode the moment you install it.** No configuration, no backend, no API key. Works in **VS Code**, **Cursor**, and **Windsurf**.
 
-The status bar shows **LL: Easy (local)** — captures are stored in VS Code global state.
+The status bar shows `LL: Easy (local)` — captures are stored in VS Code global state. Use any AI coding tool; insertions appear in the LineageLens sidebar automatically.
 
 **Optional: sync to a backend without the proxy**
 
@@ -258,6 +258,7 @@ Being honest about limits is more useful than hiding them.
 In rough priority order:
 
 - **Tier 2 adapters** — Aider (git-log fingerprinting), Cline / Roo Code (XML tool format), Continue's text-fallback path
+- **git-based capture fallback** — parse `git log` + AI tool history files (`.aider.chat.history.md`, etc.) to reconstruct which commits were AI-assisted; useful as an Easy Mode supplement when no VS Code extension is available
 - **CLI wrapper** — `lineagelens run -- <ai-tool> "..."` for capture without a full proxy setup
 - **Risk scoring v2** — heuristic + lightweight static analysis, closer to "this file is sensitive" detection
 - **Dedicated docs site** — current docs are in `lineagelens-docs/`; a navigable site is overdue

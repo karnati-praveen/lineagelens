@@ -11,35 +11,56 @@ LineageLens is an AI code provenance platform that tracks every AI-generated cod
 - **Who accepted it** (the developer)
 - **Risk score** (a heuristic assessment of the insertion)
 
+## Easy Mode vs Power Mode
+
+LineageLens runs in one of two modes. The VS Code status bar item (bottom-right) tells you which is active.
+
+| | Easy Mode | Power Mode |
+|---|---|---|
+| **Status bar** | `$(zap) LL: Easy` | `$(shield) LL: Power` |
+| **Setup required** | None | Start the proxy |
+| **Captures** | File path, inserted code, line count, language | + Full prompt messages, model name, applied/rejected status |
+| **Confidence** | ~0.35 | 0.8 – 1.0 |
+| **Backend needed?** | Optional (local-only by default) | Yes |
+
+**The extension auto-detects the proxy** — when the proxy starts, the status bar switches from `LL: Easy` to `LL: Power` within 30 seconds. No extension restart or reconfiguration needed.
+
+---
+
 ## Quick Start (5 minutes)
 
-### 1. Install the VS Code Extension
+> **First time?** Start with Option A. The extension runs in Easy Mode immediately after install — no backend, no proxy, no API key. You can upgrade to Power Mode later without reinstalling anything.
 
-Your admin will provide a `.vsix` file. Install it:
-```
-Extensions sidebar -> "..." menu -> Install from VSIX
-```
+### Option A: Easy Mode (zero setup, recommended first run)
 
-### 2. Configure the Backend URL
+1. Install the VS Code extension from the marketplace:
+   ```
+   code --install-extension karnatipraveen.lineagelens-base
+   ```
+2. The status bar shows `$(zap) LL: Easy (local)` — you are already capturing. Use any AI coding tool (Copilot, Cursor, Claude Code, etc.) and captures appear in the LineageLens sidebar automatically.
+3. **Optional — sync to a backend**: Open VS Code Settings (`Ctrl+,`), search `lineagelens`, and set:
+   - `lineagelensBase.backendUrl` → `http://your-backend-host:8787`
+   - `lineagelensBase.ingestToken` → your ingest token (from the backend admin panel)
+   - `lineagelensBase.workspaceId` → your workspace slug
 
-Open VS Code settings (`Ctrl+,`) and search for `LineageLens`. Set:
-- `lineagelens.backendUrl`: `http://your-backend-host:8787`
+   The status bar shows `LL: Easy` and captures stream to the dashboard with `capture_status: file_diff`.
 
-Or use the setup wizard: `Ctrl+Shift+P` -> "LineageLens: Run Setup Wizard"
+### Option B: Power Mode (full prompt + model capture)
 
-### 3. Point Your AI Tool at the Proxy
+1. Your admin will have run the quickstart script. Ask them for:
+   - Proxy host/port (default: `http://your-backend-host:8788`)
+   - Backend URL (default: `http://your-backend-host:8787`)
+   - Your login credentials for the dashboard
 
-The proxy at port 8788 captures all AI API traffic automatically.
+2. Add to your shell profile (`.bashrc` / `.zshrc` / `.profile`):
+   ```bash
+   export ANTHROPIC_BASE_URL=http://your-proxy-host:8788   # Claude Code / Anthropic SDK
+   export OPENAI_BASE_URL=http://your-proxy-host:8788       # Codex CLI / Goose
+   ```
 
-```bash
-# Add to your shell profile (.bashrc / .zshrc / .profile):
-export ANTHROPIC_BASE_URL=http://your-proxy-host:8788
-export OPENAI_BASE_URL=http://your-proxy-host:8788
-```
+3. Open a new terminal session. The extension detects the proxy and switches to `LL: Power` in the status bar.
 
-### 4. Open the Dashboard
-
-Navigate to `http://your-backend-host:8787/dashboard` and log in with your team credentials.
+4. Open the dashboard: `http://your-backend-host:8787/dashboard`
 
 ---
 
@@ -52,9 +73,10 @@ Navigate to `http://your-backend-host:8787/dashboard` and log in with your team 
 **Workspace**: Your team's isolated namespace. All records, users, and settings are scoped to a workspace.
 
 **Modes**:
-- **Base**: Local-only storage. No server required.
-- **Plus**: Shared PostgreSQL backend with dashboard and team features.
-- **Max**: Plus Neo4j graph lineage and vector search.
+- **Easy Mode** *(default on first install)*: Install extension, captures stored locally (or synced to backend without proxy). `capture_status: file_diff`, confidence ~0.35.
+- **Power Mode**: Proxy running, full prompt + model capture. `capture_status: full`, confidence 0.8–1.0. Requires Lite/Plus/Max backend.
+- **Lite/Plus/Max**: Backend tiers — SQLite → PostgreSQL → PostgreSQL + Neo4j. All support Power Mode.
+- **git-based capture** *(planned)*: Reconstruct AI-assisted commits from `git log` and tool history files without a running extension or proxy. Documented as a future Easy Mode supplement.
 
 ---
 
