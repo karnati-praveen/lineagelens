@@ -204,7 +204,7 @@
     ],
     "notes": [
       "Neo4j 5+ required \u00e2\u20ac\u201d adds ~60s cold-start on first boot.",
-      "pgvector with cosine_distance for semantic similarity search.",
+      "pgvector with cosine_distance for similarity search. With default EMBEDDING_PROVIDER=hash this is hash-based (deterministic, not semantic meaning). Set EMBEDDING_PROVIDER=openai for real semantic search.",
       "SSO/OIDC via full OIDC discovery (works with Okta, Auth0, Azure AD, etc.).",
       "Retention and redaction policies per workspace.",
       "Helm chart available for Kubernetes deployment.",

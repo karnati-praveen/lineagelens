@@ -152,7 +152,7 @@ http://localhost:8787/dashboard
 
 **What the dashboard includes (Max):**
 - Governance overview — records, risk score, compliance controls, agent sessions
-- Provenance search — keyword, model, date, file path with semantic similarity
+- Provenance search — keyword, model, date, file path (set EMBEDDING_PROVIDER=openai for semantic similarity)
 - Record viewer — full prompt, inserted code, context snapshot, AI explanation, evolution chain
 - Graph lineage — powered by Neo4j (query via Neo4j Browser at http://localhost:7474)
 - Audit export (admin) — CSV with date / developer / file filters, up to 10,000 rows
@@ -192,15 +192,18 @@ echo "Config file: $(pwd)/lineagelens-deploy/.env"
 
 ---
 
-## Authentication (API / curl)
+## Authentication
+
+**First admin:** visit `http://localhost:8787` in your browser — you'll be redirected to the
+setup wizard at `/setup`. Fill in your admin username, password, and workspace name. No curl needed.
+
+**Add teammates:** log in as admin → Team tab → Generate Invite Link → copy the link and send
+it to the engineer. They open it in a browser, pick a username and password, and land in the
+dashboard. No curl needed.
+
+### API / scripting (after setup)
 
 ```bash
-# Register first user (becomes workspace admin)
-curl -s -X POST http://localhost:8787/auth/register \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"yourpassword","workspaceId":"your-workspace"}' \
-  | python3 -m json.tool
-
 # Login and save token
 # Note: response key is accessToken (camelCase)
 TOKEN=$(curl -s -X POST http://localhost:8787/auth/login \
@@ -308,26 +311,16 @@ docker exec lineagelens-max-neo4j \
 
 ---
 
-## Team Management (API)
+## Team Management
+
+**Invite a teammate:** admin dashboard → Team tab → Generate Invite Link. Set role, expiry,
+and max-uses, then copy the link and send it. The recipient opens it in a browser and signs
+up without needing any credentials from you.
 
 ```bash
-# List all team members
+# List all team members (API / scripting)
 curl -s -H "Authorization: Bearer $TOKEN" \
   http://localhost:8787/team/members | python3 -m json.tool
-
-# Invite a developer (member role)
-curl -s -X POST http://localhost:8787/team/invite \
-  -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"username":"dev1","password":"pass1234","role":"member","workspaceId":"your-workspace"}' \
-  | python3 -m json.tool
-
-# Invite an admin
-curl -s -X POST http://localhost:8787/team/invite \
-  -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"username":"lead","password":"pass1234","role":"admin","workspaceId":"your-workspace"}' \
-  | python3 -m json.tool
 ```
 
 ---
@@ -335,7 +328,7 @@ curl -s -X POST http://localhost:8787/team/invite \
 ## Provenance API
 
 ```bash
-# Search records (semantic + keyword)
+# Search records (keyword; set EMBEDDING_PROVIDER=openai for semantic similarity)
 curl -s -X POST http://localhost:8787/search \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $TOKEN" \
@@ -898,7 +891,7 @@ Once connected, the AI assistant can call:
 
 | Tool | What it does |
 |------|-------------|
-| `search_provenance(query)` | Full-text / semantic search for AI-generated code |
+| `search_provenance(query)` | Full-text keyword search for AI-generated code (semantic similarity requires EMBEDDING_PROVIDER=openai) |
 | `get_record(uuid)` | Full metadata for a specific provenance record (includes Neo4j lineage node ID) |
 | `get_insights()` | Governance dashboard — risk scores, compliance, totals, agent sessions |
 | `explain_record(uuid)` | Plain-English explanation of why the code was generated |

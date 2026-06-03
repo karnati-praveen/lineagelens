@@ -79,15 +79,42 @@ $ claude "add rate limiting to the /api/login endpoint"
 
 ## Install
 
-### Base extension (local-only, no backend needed)
+| | Easy Mode | Power Mode |
+|---|---|---|
+| **Setup** | Install extension | + Start proxy |
+| **Captures** | File path, inserted code, language | + Prompt, model name, applied/rejected status |
+| **Confidence** | ~0.35 | 0.8 – 1.0 |
+| **Backend needed?** | Optional | Yes |
+| **Status bar** | `LL: Easy` | `LL: Power` |
+
+---
+
+### Easy Mode (default — zero setup)
 
 ```bash
 code --install-extension karnatipraveen.lineagelens-base
 ```
 
-Works in **VS Code**, **Cursor**, and **Windsurf**. Captures editor-level edits locally — no proxy, no API key, no account.
+Works in **VS Code**, **Cursor**, and **Windsurf**. Captures AI insertions immediately — no proxy, no API key, no account required.
 
-### Lite backend (recommended for solo devs / small teams)
+The status bar shows **LL: Easy (local)** — captures are stored in VS Code global state.
+
+**Optional: sync to a backend without the proxy**
+
+If you have a LineageLens backend running (see [Lite / Plus / Max](#lite--plus--max-teams-with-governance-needs) below), you can stream file-level captures to it without touching the proxy:
+
+1. Open VS Code Settings (`Ctrl+,`) and search `lineagelens`
+2. Set **`lineagelensBase.backendUrl`** → your backend URL (e.g. `http://localhost:8787`)
+3. Set **`lineagelensBase.ingestToken`** → your ingest token from the backend admin panel
+4. Set **`lineagelensBase.workspaceId`** → your workspace slug (default: `vscode-capture`)
+
+The status bar switches to **LL: Easy** and captures appear in the dashboard with `capture_status: file_diff` and confidence ~0.35.
+
+---
+
+### Power Mode (full prompt + model capture) {#proxy}
+
+Power Mode requires the proxy running alongside the extension. Start it with the Lite quickstart:
 
 ```bash
 git clone https://github.com/karnati-praveen/lineagelens
@@ -102,9 +129,11 @@ export ANTHROPIC_BASE_URL=http://localhost:8788   # Claude Code / claude CLI
 export OPENAI_BASE_URL=http://localhost:8788       # Codex CLI / Goose
 ```
 
-Open **http://localhost:8787/dashboard** — captures appear as you code.
+The extension auto-detects the proxy (polls `/proxy-health` every 30 s) and switches to **LL: Power** — no extension restart needed. Open **http://localhost:8787/dashboard** to see full prompt + model lineage.
 
-### Plus / Max (teams with governance needs)
+---
+
+### Lite / Plus / Max (teams with governance needs)
 
 ```bash
 bash lineagelens-scripts/quickstart-plus.sh   # Postgres + pgvector + dashboard + MCP server
@@ -153,10 +182,12 @@ The proxy parses each provider's **native** tool-calling protocol — Anthropic 
 
 | Mode | Who it's for | Storage | Captures prompt/model | One-liner |
 |---|---|---|---|---|
-| **Base** | Solo developer, fully local, zero setup | VS Code global state (JSON) | No — file + lines only | `code --install-extension karnatipraveen.lineagelens-base` |
-| **Lite** | Solo dev or team ≤ 10, one-box, best demo tier | SQLite + Docker | Yes | `bash lineagelens-scripts/quickstart-lite.sh` |
-| **Plus** | Teams 10–100, governance, MCP, GitHub Actions gate | PostgreSQL (keyword search) | Yes | `bash lineagelens-scripts/quickstart-plus.sh` |
-| **Max** | Compliance teams, full audit + graph lineage + SSO | PostgreSQL + Neo4j + vector search | Yes | `bash lineagelens-scripts/quickstart-max.sh` |
+| **Easy (Base)** | Anyone — zero setup, local or backend-synced | VS Code global state / backend | No — file + lines only | `code --install-extension karnatipraveen.lineagelens-base` |
+| **Power (Lite)** | Solo dev or team ≤ 10, one-box, best demo tier | SQLite + Docker | Yes — full prompt + model | `bash lineagelens-scripts/quickstart-lite.sh` |
+| **Power (Plus)** | Teams 10–100, governance, MCP, GitHub Actions gate | PostgreSQL (keyword search) | Yes | `bash lineagelens-scripts/quickstart-plus.sh` |
+| **Power (Max)** | Compliance teams, full audit + graph lineage + SSO | PostgreSQL + Neo4j + pgvector | Yes | `bash lineagelens-scripts/quickstart-max.sh` |
+
+**Search:** Lite and Plus use keyword search. Max adds pgvector similarity search — with the default `EMBEDDING_PROVIDER=hash` this is hash-based (deterministic, not semantic meaning). Set `EMBEDDING_PROVIDER=openai` in `.env` for real semantic embeddings.
 
 Full capability matrix: [`lineagelens-config/tiers.json`](lineagelens-config/tiers.json)
 
