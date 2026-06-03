@@ -4,6 +4,7 @@ import * as path from 'path';
 import { CaptureStore } from './store';
 import { CaptureService } from './capture';
 import { CaptureTreeProvider, CaptureTreeItem, ClearAllTreeItem, buildDetailPanel, CAPTURE_DRAG_MIME } from './sidebar';
+import { captureStoreTojsonl } from './agentTrace';
 
 /**
  * VS Code passes the tree item when a command is invoked from the context menu,
@@ -34,6 +35,14 @@ export function activate(context: vscode.ExtensionContext): void {
   clearBar.tooltip = 'LineageLens: delete all AI captures';
   clearBar.show();
   context.subscriptions.push(clearBar);
+
+  // Status bar — mode indicator (right side, sits left of capture count at priority 100)
+  const modeBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
+  modeBar.command = 'lineagelens.showModeInfo';
+  modeBar.text = '$(sync~spin) LL: checking...';
+  modeBar.tooltip = 'LineageLens mode — click for details';
+  modeBar.show();
+  context.subscriptions.push(modeBar);
 
   // Sidebar tree — dragAndDropController enables both in-tree reordering and
   // drag-to-editor code insertion; canSelectMany lets users select + drag multiple items.
@@ -132,6 +141,31 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
+  // Export Agent Trace (cursor/agent-trace 0.1.0) — works in Easy Mode, no backend needed
+  context.subscriptions.push(
+    vscode.commands.registerCommand('lineagelens.exportAgentTrace', async () => {
+      const cfg = vscode.workspace.getConfiguration('lineagelensBase');
+      const workspaceId = cfg.get<string>('workspaceId', 'vscode-capture') || 'vscode-capture';
+      const uri = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(path.join(
+          vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '',
+          `lineagelens-agent-trace-${Date.now()}.jsonl`,
+        )),
+        filters: { 'Agent Trace JSONL': ['jsonl'] },
+      });
+      if (!uri) { return; }
+      const jsonl = captureStoreTojsonl(store.getAll(), workspaceId);
+      fs.writeFileSync(uri.fsPath, jsonl, 'utf-8');
+      const open = await vscode.window.showInformationMessage(
+        `LineageLens: Exported ${store.count} captures as Agent Trace.`,
+        'Open File',
+      );
+      if (open === 'Open File') {
+        vscode.workspace.openTextDocument(uri).then(doc => vscode.window.showTextDocument(doc)).catch(() => {});
+      }
+    }),
+  );
+
   // Insert capture code at the active editor cursor (also used by the context menu)
   context.subscriptions.push(
     vscode.commands.registerCommand('lineagelens.insertAtCursor', (idOrItem: string | CaptureTreeItem | ClearAllTreeItem) => {
@@ -212,6 +246,79 @@ export function activate(context: vscode.ExtensionContext): void {
         },
       },
     ),
+  );
+
+  // Mode detection — polls proxy health to switch status bar between Easy and Power
+  async function checkMode(): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration('lineagelensBase');
+    const proxyHealthUrl = (cfg.get<string>('proxyHealthUrl', 'http://localhost:8788/proxy-health') ?? '').trim();
+    const backendUrl = (cfg.get<string>('backendUrl', '') ?? '').trim();
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1500);
+      const resp = await fetch(proxyHealthUrl, { method: 'GET', signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (resp.ok) {
+        modeBar.text = '$(shield) LL: Power';
+        modeBar.tooltip = 'LineageLens Power Mode — proxy is running, full prompt + model capture active';
+        return;
+      }
+    } catch {
+      // proxy not reachable — fall through to Easy mode
+    }
+
+    if (backendUrl) {
+      modeBar.text = '$(zap) LL: Easy';
+      modeBar.tooltip = 'LineageLens Easy Mode — file-level captures sent to backend (confidence ~0.35). Start the proxy for Power Mode.';
+    } else {
+      modeBar.text = '$(zap) LL: Easy (local)';
+      modeBar.tooltip = 'LineageLens Easy Mode — captures stored locally only. Set lineagelensBase.backendUrl to sync to a backend.';
+    }
+  }
+
+  checkMode().catch(() => {});
+
+  const modeCheckInterval = setInterval(() => { checkMode().catch(() => {}); }, 30_000);
+  context.subscriptions.push({ dispose: () => clearInterval(modeCheckInterval) });
+
+  // One-time hint to upgrade to Power Mode when backend is configured but proxy is not running
+  async function maybeShowUpgradeHint(): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration('lineagelensBase');
+    const backendUrl = (cfg.get<string>('backendUrl', '') ?? '').trim();
+    if (!backendUrl) { return; }
+
+    const hasSeenHint = context.globalState.get<boolean>('lineagelens.proxyUpgradeHintShown', false);
+    if (hasSeenHint) { return; }
+
+    try {
+      const proxyHealthUrl = (cfg.get<string>('proxyHealthUrl', 'http://localhost:8788/proxy-health') ?? '').trim();
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 1500);
+      const resp = await fetch(proxyHealthUrl, { signal: controller.signal });
+      if (resp.ok) { return; }
+    } catch { /* proxy down — show the hint */ }
+
+    context.globalState.update('lineagelens.proxyUpgradeHintShown', true);
+    const action = await vscode.window.showInformationMessage(
+      'LineageLens Easy Mode: file-level captures are flowing. Start the proxy for full prompt + model lineage (Power Mode).',
+      'Learn how',
+      'Dismiss',
+    );
+    if (action === 'Learn how') {
+      vscode.env.openExternal(vscode.Uri.parse('https://github.com/karnati-praveen/lineagelens#proxy'));
+    }
+  }
+
+  setTimeout(() => { maybeShowUpgradeHint().catch(() => {}); }, 5000);
+
+  // Show mode status on status bar click
+  context.subscriptions.push(
+    vscode.commands.registerCommand('lineagelens.showModeInfo', () => {
+      checkMode().then(() => {
+        vscode.window.showInformationMessage(modeBar.tooltip as string ?? 'LineageLens mode status');
+      }).catch(() => {});
+    }),
   );
 
   // Welcome message on first install

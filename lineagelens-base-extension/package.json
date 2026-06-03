@@ -79,6 +79,10 @@
       {
         "command": "lineagelens.showModeInfo",
         "title": "LineageLens: Show Mode Status"
+      },
+      {
+        "command": "lineagelens.exportAgentTrace",
+        "title": "LineageLens: Export Agent Trace"
       }
     ],
     "viewsWelcome": [
