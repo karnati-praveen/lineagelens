@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Annotated
 from uuid import UUID as PyUUID
 
@@ -24,6 +25,8 @@ from app.core.security import (
 )
 from app.db.models import ProvenanceRecord, UserAccount
 from app.db.session import get_db_session
+from app.schemas.agent_trace import AgentTraceRecord, SCHEMA_VERSION
+from app.services.agent_trace_service import record_to_agent_trace
 from app.services.export_service import cleanup_old_jobs, deserialize_job, new_job, run_export_job, serialize_job
 from app.services.provenance_service import build_workspace_record_filters, serialize_provenance_record
 from app.schemas.provenance import SearchRequest
@@ -355,4 +358,132 @@ async def download_export_job(
         content=job.result_bytes,
         media_type=job.result_content_type,
         headers={"Content-Disposition": f'attachment; filename="{job.filename}"'},
+    )
+
+
+# ── Agent Trace export ─────────────────────────────────────────────────────────
+
+
+@router.get("/export/agent-trace", response_model=None)
+async def export_agent_trace(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+    date_from: Annotated[str | None, Query(alias="dateFrom")] = None,
+    date_to: Annotated[str | None, Query(alias="dateTo")] = None,
+    tool_name: Annotated[str | None, Query(alias="toolName")] = None,
+    min_confidence: Annotated[float | None, Query(alias="minConfidence")] = None,
+    format: Annotated[str, Query()] = "jsonl",
+) -> StreamingResponse | JSONResponse:
+    """Export agent attribution traces as JSONL (default), JSON, or CSV.
+
+    This is the portable Agent Trace format — import it into another
+    LineageLens instance with POST /import/agent-trace.
+    """
+    try:
+        caller_uuid = PyUUID(auth.subject)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.")
+
+    role_result = await session.execute(
+        select(UserAccount.role).where(UserAccount.id == caller_uuid)
+    )
+    if role_result.scalar_one_or_none() != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Agent Trace export requires admin role.")
+
+    filters = [ProvenanceRecord.workspace_id == auth.workspace_id]
+    if date_from:
+        dt = _parse_dt(date_from)
+        if dt:
+            filters.append(ProvenanceRecord.timestamp_iso >= dt)
+    if date_to:
+        dt = _parse_dt(date_to)
+        if dt:
+            filters.append(ProvenanceRecord.timestamp_iso <= dt)
+
+    stmt = (
+        select(ProvenanceRecord)
+        .where(and_(*filters))
+        .order_by(desc(ProvenanceRecord.timestamp_iso))
+        .limit(MAX_EXPORT_ROWS)
+    )
+    result = await session.execute(stmt)
+    rows = result.scalars().all()
+
+    traces = [record_to_agent_trace(r) for r in rows]
+
+    # Optional post-filter by tool name / confidence (can't do in SQL easily)
+    if tool_name:
+        tl = tool_name.lower()
+        traces = [t for t in traces if (t.tool.name or "").lower() == tl or (t.tool.adapter or "").lower() == tl]
+    if min_confidence is not None:
+        traces = [t for t in traces if (t.confidence.score or 0.0) >= min_confidence]
+
+    record_count = len(traces)
+
+    await log_audit_event(
+        session,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        action="export.agent_trace",
+        details={"record_count": record_count, "format": format, "tool_name": tool_name},
+    )
+    await session.commit()
+
+    fmt = format.strip().lower()
+    timestamp_tag = datetime.now(tz=UTC).strftime("%Y%m%d")
+    ws_slug = auth.workspace_id[:8]
+
+    if fmt == "json":
+        data = [t.model_dump(by_alias=False) for t in traces]
+        return JSONResponse(
+            content={"schemaVersion": SCHEMA_VERSION, "count": record_count, "records": data},
+            headers={"X-Record-Count": str(record_count)},
+        )
+
+    if fmt == "csv":
+        output = io.StringIO()
+        writer = csv.writer(output, quoting=csv.QUOTE_ALL)
+        writer.writerow([
+            "uuid", "timestamp", "file_path", "tool_name", "adapter", "provider",
+            "session_id", "operation_type", "session_kind", "model", "confidence_score",
+            "confidence_level", "net_added_lines", "inserted_code_preview",
+        ])
+        for t in traces:
+            writer.writerow([
+                _safe_csv_value(t.uuid),
+                _safe_csv_value(t.timestamp),
+                _safe_csv_value(t.file_path),
+                _safe_csv_value(t.tool.name or ""),
+                _safe_csv_value(t.tool.adapter or ""),
+                _safe_csv_value(t.tool.provider or ""),
+                _safe_csv_value(t.tool.session_id or ""),
+                _safe_csv_value(t.tool.operation_type or ""),
+                _safe_csv_value(t.tool.session_kind or ""),
+                _safe_csv_value(t.model.name or ""),
+                _safe_csv_value(str(t.confidence.score or "")),
+                _safe_csv_value(t.confidence.level or ""),
+                _safe_csv_value(str(t.net_added_lines or "")),
+                _safe_csv_value(t.inserted_code_preview or ""),
+            ])
+        filename = f"lineagelens-agent-trace-{ws_slug}-{timestamp_tag}.csv"
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "X-Record-Count": str(record_count),
+            },
+        )
+
+    # Default: JSONL (newline-delimited JSON)
+    lines = [json.dumps(t.model_dump(by_alias=False), separators=(",", ":")) for t in traces]
+    content = "\n".join(lines) + ("\n" if lines else "")
+    filename = f"lineagelens-agent-trace-{ws_slug}-{timestamp_tag}.jsonl"
+    return StreamingResponse(
+        iter([content]),
+        media_type="application/x-ndjson",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Record-Count": str(record_count),
+        },
     )
