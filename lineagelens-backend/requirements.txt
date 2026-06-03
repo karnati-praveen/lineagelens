@@ -22,6 +22,9 @@ neo4j==5.26.0
 # Redis — rate limiter and shared KV store (export jobs, webhooks)
 redis[asyncio]>=5.0.0
 
+# JSON Schema validation — spec conformance tests
+jsonschema>=4.23.0
+
 # AST parsing — optional, improves code analysis accuracy
 # tree-sitter==0.21.3; python_version < "3.12"
 # tree-sitter-languages==1.10.2; python_version < "3.12"

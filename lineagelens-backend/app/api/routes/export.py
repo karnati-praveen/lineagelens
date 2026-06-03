@@ -434,9 +434,9 @@ async def export_agent_trace(
     ws_slug = auth.workspace_id[:8]
 
     if fmt == "json":
-        data = [t.model_dump(by_alias=False) for t in traces]
+        data = [t.model_dump(exclude_none=True) for t in traces]
         return JSONResponse(
-            content={"schemaVersion": SCHEMA_VERSION, "count": record_count, "records": data},
+            content={"version": SCHEMA_VERSION, "count": record_count, "records": data},
             headers={"X-Record-Count": str(record_count)},
         )
 
@@ -444,26 +444,37 @@ async def export_agent_trace(
         output = io.StringIO()
         writer = csv.writer(output, quoting=csv.QUOTE_ALL)
         writer.writerow([
-            "uuid", "timestamp", "file_path", "tool_name", "adapter", "provider",
-            "session_id", "operation_type", "session_kind", "model", "confidence_score",
-            "confidence_level", "net_added_lines", "inserted_code_preview",
+            "id", "timestamp", "file_path", "tool_name", "adapter", "provider",
+            "session_id", "operation_type", "session_kind", "model_id",
+            "contributor_type", "confidence_score", "confidence_level",
+            "start_line", "end_line", "net_added_lines", "inserted_code_preview",
         ])
         for t in traces:
+            first_file = t.files[0] if t.files else None
+            first_conv = first_file.conversations[0] if (first_file and first_file.conversations) else None
+            contributor = first_conv.contributor if first_conv else None
+            first_range = first_conv.ranges[0] if (first_conv and first_conv.ranges) else None
+            meta = t.metadata or {}
+            ll_tool = meta.get("lineagelens.tool") or {}
+            ll_conf = meta.get("lineagelens.confidence") or {}
             writer.writerow([
-                _safe_csv_value(t.uuid),
+                _safe_csv_value(t.id),
                 _safe_csv_value(t.timestamp),
-                _safe_csv_value(t.file_path),
-                _safe_csv_value(t.tool.name or ""),
-                _safe_csv_value(t.tool.adapter or ""),
-                _safe_csv_value(t.tool.provider or ""),
-                _safe_csv_value(t.tool.session_id or ""),
-                _safe_csv_value(t.tool.operation_type or ""),
-                _safe_csv_value(t.tool.session_kind or ""),
-                _safe_csv_value(t.model.name or ""),
-                _safe_csv_value(str(t.confidence.score or "")),
-                _safe_csv_value(t.confidence.level or ""),
-                _safe_csv_value(str(t.net_added_lines or "")),
-                _safe_csv_value(t.inserted_code_preview or ""),
+                _safe_csv_value(first_file.path if first_file else ""),
+                _safe_csv_value(t.tool.name if t.tool else ""),
+                _safe_csv_value(ll_tool.get("adapter") or ""),
+                _safe_csv_value(ll_tool.get("provider") or ""),
+                _safe_csv_value(ll_tool.get("sessionId") or ""),
+                _safe_csv_value(ll_tool.get("operationType") or ""),
+                _safe_csv_value(ll_tool.get("sessionKind") or ""),
+                _safe_csv_value(contributor.model_id if contributor else ""),
+                _safe_csv_value(contributor.type if contributor else ""),
+                _safe_csv_value(str(ll_conf.get("score") or "")),
+                _safe_csv_value(ll_conf.get("level") or ""),
+                _safe_csv_value(str(first_range.start_line if first_range else "")),
+                _safe_csv_value(str(first_range.end_line if first_range else "")),
+                _safe_csv_value(str(meta.get("lineagelens.netAddedLines") or "")),
+                _safe_csv_value(meta.get("lineagelens.insertedCodePreview") or ""),
             ])
         filename = f"lineagelens-agent-trace-{ws_slug}-{timestamp_tag}.csv"
         return StreamingResponse(
@@ -475,8 +486,9 @@ async def export_agent_trace(
             },
         )
 
-    # Default: JSONL (newline-delimited JSON)
-    lines = [json.dumps(t.model_dump(by_alias=False), separators=(",", ":")) for t in traces]
+    # Default: JSONL (newline-delimited JSON) — exclude_none so optional spec
+    # fields like vcs/tool that are null are omitted, keeping output valid per schema.
+    lines = [json.dumps(t.model_dump(exclude_none=True), separators=(",", ":")) for t in traces]
     content = "\n".join(lines) + ("\n" if lines else "")
     filename = f"lineagelens-agent-trace-{ws_slug}-{timestamp_tag}.jsonl"
     return StreamingResponse(

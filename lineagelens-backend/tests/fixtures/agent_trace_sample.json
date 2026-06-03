@@ -1,0 +1,64 @@
+{
+  "version": "0.1.0",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "timestamp": "2026-01-23T14:30:00Z",
+  "vcs": {
+    "type": "git",
+    "revision": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
+  },
+  "tool": {
+    "name": "cursor",
+    "version": "2.4.0"
+  },
+  "files": [
+    {
+      "path": "src/utils/parser.ts",
+      "conversations": [
+        {
+          "url": "https://api.cursor.com/v1/conversations/12345",
+          "contributor": {
+            "type": "ai",
+            "model_id": "anthropic/claude-opus-4-5-20251101"
+          },
+          "ranges": [
+            {
+              "start_line": 42,
+              "end_line": 67,
+              "content_hash": "murmur3:9f2e8a1b"
+            }
+          ],
+          "related": [
+            {
+              "type": "session",
+              "url": "https://api.cursor.com/v1/sessions/67890"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/utils/helpers.ts",
+      "conversations": [
+        {
+          "url": "https://api.cursor.com/v1/conversations/12345",
+          "contributor": {
+            "type": "ai",
+            "model_id": "openai/gpt-4o"
+          },
+          "ranges": [
+            {
+              "start_line": 10,
+              "end_line": 25
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "confidence": 0.95,
+    "dev.cursor": {
+      "workspace_id": "ws-abc123"
+    }
+  }
+}
