@@ -44,9 +44,9 @@ export class CaptureStore {
         const parsed = JSON.parse(raw) as CaptureRecord[];
         // Backfill fields added in v1.2.3 so older stored records stay valid.
         this.records = parsed.map(r => ({
-          confidence: 0.5,
-          source: 'unknown' as CaptureSource,
           ...r,
+          confidence: r.confidence ?? 0.5,
+          source: (r.source ?? 'unknown') as CaptureSource,
         }));
       }
     } catch {
@@ -58,7 +58,15 @@ export class CaptureStore {
     const tmp = this.storePath + '.tmp';
     try {
       fs.writeFileSync(tmp, JSON.stringify(this.records, null, 2), 'utf-8');
-      fs.renameSync(tmp, this.storePath);
+      try {
+        fs.renameSync(tmp, this.storePath);
+      } catch {
+        // On Windows, renameSync throws EPERM when overwriting an existing file
+        // that is briefly held open. Fall back to copy + delete (non-atomic but
+        // correct; the .tmp file still contains the complete state).
+        fs.copyFileSync(tmp, this.storePath);
+        fs.unlinkSync(tmp);
+      }
     } catch (error) {
       try {
         if (fs.existsSync(tmp)) { fs.unlinkSync(tmp); }
@@ -69,7 +77,7 @@ export class CaptureStore {
     }
   }
 
-  add(data: Omit<CaptureRecord, 'id' | 'timestamp'> & { confidence?: number; source?: CaptureSource }): CaptureRecord {
+  add(data: Omit<CaptureRecord, 'id' | 'timestamp' | 'confidence' | 'source'> & { confidence?: number; source?: CaptureSource }): CaptureRecord {
     const record: CaptureRecord = {
       confidence: 0.5,
       source: 'unknown',

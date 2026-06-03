@@ -1,7 +1,7 @@
-﻿{
+{
   "name": "lineagelens-base",
   "displayName": "LineageLens Base",
-  "description": "Lightweight AI code provenance \u00e2\u20ac\u201d capture and review every AI-generated insertion locally, no server required.",
+  "description": "Lightweight AI code provenance â€” capture and review every AI-generated insertion locally, no server required.",
   "_extensionRole": "BASE — zero-server standalone edition. Install for local-only capture with no backend, no proxy, and no account required. The full server-connected edition (Lite/Plus/Max) lives in the repo root package.json.",
   "version": "1.2.3",
   "publisher": "karnatipraveen",
@@ -75,12 +75,16 @@
         "command": "lineagelens.copyCode",
         "title": "Copy Code",
         "icon": "$(copy)"
+      },
+      {
+        "command": "lineagelens.showModeInfo",
+        "title": "LineageLens: Show Mode Status"
       }
     ],
     "viewsWelcome": [
       {
         "view": "lineagelens.captures",
-        "contents": "No AI captures yet.\n\nLineageLens automatically detects when an AI tool inserts 4+ lines of code into your editor.\n\nJust use Copilot, Cursor, Claude, or any AI coding tool \u00e2\u20ac\u201d captures will appear here.\n\n[Learn More](https://github.com/karnati-praveen/lineagelens)"
+        "contents": "No AI captures yet.\n\nLineageLens automatically detects when an AI tool inserts 4+ lines of code into your editor.\n\nJust use Copilot, Cursor, Claude, or any AI coding tool â€” captures will appear here.\n\n[Learn More](https://github.com/karnati-praveen/lineagelens)"
       }
     ],
     "menus": {
@@ -152,6 +156,26 @@
             "**/dist/**"
           ],
           "description": "Glob patterns for files to exclude from capture."
+        },
+        "lineagelensBase.backendUrl": {
+          "type": "string",
+          "default": "",
+          "description": "LineageLens backend URL for Easy Mode (e.g. http://localhost:8787). When set, captured insertions are POSTed to the backend. Leave empty for fully local-only capture."
+        },
+        "lineagelensBase.ingestToken": {
+          "type": "string",
+          "default": "",
+          "description": "Bearer token for the LineageLens backend ingest endpoint. Required when backendUrl is set. Generate one from the backend admin panel."
+        },
+        "lineagelensBase.workspaceId": {
+          "type": "string",
+          "default": "vscode-capture",
+          "description": "Workspace slug sent with every ingest payload. Must match the workspace configured on your backend."
+        },
+        "lineagelensBase.proxyHealthUrl": {
+          "type": "string",
+          "default": "http://localhost:8788/proxy-health",
+          "description": "URL for the LineageLens proxy health check. Used to auto-detect Power Mode. Change only if the proxy runs on a non-default port."
         }
       }
     }
