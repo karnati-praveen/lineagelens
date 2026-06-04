@@ -6,21 +6,26 @@ This file is a compact guide to the repository layout so an AI can quickly under
 
 ```text
 LineageLens/
-  README.md              # User-facing overview and operating modes
-  prafea                 # Long-form architecture and feature reference
-  package.json           # Extension manifest, commands, settings, and build scripts
-  tsconfig.json          # TypeScript compiler settings
-  lineagelens-deploy/    # Backend stack and release compose bundles
-  lineagelens-backend/   # FastAPI backend application
-  lineagelens-src/       # Capture layer source
-  lineagelens-docs/      # All project documentation
-  lineagelens-media/     # Icons and other static assets
-  lineagelens-scripts/   # PowerShell build and deployment scripts
-  lineagelens-releases/  # Packaged release artifacts (.vsix, .zip)
-  dist/                  # Built extension output
-  out/                   # TypeScript build output
-  node_modules/          # Installed Node dependencies
-  .venv/                 # Python virtual environment
+  README.md                  # User-facing overview and operating modes
+  lineagelens-prafea         # Long-form architecture and feature reference
+  package.json               # Full (Power-mode) extension manifest, commands, settings, build scripts
+  tsconfig.json              # TypeScript compiler settings
+  lineagelens-backend/       # FastAPI backend application
+  lineagelens-proxy/         # Universal Python LLM proxy (port 8788) + classifier/pricing/routing
+  lineagelens-src/           # Full Power-mode capture extension source
+  lineagelens-base-extension/# Easy Mode (offline Base) VS Code extension
+  lineagelens-mcp/           # MCP server exposing provenance to AI chat clients
+  lineagelens-cli/           # Operator CLI (start/stop/backup/upgrade)
+  lineagelens-config/        # tiers.json — tier capability contract
+  lineagelens-deploy/        # Docker Compose bundles and .env examples per tier
+  lineagelens-k8s/           # Kubernetes manifests and Helm chart (Max)
+  lineagelens-docs/          # All project documentation
+  lineagelens-media/         # Icons and other static assets
+  lineagelens-scripts/       # Build, quickstart, and deployment scripts (bash + PowerShell)
+  lineagelens-releases/      # Packaged release artifacts (.vsix, .zip)
+  dist/                      # Built extension output
+  node_modules/              # Installed Node dependencies
+  .venv/                     # Python virtual environment
 ```
 
 ## What Each Main Folder Does
@@ -77,10 +82,10 @@ All project documentation lives here.
 - `docs/architecture.md` — full architecture overview with data flow diagrams.
 - `docs/lightweight-adapters.md` — lightweight CLI boundary and backend mode behavior.
 - `docs/native-backend.md` — native Python backend setup (no Docker Desktop required).
-- `docs/shipping-modes.md` — release structure and packaging modes (base, plus, max).
+- `docs/shipping-modes.md` — release structure and packaging modes (base, lite, plus, max).
 - `docs/CHANGELOG.md` — version history.
 - `docs/SUPPORT.md` — support information and issue tracking.
-- `docs/SHIP_PRODUCTS_COMMANDS.md` — build and deployment commands for all three modes.
+- `docs/SHIP_PRODUCTS_COMMANDS.md` — build and deployment commands for all four modes.
 
 ### `lineagelens-media/`
 Static assets such as the extension icon and sidebar graphics.

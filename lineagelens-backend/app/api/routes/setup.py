@@ -38,6 +38,12 @@ async def is_setup_complete(session: AsyncSession) -> bool:
     return (result.scalar_one() or 0) > 0
 
 
+@router.get("/invite-accept", include_in_schema=False)
+async def invite_accept_page() -> FileResponse:
+    """Serve the invite-accept form so engineers can join without curl."""
+    return FileResponse(os.path.join(_STATIC_DIR, "invite_accept.html"), media_type="text/html")
+
+
 @router.get("/setup", include_in_schema=False)
 async def setup_page(
     request: Request,

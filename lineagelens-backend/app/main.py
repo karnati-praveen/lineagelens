@@ -50,6 +50,7 @@ from app.api.routes.scheduled_reports import router as scheduled_reports_router
 from app.api.routes.sso import router as sso_router
 from app.api.routes.setup import router as setup_router
 from app.api.routes.integrity import router as integrity_router
+from app.api.routes.agent_trace import router as agent_trace_router
 from app.core.config import Settings, get_settings
 from app.core.rate_limit import InMemoryRateLimiter
 from app.db.session import create_engine_from_settings, create_session_factory, initialize_database
@@ -139,7 +140,7 @@ class SecurityHeadersMiddleware:
         await self.app(scope, receive, send_with_headers)
 
 
-_SETUP_BYPASS_PREFIXES = {"/setup", "/health", "/auth/login", "/auth/register", "/auth/sso/callback"}
+_SETUP_BYPASS_PREFIXES = {"/setup", "/health", "/auth/login", "/auth/register", "/auth/sso/callback", "/invite-accept"}
 
 
 class SetupGuardMiddleware:
@@ -524,6 +525,7 @@ app.include_router(scheduled_reports_router)
 app.include_router(sso_router)
 app.include_router(setup_router)
 app.include_router(integrity_router)
+app.include_router(agent_trace_router)
 
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 

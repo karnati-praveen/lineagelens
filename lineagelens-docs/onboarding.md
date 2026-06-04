@@ -135,4 +135,4 @@ lineagelens config              # Show persistent config
 
 - Dashboard status dot in the top bar shows backend health
 - `Ctrl+Shift+P` -> "LineageLens: Check Configuration" for diagnostics
-- File issues at: https://github.com/lineagelens/lineagelens/issues
+- File issues at: https://github.com/karnati-praveen/lineagelens/issues

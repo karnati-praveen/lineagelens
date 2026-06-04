@@ -252,6 +252,12 @@ The in-memory limiter remains the default — zero dependencies for a single-rep
 
 ## Environment Variable Reference
 
+> **Note on `.env` names vs. proxy names.** The table below lists the variables the proxy process
+> reads directly. In the Docker Compose deployment you edit `lineagelens-deploy/.env`, which uses
+> *compose-mapped* names: `PROXY_INGEST_TOKEN` (mapped to `BACKEND_INGEST_TOKEN` **and**
+> `PROXY_STATIC_TOKEN`) and `PROXY_UPSTREAM_URL` (mapped to `UPSTREAM_URL`). Set the `PROXY_*` names
+> in `.env`; the raw names below apply only when running the proxy directly without Compose.
+
 ### Proxy
 
 | Variable | Default | Description |

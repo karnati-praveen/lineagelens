@@ -526,20 +526,62 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
           <button id="async-download-btn" class="p" hidden onclick="downloadAsyncExport()" style="margin-top:8px">Download</button>
         </div>
       </div>
+
+      <!-- Agent Trace export -->
+      <div class="export-async-section" id="agent-trace-export-section" style="margin-top:20px">
+        <h4 style="margin-bottom:4px">Agent Trace Export <span style="font-size:11px;color:var(--text2);font-weight:400;margin-left:6px">Portable · lineagelens-agent-trace/1</span></h4>
+        <p style="font-size:12px;color:var(--text2);margin-bottom:12px">Self-hosted record of <em>which AI tool wrote which code</em>. Import into any LineageLens instance or parse with any JSONL tool.</p>
+        <div class="new-form-row">
+          <label>Format
+            <select id="at-format" style="margin-top:4px">
+              <option value="jsonl">JSONL (recommended)</option>
+              <option value="json">JSON</option>
+              <option value="csv">CSV</option>
+            </select>
+          </label>
+          <label>Tool filter <input id="at-tool" type="text" placeholder="e.g. Claude Code" style="margin-top:4px;width:130px"></label>
+          <label>Min confidence <input id="at-conf" type="number" min="0" max="1" step="0.05" placeholder="0.0–1.0" style="margin-top:4px;width:80px"></label>
+          <button class="p" onclick="doAgentTraceExport()" style="align-self:flex-end">Export Agent Trace</button>
+        </div>
+        <div id="al-at-export" role="status" aria-live="polite" style="margin-top:8px"></div>
+      </div>
+
+      <!-- Agent Trace import -->
+      <div class="export-async-section" id="agent-trace-import-section" style="margin-top:20px">
+        <h4 style="margin-bottom:4px">Agent Trace Import</h4>
+        <p style="font-size:12px;color:var(--text2);margin-bottom:12px">Upload a JSONL file exported from any LineageLens instance. Duplicate UUIDs are skipped automatically.</p>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <label style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px 14px;cursor:pointer;font-size:13px;color:var(--text);display:inline-flex;align-items:center;gap:6px">
+            Choose JSONL file
+            <input id="at-import-file" type="file" accept=".jsonl,.ndjson,.json" style="display:none" onchange="onImportFileChange(this)">
+          </label>
+          <span id="at-import-filename" style="font-size:13px;color:var(--text2)">No file chosen</span>
+          <button class="p" id="at-import-btn" onclick="doAgentTraceImport()" disabled>Import</button>
+        </div>
+        <div id="al-at-import" role="status" aria-live="polite" style="margin-top:8px"></div>
+      </div>
     </div>
 
     <!-- TEAM -->
     <div id="t-team" class="view">
       <div class="stitle">Team</div>
       <div id="invite-box" class="invite-box" style="display:none">
-        <h3>Invite Member</h3>
+        <h3>Generate Invite Link</h3>
+        <p style="font-size:12px;color:var(--text2);margin-bottom:12px">Send this link to the engineer — they set their own username and password when they open it.</p>
         <div id="al-invite" role="status" aria-live="polite"></div>
         <div class="form-row">
-          <div class="field"><label for="inv-u">Username</label><input id="inv-u" type="text" placeholder="username"></div>
-          <div class="field"><label for="inv-p">Password</label><input id="inv-p" type="password" placeholder="min 8 chars"></div>
           <div class="field"><label for="inv-r">Role</label><select id="inv-r"><option value="member">Member</option><option value="admin">Admin</option></select></div>
+          <div class="field"><label for="inv-ttl">Expires in</label><select id="inv-ttl"><option value="1440">24 hours</option><option value="10080">7 days</option><option value="43200">30 days</option></select></div>
+          <div class="field"><label for="inv-uses">Max uses</label><input id="inv-uses" type="number" min="1" max="100" value="1" style="width:70px"></div>
         </div>
-        <div style="margin-top:12px"><button class="p" onclick="doInvite()" aria-label="Send invite">Invite</button></div>
+        <div style="margin-top:12px"><button class="p" onclick="doInvite()" aria-label="Generate invite link">Generate Link</button></div>
+        <div id="invite-link-result" hidden style="margin-top:14px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:12px">
+          <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Invite link — share with your engineer</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <input id="invite-link-url" type="text" readonly style="flex:1;font-family:'SF Mono',Consolas,monospace;font-size:12px;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;min-width:0">
+            <button class="s" onclick="copyInviteLink()" style="white-space:nowrap;width:auto;padding:8px 12px">Copy</button>
+          </div>
+        </div>
       </div>
       <div id="team-body" role="status" aria-live="polite"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
 

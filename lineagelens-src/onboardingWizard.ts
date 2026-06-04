@@ -61,9 +61,19 @@ export async function runOnboardingWizard(
         await vscode.workspace.getConfiguration('lineagelens').update(
             'backendUrl', backendUrl, vscode.ConfigurationTarget.Global
         );
+
+        // Step 2b: First-time admin setup — open the browser setup page
+        const setupStep = await vscode.window.showInformationMessage(
+            'LineageLens Setup (2b/3): Open the setup page to create your admin account. Skip if the backend already has users.',
+            'Open Setup Page',
+            'Skip (already set up)'
+        );
+        if (setupStep === 'Open Setup Page') {
+            void vscode.env.openExternal(vscode.Uri.parse(`${backendUrl}/setup`));
+        }
     }
 
-    // Step 3b: Proxy setup hint
+    // Step 3: Proxy setup hint
     const proxyStep = await vscode.window.showInformationMessage(
         'LineageLens Setup (3/3): Point your AI tool\'s API base URL at the proxy on port 8788 to capture completions automatically.\n\nExample: ANTHROPIC_BASE_URL=http://localhost:8788',
         'Open Docs',

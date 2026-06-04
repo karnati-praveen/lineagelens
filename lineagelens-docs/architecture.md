@@ -1,6 +1,6 @@
 # LineageLens Architecture
 
-Last reviewed: 2026-04-29
+Last reviewed: 2026-06-04
 
 ## 1. What The System Does
 
@@ -19,7 +19,8 @@ The system supports four operating modes:
 
 ## 2. Main Runtime Pieces
 
-- `lineagelens-src/proxy.ts` — captures outbound LLM traffic and classifies captures as `full`, `metadata_only`, `tunnel_only`, or `unavailable`.
+- `lineagelens-proxy/proxy.py` — the **universal LLM proxy** (port 8788, CONNECT tunnel 8789). The primary full-fidelity capture path: forwards traffic untouched while parsing each provider's native tool-calling protocol, and runs the request classifier / dynamic model routing (`classifier.py`, `pricing.py`, `routing_cache.py`).
+- `lineagelens-src/proxy.ts` — the extension-side **local proxy sidecar** that contributes recent request/response pairs for correlation; it classifies captures as `full`, `metadata_only`, `tunnel_only`, or `unavailable`.
 - `lineagelens-src/correlation.ts` — matches qualifying insertions to recent proxy request/response pairs.
 - `lineagelens-src/eventSchema.ts` — defines the provider-agnostic provenance event contract.
 - `lineagelens-src/provenance.ts` — defines the provenance record shape, AST normalization, and deterministic local embeddings.
@@ -130,6 +131,11 @@ The normalized event schema keeps records portable across providers, editors, an
 - `POST /search`
 - `POST /insights/dashboard`
 - `GET /export/audit`
+- `GET /export/agent-trace`, `POST /import/agent-trace` (portable cursor/agent-trace 0.1.0)
+- `GET /integrity/verify`, `POST /integrity/aibom` (Plus/Max — hash-chain verification + signed AI-BOM)
+- `GET /policies/routing`, `PUT /policies/routing` (dynamic model-routing policies)
+
+(Not exhaustive — see [`../lineagelens-prafea`](../lineagelens-prafea) for the full route reference.)
 
 ---
 
@@ -215,6 +221,32 @@ flowchart TD
 
 ---
 
-## 11. One-Sentence Summary
+## 11. Provenance Quality, Routing, and Integrity (v1.2.x)
 
-LineageLens uses a transparent proxy to capture AI coding tool traffic, correlates insertions to prompts and sessions via an adapter registry, normalizes them into a portable provenance record, and exposes trace, search, dashboard, and compliance export interfaces across Base, Lite, Plus, and Max modes — independent of any specific editor.
+Subsystems added since the original capture/correlation core:
+
+- **Confidence engine** (`backend/app/services/confidence_service.py`) — scores every record 0.0–1.0
+  across five weighted evidence signals (capture layer, request-UUID match, content similarity,
+  time correlation, tool fingerprint) and stores the full breakdown. Distinct from risk: confidence
+  answers "how sure are we *who* wrote this," risk answers "how dangerous is *what* was written."
+- **Dynamic model routing** (proxy `classifier.py` / `pricing.py` / `routing_cache.py`) — classifies
+  each request simple/standard/complex and optionally downgrades it to a cheaper model per a
+  per-workspace policy, recording `routing_decision` + estimated USD savings on the record.
+- **Provenance hash chain** (`integrity_service.py`, `GET /integrity/verify`) — Plus/Max only; each
+  record is SHA-256 hashed and linked to its predecessor (`record_hash`/`prev_hash`) for
+  tamper evidence. Solo/Lite leaves the columns NULL.
+- **AI Bill of Materials** (`aibom_service.py`, `POST /integrity/aibom`) — Plus/Max; an HMAC-signed
+  workspace summary (percent AI-authored, per-model breakdown, disclosure coverage, chain status).
+- **Agent Trace interchange** (`agent_trace_service.py`, `/export/agent-trace`, `/import/agent-trace`)
+  — portable cursor/agent-trace 0.1.0 export/import; the Base extension can also export it offline.
+- **Field-level encryption** (`core/encryption.py`) — Fernet-encrypts sensitive columns (GitHub
+  tokens, webhook secrets) with an `enc:` prefix.
+- **Easy/Power capture modes** — "Easy" = capturing without the proxy (file + lines, confidence
+  ~0.35); "Power" = proxy running (full prompt + model, 0.8–1.0). Orthogonal to the Base/Lite/Plus/Max
+  tier, which describes the backend.
+
+---
+
+## 12. One-Sentence Summary
+
+LineageLens uses a transparent proxy to capture AI coding tool traffic, correlates insertions to prompts and sessions via an adapter registry, scores each record for confidence and risk, normalizes them into a portable provenance record, and exposes trace, search, dashboard, tamper-evident integrity, and compliance export interfaces across Base, Lite, Plus, and Max modes — independent of any specific editor.

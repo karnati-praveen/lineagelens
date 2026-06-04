@@ -141,9 +141,43 @@ export class CaptureService {
         source,
       });
 
+      this.postToBackend(record);
       this.updateStatusBar();
       this.onCapture(record);
     }
+  }
+
+  private postToBackend(record: import('./store').CaptureRecord): void {
+    const cfg = vscode.workspace.getConfiguration('lineagelensBase');
+    const backendUrl = (cfg.get<string>('backendUrl', '') ?? '').trim().replace(/\/$/, '');
+    const ingestToken = (cfg.get<string>('ingestToken', '') ?? '').trim();
+    const workspaceId = (cfg.get<string>('workspaceId', 'vscode-capture') ?? 'vscode-capture').trim();
+
+    if (!backendUrl || !ingestToken) { return; }
+
+    const payload = {
+      id: record.id,
+      timestampIso: record.timestamp,
+      filePath: record.filePath,
+      insertedText: record.insertedCode,
+      netAddedLines: record.linesAdded,
+      workspaceId,
+      languageId: record.language,
+      captureStatus: 'file_diff',
+      source: { shim: 'lineagelens-base-extension', ide: 'vscode' },
+    };
+
+    fetch(`${backendUrl}/ingest`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${ingestToken}`,
+        'X-Idempotency-Key': record.id,
+      },
+      body: JSON.stringify(payload),
+    }).catch(err => {
+      console.error('LineageLens: backend ingest failed:', err);
+    });
   }
 
   private updateStatusBar(): void {

@@ -838,6 +838,62 @@ async function doExport() {
   } catch(e) { setAl('al-export', e.message); }
 }
 
+// ── AGENT TRACE ───────────────────────────────────────────────────────────────
+async function doAgentTraceExport() {
+  setAl('al-at-export','');
+  const fmt = g('at-format') || 'jsonl';
+  const tool = g('at-tool');
+  const conf = g('at-conf');
+  const p = new URLSearchParams();
+  p.set('format', fmt);
+  if (tool) p.set('toolName', tool);
+  if (conf) p.set('minConfidence', conf);
+  setAl('al-at-export','Preparing Agent Trace export…','info');
+  try {
+    const res = await fetch(`/export/agent-trace?${p}`, {headers:{Authorization:`Bearer ${_tok}`}});
+    if (!res.ok) { const d=await res.json().catch(()=>({})); throw new Error(d.detail||`HTTP ${res.status}`); }
+    const count = res.headers.get('X-Record-Count')||'?';
+    const ext = fmt === 'csv' ? 'csv' : fmt === 'json' ? 'json' : 'jsonl';
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href=url; a.download=`lineagelens-agent-trace-${new Date().toISOString().slice(0,10)}.${ext}`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    setAl('al-at-export',`Downloaded ${count} agent trace records.`,'ok');
+  } catch(e) { setAl('al-at-export', e.message); }
+}
+
+function onImportFileChange(input) {
+  const name = input.files?.[0]?.name || '';
+  document.getElementById('at-import-filename').textContent = name || 'No file chosen';
+  document.getElementById('at-import-btn').disabled = !name;
+}
+
+async function doAgentTraceImport() {
+  setAl('al-at-import','');
+  const fileInput = document.getElementById('at-import-file');
+  const file = fileInput?.files?.[0];
+  if (!file) { setAl('al-at-import','No file selected.'); return; }
+  setAl('al-at-import','Uploading…','info');
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch('/import/agent-trace', {
+      method:'POST',
+      headers:{Authorization:`Bearer ${_tok}`},
+      body: form,
+    });
+    const data = await res.json().catch(()=>({}));
+    if (!res.ok) throw new Error(data.detail||`HTTP ${res.status}`);
+    const errs = data.errors?.length ? ` (${data.errors.length} parse errors)` : '';
+    setAl('al-at-import',`Imported ${data.imported}, skipped ${data.skipped} duplicates.${errs}`,'ok');
+    fileInput.value='';
+    document.getElementById('at-import-filename').textContent='No file chosen';
+    document.getElementById('at-import-btn').disabled=true;
+  } catch(e) { setAl('al-at-import', e.message); }
+}
+
 // ── TEAM ─────────────────────────────────────────────────────────────────────
 async function loadTeam() {
   const el = document.getElementById('team-body');
@@ -857,15 +913,31 @@ async function loadTeam() {
 
 async function doInvite() {
   setAl('al-invite','');
-  const u=g('inv-u'), p=g('inv-p'), r=g('inv-r');
-  if (!u||!p) { setAl('al-invite','Username and password required.'); return; }
+  const role = g('inv-r');
+  const ttl = parseInt(g('inv-ttl') || '1440', 10);
+  const maxUses = parseInt(document.getElementById('inv-uses')?.value || '1', 10);
+  const wsId = _user?.workspaceId;
+  if (!wsId) { setAl('al-invite','Not logged in.'); return; }
   try {
-    await req('POST', '/team/invite', {username:u, password:p, role:r, workspaceId:_user?.workspaceId});
-    setAl('al-invite',`${u} invited.`,'ok');
-    document.getElementById('inv-u').value='';
-    document.getElementById('inv-p').value='';
-    loadTeam();
+    const data = await req('POST', '/auth/invite', {workspaceId: wsId, role, ttl_minutes: ttl, max_uses: maxUses});
+    const origin = window.location.origin;
+    const link = `${origin}/invite-accept?token=${encodeURIComponent(data.token)}`;
+    document.getElementById('invite-link-url').value = link;
+    document.getElementById('invite-link-result').hidden = false;
+    setAl('al-invite', 'Link generated — share it with your engineer.', 'ok');
   } catch(e) { setAl('al-invite', e.message); }
+}
+
+function copyInviteLink() {
+  const input = document.getElementById('invite-link-url');
+  if (!input) return;
+  navigator.clipboard?.writeText(input.value).then(() => {
+    setAl('al-invite', 'Link copied to clipboard.', 'ok');
+  }).catch(() => {
+    input.select();
+    document.execCommand('copy');
+    setAl('al-invite', 'Link copied.', 'ok');
+  });
 }
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────

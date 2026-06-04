@@ -1,0 +1,42 @@
+name: Backend CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Backend Unit Tests (SQLite)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lineagelens-backend
+    env:
+      APP_ENV: test
+      BACKEND_MODE: team
+      NEO4J_ENABLED: "false"
+      VECTOR_SEARCH_ENABLED: "false"
+      LINEAGE_STRICT_MODE: "false"
+      BACKEND_CORS_ORIGINS: http://localhost:3000
+      DATABASE_URL: sqlite+aiosqlite:///./data/test.db
+      PYTHONPATH: .
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Generate ephemeral test JWT secrets
+        run: |
+          echo "JWT_SECRET_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(48))')" >> "$GITHUB_ENV"
+          echo "JWT_REFRESH_SECRET_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(48))')" >> "$GITHUB_ENV"
+
+      - name: Run backend tests
+        run: pytest tests -q

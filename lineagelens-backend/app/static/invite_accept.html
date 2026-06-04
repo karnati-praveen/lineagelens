@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LineageLens — Accept Invite</title>
+<style>
+:root {
+  --bg:#0f1923; --bg2:#162232; --bg3:#1e3048; --accent:#3b82f6; --accent2:#60a5fa;
+  --text:#e2e8f0; --text2:#94a3b8; --border:#2d4a6a;
+  --danger:#ef4444; --ok:#22c55e; --r:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:40px;width:100%;max-width:400px}
+
+.logo{text-align:center;margin-bottom:28px}
+.logo h1{font-size:22px;font-weight:700;letter-spacing:-.3px}
+.logo h1 span{color:var(--accent2)}
+.logo p{color:var(--text2);font-size:13px;margin-top:6px}
+
+.badge{display:inline-flex;align-items:center;gap:6px;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);border-radius:20px;padding:5px 12px;font-size:12px;color:var(--ok);margin-bottom:20px}
+
+label{display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em}
+input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:9px 12px;color:var(--text);font-size:14px;outline:none;transition:border-color .15s}
+input:focus{border-color:var(--accent)}
+.field{margin-bottom:16px}
+
+.strength{display:flex;gap:3px;margin-top:6px}
+.strength-bar{flex:1;height:3px;border-radius:2px;background:var(--bg3);transition:background .2s}
+
+button{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px 20px;border-radius:6px;border:none;cursor:pointer;font-size:14px;font-weight:600;transition:opacity .15s;width:100%}
+button.p{background:var(--accent);color:#fff}
+button:hover{opacity:.85}
+button:disabled{opacity:.45;cursor:not-allowed}
+
+.err{color:var(--danger);font-size:13px;margin-top:12px;min-height:20px;text-align:center}
+.hint{color:var(--text2);font-size:12px;margin-top:5px}
+
+.success-icon{font-size:48px;text-align:center;margin-bottom:16px}
+.success-msg{text-align:center;color:var(--text2);font-size:13px;margin-bottom:24px}
+.success-title{text-align:center;font-size:18px;font-weight:700;margin-bottom:8px}
+
+.panel{display:none}
+.panel.active{display:block}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <h1>Lineage<span>Lens</span></h1>
+    <p>You've been invited to join a workspace</p>
+  </div>
+
+  <!-- Error: no token in URL -->
+  <div id="no-token" style="display:none;text-align:center">
+    <div style="font-size:32px;margin-bottom:12px">⚠️</div>
+    <p style="color:var(--danger);margin-bottom:8px">No invite token found.</p>
+    <p style="color:var(--text2);font-size:13px">Ask your admin to send you a fresh invite link.</p>
+  </div>
+
+  <!-- Join form -->
+  <div id="join-form">
+    <div style="text-align:center;margin-bottom:20px">
+      <div class="badge">✓ Valid invite link</div>
+    </div>
+    <div class="field">
+      <label for="username">Choose a username</label>
+      <input id="username" type="text" placeholder="alice" autocomplete="username" autocapitalize="none" spellcheck="false">
+      <div class="hint">Lowercase letters, numbers, dots, hyphens only</div>
+    </div>
+    <div class="field">
+      <label for="password">Set a password</label>
+      <input id="password" type="password" placeholder="At least 8 characters" autocomplete="new-password">
+      <div class="strength">
+        <div class="strength-bar" id="sb1"></div>
+        <div class="strength-bar" id="sb2"></div>
+        <div class="strength-bar" id="sb3"></div>
+        <div class="strength-bar" id="sb4"></div>
+      </div>
+    </div>
+    <div class="field">
+      <label for="confirm">Confirm password</label>
+      <input id="confirm" type="password" placeholder="Re-enter password" autocomplete="new-password">
+    </div>
+    <div class="err" id="err-msg"></div>
+    <button class="p" id="join-btn" onclick="joinWorkspace()">Join Workspace</button>
+  </div>
+
+  <!-- Success -->
+  <div id="success-panel" style="display:none">
+    <div class="success-icon">🎉</div>
+    <div class="success-title">Welcome aboard!</div>
+    <div class="success-msg">Your account is ready. Taking you to the dashboard…</div>
+    <button class="p" onclick="goToDashboard()">Open Dashboard</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+const _token = new URLSearchParams(window.location.search).get('token') || '';
+
+if (!_token) {
+  document.getElementById('no-token').style.display = 'block';
+  document.getElementById('join-form').style.display = 'none';
+}
+
+async function joinWorkspace() {
+  const err = document.getElementById('err-msg');
+  const btn = document.getElementById('join-btn');
+  err.textContent = '';
+
+  const username = document.getElementById('username').value.trim().toLowerCase();
+  const password = document.getElementById('password').value;
+  const confirm  = document.getElementById('confirm').value;
+
+  if (!username) { err.textContent = 'Username is required.'; return; }
+  if (!/^[a-z0-9._@-]+$/.test(username)) { err.textContent = 'Username contains invalid characters.'; return; }
+  if (password.length < 8) { err.textContent = 'Password must be at least 8 characters.'; return; }
+  if (password !== confirm) { err.textContent = 'Passwords do not match.'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Joining…';
+
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 30000);
+
+  try {
+    const res = await fetch('/auth/invite/accept', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({token: _token, username, password}),
+      signal: ac.signal,
+    });
+    clearTimeout(timer);
+
+    let data = null;
+    try { data = await res.json(); } catch(_) {}
+
+    if (!res.ok) {
+      err.textContent = (data && data.detail) || `Join failed (HTTP ${res.status}).`;
+      btn.disabled = false;
+      btn.textContent = 'Join Workspace';
+      return;
+    }
+
+    if (data?.accessToken) {
+      sessionStorage.setItem('ll_access', data.accessToken);
+      sessionStorage.setItem('ll_refresh', data.refreshToken);
+      if (data.workspaceId) sessionStorage.setItem('ll_workspace', data.workspaceId);
+    }
+
+    document.getElementById('join-form').style.display = 'none';
+    document.getElementById('success-panel').style.display = 'block';
+    setTimeout(goToDashboard, 3000);
+
+  } catch(e) {
+    clearTimeout(timer);
+    err.textContent = e?.name === 'AbortError'
+      ? 'Server is taking too long — check the backend is running, then try again.'
+      : `Network error: ${e?.message || 'unknown'}`;
+    btn.disabled = false;
+    btn.textContent = 'Join Workspace';
+  }
+}
+
+function goToDashboard() {
+  const ws = sessionStorage.getItem('ll_workspace') || '';
+  window.location.href = ws ? `/dashboard#ws=${encodeURIComponent(ws)}` : '/dashboard';
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') joinWorkspace();
+});
+
+// Password strength meter
+document.getElementById('password')?.addEventListener('input', function() {
+  const v = this.value;
+  let score = 0;
+  if (v.length >= 8) score++;
+  if (v.length >= 12) score++;
+  if (/[A-Z]/.test(v) && /[0-9]/.test(v)) score++;
+  if (/[^A-Za-z0-9]/.test(v)) score++;
+  const colors = ['', '#ef4444', '#f59e0b', '#3b82f6', '#22c55e'];
+  [1,2,3,4].forEach(i => {
+    document.getElementById(`sb${i}`).style.background = i <= score ? colors[score] : 'var(--bg3)';
+  });
+});
+</script>
+</body>
+</html>

@@ -100,9 +100,12 @@ server {
 
 ---
 
-## Kubernetes (Helm-style)
+## Kubernetes
 
-LineageLens does not ship an official Helm chart yet, but here is a reference deployment manifest for the backend:
+LineageLens ships Kubernetes manifests and a Helm chart for the Max tier under
+[`lineagelens-k8s/`](../lineagelens-k8s/) (`base/` kustomize manifests, `helm/` chart, and a
+`overlays/production/` overlay). The reference backend Deployment below is a minimal inline
+example; prefer the maintained chart for real deployments:
 
 ```yaml
 apiVersion: apps/v1
@@ -194,6 +197,11 @@ Developer machines  ->  LLM Proxy (port 8788)  ->  AI Providers
 
 ## Environment Variables Reference
 
+> In the Docker Compose deployment, the proxy's ingest token and upstream URL are set in
+> `lineagelens-deploy/.env` using the compose-mapped names **`PROXY_INGEST_TOKEN`** and
+> **`PROXY_UPSTREAM_URL`** (the compose file maps them to the proxy's `BACKEND_INGEST_TOKEN` /
+> `UPSTREAM_URL`). Use the raw proxy names only when running the proxy directly without Compose.
+
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DATABASE_URL` | Yes | — | PostgreSQL async URL (`postgresql+asyncpg://...`) |
@@ -206,7 +214,7 @@ Developer machines  ->  LLM Proxy (port 8788)  ->  AI Providers
 | `NEO4J_PASSWORD` | No | — | Neo4j password |
 | `EMBEDDING_API_KEY` | No | — | For embedding-backed semantic search |
 | `LOG_FORMAT` | No | text | Set to `json` for structured logging |
-| `BACKEND_CORS_ORIGINS` | No | `*` | Comma-separated allowed origins |
+| `BACKEND_CORS_ORIGINS` | No | `http://127.0.0.1:3000,http://localhost:3000` | Comma-separated allowed origins. `*` is rejected in production and cannot be combined with explicit origins. |
 | `BACKEND_TRUSTED_HOSTS` | No | — | Comma-separated allowed Host header values |
 | `BACKEND_MODE` | No | `team` | `solo`, `team`, or `enterprise` |
 
