@@ -37,18 +37,16 @@ lineagelens-releases/**/*.vsix
 # Nested package installs
 cli/node_modules/
 
-# Remotion video project
+# Local video/ad project
 lineagelens-ad/
 
-# Launch / docs working files
+# Launch / marketing working files
 pracodx
 prav2
 lineagelens-prafea
-lineagelens-docs/
 
 # Marketing and automation docs (local only)
 lineagelens-marketing/
-lineagelens-marketing/LAUNCH_PLAYBOOK.md
 lineagelens-n8n/
 
 # Local environment files

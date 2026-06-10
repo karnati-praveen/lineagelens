@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { randomBytes } from 'crypto';
 
 import { CaptureStore } from '../store';
 
@@ -8,6 +9,20 @@ let tmpDir: string;
 
 function makeContext() {
   return { globalStorageUri: { fsPath: tmpDir } } as any;
+}
+
+// Context whose secrets stub is backed by an in-memory map, mimicking the
+// VS Code SecretStorage API used by CaptureStore.create.
+function makeContextWithSecrets() {
+  const secretMap = new Map<string, string>();
+  return {
+    globalStorageUri: { fsPath: tmpDir },
+    secrets: {
+      get: (k: string) => Promise.resolve(secretMap.get(k)),
+      store: (k: string, v: string) => { secretMap.set(k, v); return Promise.resolve(); },
+      delete: (k: string) => { secretMap.delete(k); return Promise.resolve(); },
+    },
+  } as any;
 }
 
 beforeEach(() => {
@@ -119,6 +134,113 @@ test('load backfills confidence and source for legacy records lacking them', () 
   const rec = store.getById('aaa');
   expect(rec?.confidence).toBe(0.5);
   expect(rec?.source).toBe('unknown');
+});
+
+// ── remove() ──────────────────────────────────────────────────────────────────
+
+test('remove deletes a single record and returns true', () => {
+  const store = new CaptureStore(makeContext());
+  const a = store.add({ filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'a', linesAdded: 1, workspaceFolder: null });
+  const b = store.add({ filePath: '/b.ts', fileName: 'b.ts', language: 'typescript', insertedCode: 'b', linesAdded: 1, workspaceFolder: null });
+  expect(store.remove(a.id)).toBe(true);
+  expect(store.count).toBe(1);
+  expect(store.getById(a.id)).toBeUndefined();
+  expect(store.getById(b.id)?.fileName).toBe('b.ts');
+});
+
+test('remove returns false for an unknown id and leaves the store intact', () => {
+  const store = new CaptureStore(makeContext());
+  store.add({ filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'a', linesAdded: 1, workspaceFolder: null });
+  expect(store.remove('nope')).toBe(false);
+  expect(store.count).toBe(1);
+});
+
+test('remove persists to disk', () => {
+  const ctx = makeContext();
+  const store = new CaptureStore(ctx);
+  const a = store.add({ filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'a', linesAdded: 1, workspaceFolder: null });
+  store.remove(a.id);
+  const store2 = new CaptureStore(ctx);
+  expect(store2.count).toBe(0);
+});
+
+// ── setClassification() ───────────────────────────────────────────────────────
+
+test('setClassification updates source and applies default confidence', () => {
+  const store = new CaptureStore(makeContext());
+  const a = store.add({ filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'a', linesAdded: 1, workspaceFolder: null });
+  const ai = store.setClassification(a.id, 'ai');
+  expect(ai?.source).toBe('ai');
+  expect(ai?.confidence).toBe(0.99);
+  const paste = store.setClassification(a.id, 'paste');
+  expect(paste?.confidence).toBe(0.95);
+  const unknown = store.setClassification(a.id, 'unknown');
+  expect(unknown?.confidence).toBe(0.5);
+});
+
+test('setClassification honours an explicit confidence override', () => {
+  const store = new CaptureStore(makeContext());
+  const a = store.add({ filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'a', linesAdded: 1, workspaceFolder: null });
+  const rec = store.setClassification(a.id, 'ai', 0.7);
+  expect(rec?.confidence).toBe(0.7);
+});
+
+test('setClassification returns undefined for an unknown id', () => {
+  const store = new CaptureStore(makeContext());
+  expect(store.setClassification('nope', 'ai')).toBeUndefined();
+});
+
+// ── at-rest encryption ──────────────────────────────────────────────────────────
+
+const CAPTURES_PATH = () => path.join(tmpDir, 'captures.json');
+
+test('create() writes an encrypted store, not plaintext', async () => {
+  const ctx = makeContextWithSecrets();
+  const store = await CaptureStore.create(ctx);
+  store.add({ filePath: '/s.ts', fileName: 's.ts', language: 'typescript', insertedCode: 'SECRET_TOKEN_abc123', linesAdded: 1, workspaceFolder: null });
+
+  const onDisk = fs.readFileSync(CAPTURES_PATH(), 'utf-8');
+  expect(onDisk.startsWith('LLENC1:')).toBe(true);
+  // The sensitive content must not be readable in the file.
+  expect(onDisk).not.toContain('SECRET_TOKEN_abc123');
+  expect(onDisk).not.toContain('s.ts');
+});
+
+test('create() reloads and decrypts persisted records', async () => {
+  const ctx = makeContextWithSecrets();
+  const store = await CaptureStore.create(ctx);
+  const rec = store.add({ filePath: '/r.ts', fileName: 'r.ts', language: 'typescript', insertedCode: 'roundtrip', linesAdded: 2, workspaceFolder: null });
+
+  const store2 = await CaptureStore.create(ctx);
+  expect(store2.count).toBe(1);
+  expect(store2.getById(rec.id)?.insertedCode).toBe('roundtrip');
+});
+
+test('create() migrates a legacy plaintext store to encrypted on load', async () => {
+  // Seed a legacy plaintext captures.json.
+  const legacy = [{ id: 'lll', timestamp: new Date().toISOString(), filePath: '/x.ts', fileName: 'x.ts', language: 'typescript', insertedCode: 'legacy', linesAdded: 1, workspaceFolder: null }];
+  fs.writeFileSync(CAPTURES_PATH(), JSON.stringify(legacy), 'utf-8');
+
+  const ctx = makeContextWithSecrets();
+  const store = await CaptureStore.create(ctx);
+  expect(store.getById('lll')?.insertedCode).toBe('legacy');
+
+  // After migration the file is encrypted.
+  const onDisk = fs.readFileSync(CAPTURES_PATH(), 'utf-8');
+  expect(onDisk.startsWith('LLENC1:')).toBe(true);
+  expect(onDisk).not.toContain('legacy');
+});
+
+test('encrypted store is unreadable with the wrong key', async () => {
+  const ctx = makeContext();
+  const goodKey = randomBytes(32);
+  const store = new CaptureStore(ctx, goodKey);
+  store.add({ filePath: '/k.ts', fileName: 'k.ts', language: 'typescript', insertedCode: 'guarded', linesAdded: 1, workspaceFolder: null });
+
+  // A store opened with a different key cannot decrypt → empty (load swallows error).
+  const wrongKey = randomBytes(32);
+  const store2 = new CaptureStore(ctx, wrongKey);
+  expect(store2.count).toBe(0);
 });
 
 // ── reorder() ─────────────────────────────────────────────────────────────────

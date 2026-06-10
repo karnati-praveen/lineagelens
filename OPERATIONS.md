@@ -181,7 +181,7 @@ dashboard. Graph lineage is additive. To backfill lineage nodes after Neo4j reco
 2. Re-POST each orphaned record to `/ingest`. The backend will detect the existing PostgreSQL
    record via UUID deduplication and skip storing a duplicate; it will still attempt to write
    the Neo4j lineage node if one is missing. (Requires a migration to expose this backfill
-   path — see roadmap.)
+   path.)
 
 3. Until a dedicated backfill endpoint ships, the manual path is: query orphaned UUIDs,
    fetch each from `/provenance/{uuid}`, and re-POST the `provenance_payload` to `/ingest`.

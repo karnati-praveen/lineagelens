@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { randomUUID } from 'crypto';
+import { randomUUID, randomBytes, createCipheriv, createDecipheriv } from 'crypto';
 
 export type CaptureSource = 'ai' | 'paste' | 'unknown';
 
@@ -21,33 +21,109 @@ export interface CaptureRecord {
 }
 
 const STORE_FILE = 'captures.json';
+const SECRET_KEY_NAME = 'lineagelens.base.captureStoreKey';
+// Marker prefix identifying an encrypted store file. Legacy plaintext stores
+// begin with '[' (a JSON array), so the two formats are unambiguous on read.
+const ENC_PREFIX = 'LLENC1:';
+
+/**
+ * Resolve (or create) the per-install AES-256 key used to encrypt the capture
+ * store. The key lives in VS Code SecretStorage, which is backed by the OS
+ * keychain (DPAPI on Windows, Keychain on macOS, libsecret on Linux) — so a
+ * stolen captures.json file is useless without access to the keychain too.
+ */
+async function getOrCreateStoreKey(context: vscode.ExtensionContext): Promise<Buffer> {
+  const existing = await context.secrets.get(SECRET_KEY_NAME);
+  if (existing) {
+    try {
+      const buf = Buffer.from(existing, 'base64');
+      if (buf.length === 32) { return buf; }
+    } catch {
+      // fall through and regenerate
+    }
+  }
+  const key = randomBytes(32);
+  await context.secrets.store(SECRET_KEY_NAME, key.toString('base64'));
+  return key;
+}
 
 export class CaptureStore {
   private storePath: string;
   private records: CaptureRecord[] = [];
   private maxCaptures: number;
+  private key: Buffer | null;
 
-  constructor(context: vscode.ExtensionContext) {
+  /**
+   * Construct a store. `key` enables at-rest encryption; when omitted the store
+   * reads/writes legacy plaintext (used by unit tests and as a fallback when the
+   * OS keychain is unavailable). Production code should use {@link CaptureStore.create}.
+   */
+  constructor(context: vscode.ExtensionContext, key?: Buffer) {
     const dir = context.globalStorageUri.fsPath;
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
     this.storePath = path.join(dir, STORE_FILE);
     this.maxCaptures = vscode.workspace.getConfiguration('lineagelensBase').get('maxStoredCaptures', 1000);
+    this.key = key ?? null;
     this.load();
+  }
+
+  /**
+   * Preferred constructor: acquires the encryption key from the OS keychain,
+   * then loads (and transparently migrates any legacy plaintext store to
+   * encrypted form on first save).
+   */
+  static async create(context: vscode.ExtensionContext): Promise<CaptureStore> {
+    let key: Buffer | undefined;
+    try {
+      key = await getOrCreateStoreKey(context);
+    } catch (error) {
+      console.error('LineageLens Base: keychain unavailable, storing captures unencrypted:', error);
+      key = undefined;
+    }
+    return new CaptureStore(context, key);
+  }
+
+  private encrypt(plaintext: string): string {
+    if (!this.key) { return plaintext; }
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', this.key, iv);
+    const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf-8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return ENC_PREFIX + Buffer.concat([iv, tag, ciphertext]).toString('base64');
+  }
+
+  private decrypt(raw: string): string {
+    const payload = Buffer.from(raw.slice(ENC_PREFIX.length), 'base64');
+    const iv = payload.subarray(0, 12);
+    const tag = payload.subarray(12, 28);
+    const ciphertext = payload.subarray(28);
+    if (!this.key) {
+      throw new Error('Encrypted capture store found but no key is available.');
+    }
+    const decipher = createDecipheriv('aes-256-gcm', this.key, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf-8');
   }
 
   private load(): void {
     try {
       if (fs.existsSync(this.storePath)) {
         const raw = fs.readFileSync(this.storePath, 'utf-8');
-        const parsed = JSON.parse(raw) as CaptureRecord[];
+        const wasEncrypted = raw.startsWith(ENC_PREFIX);
+        const json = wasEncrypted ? this.decrypt(raw) : raw;
+        const parsed = JSON.parse(json) as CaptureRecord[];
         // Backfill fields added in v1.2.3 so older stored records stay valid.
         this.records = parsed.map(r => ({
           ...r,
           confidence: r.confidence ?? 0.5,
           source: (r.source ?? 'unknown') as CaptureSource,
         }));
+        // Transparently migrate a legacy plaintext store to encrypted at rest.
+        if (!wasEncrypted && this.key) {
+          this.save();
+        }
       }
     } catch {
       this.records = [];
@@ -57,7 +133,7 @@ export class CaptureStore {
   private save(): void {
     const tmp = this.storePath + '.tmp';
     try {
-      fs.writeFileSync(tmp, JSON.stringify(this.records, null, 2), 'utf-8');
+      fs.writeFileSync(tmp, this.encrypt(JSON.stringify(this.records, null, 2)), 'utf-8');
       try {
         fs.renameSync(tmp, this.storePath);
       } catch {
@@ -141,6 +217,28 @@ export class CaptureStore {
       this.records = [...rest.slice(0, idx), ...dragged, ...rest.slice(idx)];
     }
     this.save();
+  }
+
+  /** Remove a single record by id. Returns true if a record was removed. */
+  remove(id: string): boolean {
+    const idx = this.records.findIndex(r => r.id === id);
+    if (idx === -1) { return false; }
+    this.records.splice(idx, 1);
+    this.save();
+    return true;
+  }
+
+  /**
+   * Correct a record's origin classification. A user assertion is treated as
+   * high-confidence; pass an explicit `confidence` to override the default.
+   */
+  setClassification(id: string, source: CaptureSource, confidence?: number): CaptureRecord | undefined {
+    const rec = this.records.find(r => r.id === id);
+    if (!rec) { return undefined; }
+    rec.source = source;
+    rec.confidence = confidence ?? (source === 'ai' ? 0.99 : source === 'paste' ? 0.95 : 0.5);
+    this.save();
+    return rec;
   }
 
   clear(): void {

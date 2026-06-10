@@ -6,8 +6,6 @@ was accepted — then stores that record in infrastructure you control.
 
 Self-hosted. MIT licensed. No prompts leave your network.
 
-[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/karnatipraveen.lineagelens?label=VS%20Code%20extension)](https://marketplace.visualstudio.com/items?itemName=karnatipraveen.lineagelens)
-[![OpenVSX](https://img.shields.io/badge/OpenVSX-available-blue)](https://open-vsx.org/extension/karnatipraveen/lineagelens)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 ---
@@ -215,6 +213,24 @@ architecture reference.
 
 ---
 
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [`lineagelens-docs/architecture.md`](lineagelens-docs/architecture.md) | Full architecture, data flow, and mode matrix |
+| [`lineagelens-docs/onboarding.md`](lineagelens-docs/onboarding.md) | 15-minute quickstart for new users |
+| [`lineagelens-docs/api-reference.md`](lineagelens-docs/api-reference.md) | HTTP API guide — auth, ingest, search, integrity, export |
+| [`lineagelens-docs/troubleshooting.md`](lineagelens-docs/troubleshooting.md) | Common problems and fixes |
+| [`lineagelens-docs/tools/claude-code.md`](lineagelens-docs/tools/claude-code.md) | Claude Code setup and capture details |
+| [`lineagelens-docs/tools/codex-cli.md`](lineagelens-docs/tools/codex-cli.md) | OpenAI Codex CLI setup |
+| [`lineagelens-docs/tools/gemini-cli.md`](lineagelens-docs/tools/gemini-cli.md) | Gemini CLI setup |
+| [`lineagelens-docs/tools/cursor.md`](lineagelens-docs/tools/cursor.md) | Cursor — editor-only capture |
+| [`lineagelens-docs/tools/copilot.md`](lineagelens-docs/tools/copilot.md) | GitHub Copilot — editor-only capture |
+| [`lineagelens-docs/tools/continue.md`](lineagelens-docs/tools/continue.md) | Continue — full or editor-only depending on provider |
+| [`lineagelens-docs/deployment.md`](lineagelens-docs/deployment.md) | Deployment guide (Docker, native, Kubernetes) |
+
+---
+
 ## Compliance context
 
 The **EU AI Act (Articles 11, 12, 14)**, enforceable from August 2026, requires organizations
@@ -232,25 +248,10 @@ without changing the git workflow.
 - **Not certified.** RBAC, SSO, hash-chain integrity, and AI-BOM export exist but have not been
   validated against SOC 2 / ISO 27001 controls. Treat it as developer-governance tooling.
 - **Not multi-tenant.** One instance serves one workspace tree. Run separate instances for
-  unrelated customers.
-- **Single maintainer.** Bug reports get fast weekday turnaround; weekends are slower.
+  unrelated workspace groups.
 - **Cursor agent / Copilot CLI are partially out of scope.** Their traffic routes through
   proprietary backends (`api.cursor.sh`, `api.githubcopilot.com`), so you get editor-level
   capture but not the prompt or model.
-
----
-
-## Roadmap
-
-In rough priority order:
-
-- **Tier 2 adapters** — Aider (git-log fingerprinting), Cline / Roo Code (XML tool format),
-  Continue's text-fallback path
-- **git-based capture fallback** — reconstruct AI-assisted commits from `git log` + AI tool
-  history files, as an Easy Mode supplement when no extension is available
-- **CLI wrapper** — `lineagelens run -- <ai-tool> "..."` for capture without a full proxy setup
-- **Risk scoring v2** — heuristic plus lightweight static analysis
-- **Dedicated docs site** — current docs live in [`lineagelens-docs/`](lineagelens-docs/)
 
 ---
 
@@ -259,4 +260,4 @@ In rough priority order:
 Issues and PRs welcome. See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for setup and guidelines.
 Security issues go to [SECURITY.md](SECURITY.md), not public issues.
 
-Built by [Karnati Praveen](https://github.com/karnati-praveen) · MIT License
+MIT License

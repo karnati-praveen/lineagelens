@@ -1,196 +1,9 @@
 import * as vscode from 'vscode';
-import { CaptureRecord, CaptureStore } from './store';
+import { CaptureRecord } from './store';
 
-/** Custom MIME type for drag-and-drop between tree and editor. */
-export const CAPTURE_DRAG_MIME = 'application/vnd.lineagelens.capture';
-
-// ── Language icon + colour ────────────────────────────────────────────────────
-
-const LANG_META: Record<string, [string, string]> = {
-  typescript:       ['symbol-class',     'charts.blue'],
-  typescriptreact:  ['symbol-class',     'charts.blue'],
-  javascript:       ['symbol-method',    'charts.yellow'],
-  javascriptreact:  ['symbol-method',    'charts.yellow'],
-  python:           ['symbol-namespace', 'charts.green'],
-  rust:             ['symbol-struct',    'charts.red'],
-  go:               ['symbol-interface', 'charts.purple'],
-  java:             ['symbol-class',     'charts.orange'],
-  kotlin:           ['symbol-class',     'charts.orange'],
-  cpp:              ['symbol-struct',    'charts.red'],
-  c:                ['symbol-struct',    'charts.red'],
-  csharp:           ['symbol-class',     'charts.purple'],
-  html:             ['symbol-color',     'charts.orange'],
-  css:              ['symbol-color',     'charts.blue'],
-  scss:             ['symbol-color',     'charts.blue'],
-  json:             ['symbol-key',       'charts.foreground'],
-  yaml:             ['symbol-key',       'charts.foreground'],
-  markdown:         ['book',             'charts.foreground'],
-  shellscript:      ['terminal',         'charts.green'],
-  bash:             ['terminal',         'charts.green'],
-  powershell:       ['terminal',         'charts.blue'],
-  zsh:              ['terminal',         'charts.green'],
-  sql:              ['database',         'charts.yellow'],
-};
-
-function langIcon(language: string): vscode.ThemeIcon {
-  const lang = (language || '').toLowerCase();
-  const [icon, colorId] = LANG_META[lang] ?? ['code', 'charts.foreground'];
-  return new vscode.ThemeIcon(icon, new vscode.ThemeColor(colorId));
-}
-
-function relativeTime(isoString: string): string {
-  if (!isoString) { return 'unknown'; }
-  const diff = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000);
-  if (isNaN(diff) || diff < -60) { return 'unknown'; }
-  if (diff < 60)     { return 'just now'; }
-  if (diff < 3600)   { return `${Math.floor(diff / 60)}m ago`; }
-  if (diff < 86400)  { return `${Math.floor(diff / 3600)}h ago`; }
-  if (diff < 172800) { return 'yesterday'; }
-  return new Date(isoString).toLocaleDateString([], { month: 'short', day: 'numeric' });
-}
-
-// ── Tree-item types ───────────────────────────────────────────────────────────
-
-/**
- * Pinned header item that always sits at position 0 when captures exist.
- * Clicking it fires lineagelens.clearAll — the confirmation dialog is shown
- * by the command handler.
- */
-export class ClearAllTreeItem extends vscode.TreeItem {
-  static readonly CONTEXT = 'clearAllAction';
-
-  constructor(count: number) {
-    super('Clear all captures', vscode.TreeItemCollapsibleState.None);
-    // Stable unique id — prevents VS Code from merging this item with cached
-    // tree items from a previous extension version that didn't have it.
-    this.id           = '__lineagelens_clearall__';
-    this.description  = `${count} record${count !== 1 ? 's' : ''}`;
-    this.iconPath     = new vscode.ThemeIcon('trash', new vscode.ThemeColor('errorForeground'));
-    this.contextValue = ClearAllTreeItem.CONTEXT;
-    this.tooltip      = `Permanently delete all ${count} AI captures — cannot be undone`;
-    this.command = {
-      command:   'lineagelens.clearAll',
-      title:     'Clear All Captures',
-      arguments: [],
-    };
-  }
-}
-
-/** One row per captured AI insertion. */
-export class CaptureTreeItem extends vscode.TreeItem {
-  static readonly CONTEXT = 'captureRecord';
-
-  constructor(public readonly record: CaptureRecord) {
-    super(record.fileName, vscode.TreeItemCollapsibleState.None);
-
-    this.description = `${relativeTime(record.timestamp)}  +${record.linesAdded}`;
-
-    const preview = record.insertedCode.slice(0, 400);
-    const tip = new vscode.MarkdownString();
-    tip.isTrusted = true;
-    const pct = Math.round((record.confidence ?? 0.5) * 100);
-    const sourceLabel = record.source === 'ai' ? '🤖 AI' : record.source === 'paste' ? '📋 Paste' : '❓ Unknown';
-    tip.appendMarkdown(`**$(file-code) ${record.fileName}**\n\n`);
-    tip.appendMarkdown(`\`${record.language}\`  ·  \`+${record.linesAdded} lines\`  ·  ${sourceLabel} \`${pct}%\`\n\n`);
-    tip.appendCodeblock(preview + (record.insertedCode.length > 400 ? '\n…' : ''), record.language);
-    if (record.workspaceFolder) {
-      tip.appendMarkdown(`\n\n*${record.workspaceFolder}*`);
-    }
-    this.tooltip      = tip;
-    this.iconPath     = langIcon(record.language);
-    this.contextValue = CaptureTreeItem.CONTEXT;
-    // Single click = insert at cursor.  Right-click → "View Details" is still accessible.
-    this.command = {
-      command:   'lineagelens.insertAtCursor',
-      title:     'Insert at Cursor',
-      arguments: [record.id],
-    };
-  }
-}
-
-// ── Union type for the provider ───────────────────────────────────────────────
-
-type TreeNode = ClearAllTreeItem | CaptureTreeItem;
-
-// ── Tree provider ─────────────────────────────────────────────────────────────
-
-export class CaptureTreeProvider
-  implements
-    vscode.TreeDataProvider<TreeNode>,
-    vscode.TreeDragAndDropController<TreeNode>,
-    vscode.Disposable
-{
-  private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | void>();
-  readonly onDidChangeTreeData  = this._onDidChangeTreeData.event;
-
-  // Only capture items can be dragged — the header is excluded in handleDrag.
-  readonly dragMimeTypes: readonly string[] = [CAPTURE_DRAG_MIME];
-  readonly dropMimeTypes: readonly string[] = [CAPTURE_DRAG_MIME];
-
-  constructor(private store: CaptureStore) {}
-
-  refresh(): void { this._onDidChangeTreeData.fire(); }
-
-  getTreeItem(element: TreeNode): vscode.TreeItem { return element; }
-
-  /** All items are root-level — required so VS Code can navigate via reveal(). */
-  getParent(_element: TreeNode): undefined { return undefined; }
-
-  getChildren(): TreeNode[] {
-    const records = this.store.getAll();
-    if (records.length === 0) { return []; }
-    return [
-      new ClearAllTreeItem(records.length),
-      ...records.map(r => new CaptureTreeItem(r)),
-    ];
-  }
-
-  // ── Drag ────────────────────────────────────────────────────────────────────
-
-  handleDrag(
-    source: readonly TreeNode[],
-    dataTransfer: vscode.DataTransfer,
-    _token: vscode.CancellationToken,
-  ): void {
-    // Ignore the header item — only capture items are draggable.
-    const items = source.filter((n): n is CaptureTreeItem => n instanceof CaptureTreeItem);
-    if (items.length === 0) { return; }
-
-    const separator = '\n\n// ── AI capture ──────────────────────────────\n\n';
-    const code = items.map(i => i.record.insertedCode).join(separator);
-
-    // Custom MIME — picked up by handleDrop (reorder) and DocumentDropEditProvider (insert).
-    dataTransfer.set(CAPTURE_DRAG_MIME, new vscode.DataTransferItem(
-      items.map(i => i.record.id).join(','),
-    ));
-
-    // text/plain — VS Code 1.92+ inserts this directly when dropped on an editor.
-    // Clipboard is intentionally NOT written here: in-tree reorder drags must not
-    // clobber whatever the user had on their clipboard.
-  }
-
-  // ── Drop (in-tree reorder) ───────────────────────────────────────────────────
-
-  async handleDrop(
-    target: TreeNode | undefined,
-    dataTransfer: vscode.DataTransfer,
-    _token: vscode.CancellationToken,
-  ): Promise<void> {
-    const item = dataTransfer.get(CAPTURE_DRAG_MIME);
-    if (!item) { return; }
-    const ids = (await item.asString()).split(',').filter(Boolean);
-    // null  → ClearAllTreeItem header → reorder to top
-    // undef → empty space             → reorder to bottom
-    // id    → specific capture item   → insert before it
-    const targetId: string | null | undefined =
-      target instanceof CaptureTreeItem ? target.record.id :
-      target instanceof ClearAllTreeItem ? null :
-      undefined;
-    this.store.reorder(ids, targetId);
-    this.refresh();
-  }
-
-  dispose(): void { this._onDidChangeTreeData.dispose(); }
+/** Human label for a capture's best-guess origin. */
+function sourceLabel(source: string): string {
+  return source === 'ai' ? '🤖 AI' : source === 'paste' ? '📋 Paste' : '❓ Unknown';
 }
 
 // ── Webview detail panel ──────────────────────────────────────────────────────
@@ -200,7 +13,7 @@ export function buildDetailPanel(panel: vscode.WebviewPanel, record: CaptureReco
   const esc  = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const pct = Math.round((record.confidence ?? 0.5) * 100);
-  const sourceLabel = record.source === 'ai' ? '🤖 AI' : record.source === 'paste' ? '📋 Paste' : '❓ Unknown';
+  const srcLabel = sourceLabel(record.source);
 
   const langColors: Record<string, string> = {
     typescript: '#3178c6', javascript: '#f7df1e', python: '#3572a5',
@@ -210,6 +23,11 @@ export function buildDetailPanel(panel: vscode.WebviewPanel, record: CaptureReco
     sql: '#e38c00',
   };
   const langColor = langColors[record.language.toLowerCase()] ?? '#6b7280';
+
+  // Embed the code + language for the client-side highlighter. JSON.stringify
+  // escapes quotes/newlines; the </ guard prevents a literal "</script>" inside
+  // the captured code from prematurely closing the inline script.
+  const jsonString = (v: unknown) => JSON.stringify(v).replace(/</g, '\\u003c');
 
   panel.webview.html = `<!DOCTYPE html>
 <html lang="en">
@@ -232,7 +50,7 @@ export function buildDetailPanel(panel: vscode.WebviewPanel, record: CaptureReco
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-bottom: 20px;
+    margin-bottom: 16px;
     padding-bottom: 14px;
     border-bottom: 1px solid var(--vscode-panel-border);
   }
@@ -244,6 +62,33 @@ export function buildDetailPanel(panel: vscode.WebviewPanel, record: CaptureReco
   }
   .header-title { font-size: 15px; font-weight: 600; }
   .header-sub   { font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 2px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; align-items: center; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none; border-radius: 5px; padding: 6px 12px;
+    font-size: 12px; cursor: pointer; font-family: var(--vscode-font-family);
+  }
+  .btn:hover { background: var(--vscode-button-hoverBackground); }
+  .btn.secondary {
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+  }
+  .btn.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  .btn.danger { background: transparent; color: var(--vscode-errorForeground); border: 1px solid var(--vscode-errorForeground); }
+  .btn.danger:hover { background: var(--vscode-errorForeground); color: var(--vscode-editor-background); }
+  .reclass { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+  .reclass-label { font-size: 11px; color: var(--vscode-descriptionForeground); }
+  .seg { display: inline-flex; border: 1px solid var(--vscode-panel-border); border-radius: 5px; overflow: hidden; }
+  .seg button {
+    background: transparent; color: var(--vscode-foreground);
+    border: none; padding: 5px 10px; font-size: 11px; cursor: pointer;
+    border-right: 1px solid var(--vscode-panel-border); font-family: var(--vscode-font-family);
+  }
+  .seg button:last-child { border-right: none; }
+  .seg button.active { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  .seg button:hover:not(.active) { background: var(--vscode-list-hoverBackground); }
   .grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
@@ -277,20 +122,28 @@ export function buildDetailPanel(panel: vscode.WebviewPanel, record: CaptureReco
     justify-content: space-between; margin-bottom: 8px;
   }
   .code-label { font-size: 12px; font-weight: 600; color: var(--vscode-descriptionForeground); }
-  .copy-btn {
-    background: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-button-secondaryForeground);
-    border: none; border-radius: 4px; padding: 4px 10px;
-    font-size: 11px; cursor: pointer; font-family: var(--vscode-font-family);
-  }
-  .copy-btn:hover { background: var(--vscode-button-secondaryHoverBackground); }
-  pre {
+  .code-wrap {
     background: var(--vscode-textCodeBlock-background);
     border: 1px solid var(--vscode-panel-border);
-    border-radius: 8px; padding: 16px; overflow-x: auto;
+    border-radius: 8px; overflow-x: auto;
+    font-family: var(--vscode-editor-font-family, monospace);
     font-size: 12px; line-height: 1.6;
-    white-space: pre-wrap; word-break: break-all;
   }
+  .code-wrap table { border-collapse: collapse; width: 100%; }
+  .code-wrap td { padding: 0; vertical-align: top; }
+  .ln {
+    text-align: right; padding: 0 10px 0 12px;
+    color: var(--vscode-descriptionForeground); opacity: .55;
+    user-select: none; white-space: nowrap;
+    border-right: 2px solid rgba(34,197,94,.4);
+    background: rgba(34,197,94,.06);
+  }
+  .lc { padding: 0 14px; white-space: pre; }
+  /* lightweight highlighter token colours */
+  .tk-kw  { color: #c586c0; }
+  .tk-str { color: #ce9178; }
+  .tk-num { color: #b5cea8; }
+  .tk-com { color: #6a9955; font-style: italic; }
   .path { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; color: var(--vscode-descriptionForeground); word-break: break-all; }
   .id   { font-family: var(--vscode-editor-font-family, monospace); font-size: 10px; color: var(--vscode-descriptionForeground); opacity: .6; }
 </style>
@@ -302,6 +155,20 @@ export function buildDetailPanel(panel: vscode.WebviewPanel, record: CaptureReco
       <div class="header-title">AI Capture — ${esc(record.fileName)}</div>
       <div class="header-sub">${esc(date)}</div>
     </div>
+  </div>
+  <div class="actions">
+    <button class="btn" id="insertBtn" type="button">⤵ Insert at cursor</button>
+    <button class="btn secondary" id="copyBtn" type="button">Copy</button>
+    <button class="btn secondary" id="revealBtn" type="button">↗ Reveal in file</button>
+    <button class="btn danger" id="deleteBtn" type="button">Delete</button>
+    <span class="reclass">
+      <span class="reclass-label">Reclassify:</span>
+      <span class="seg">
+        <button data-src="ai"      class="${record.source === 'ai' ? 'active' : ''}" type="button">🤖 AI</button>
+        <button data-src="paste"   class="${record.source === 'paste' ? 'active' : ''}" type="button">📋 Paste</button>
+        <button data-src="unknown" class="${record.source === 'unknown' ? 'active' : ''}" type="button">❓ Unknown</button>
+      </span>
+    </span>
   </div>
   <div class="grid">
     <div class="card">
@@ -318,7 +185,7 @@ export function buildDetailPanel(panel: vscode.WebviewPanel, record: CaptureReco
     </div>
     <div class="card">
       <div class="card-label">Source</div>
-      <div class="card-value">${sourceLabel}</div>
+      <div class="card-value">${srcLabel}</div>
     </div>
     <div class="card">
       <div class="card-label">AI Confidence</div>
@@ -328,21 +195,75 @@ export function buildDetailPanel(panel: vscode.WebviewPanel, record: CaptureReco
   </div>
   <div class="code-header">
     <span class="code-label">Inserted Code</span>
-    <button class="copy-btn" id="copyBtn" type="button">Copy</button>
   </div>
-  <pre><code id="code">${esc(record.insertedCode)}</code></pre>
+  <div class="code-wrap"><table id="codeTable"><tbody></tbody></table></div>
   <div style="margin-top:14px"><span class="id">ID: ${esc(record.id)}</span></div>
   <script>
     (function() {
-      var btn = document.getElementById('copyBtn');
-      var codeEl = document.getElementById('code');
-      if (!btn || !codeEl) { return; }
-      btn.addEventListener('click', function() {
-        var text = codeEl.textContent || '';
-        navigator.clipboard && navigator.clipboard.writeText(text).then(function() {
-          btn.textContent = 'Copied!';
-          setTimeout(function() { btn.textContent = 'Copy'; }, 1500);
-        }).catch(function() { btn.textContent = 'Copy failed'; setTimeout(function() { btn.textContent = 'Copy'; }, 1500); });
+      var vscode = acquireVsCodeApi();
+      var CODE = ${jsonString(record.insertedCode)};
+      var LANG = ${jsonString(record.language)};
+
+      // ── Minimal, single-pass tokenizer ──────────────────────────────────────
+      // One combined regex with ordered alternatives avoids nested-span bugs:
+      // each character belongs to exactly one matched token.
+      var KEYWORDS = ('const let var function return if else for while do switch case break ' +
+        'continue class extends new this super import export from default async await yield ' +
+        'try catch finally throw typeof instanceof in of void delete null undefined true false ' +
+        'def lambda pass elif except with as raise global nonlocal print None True False and or not ' +
+        'public private protected static final void int string bool float double struct enum interface ' +
+        'fn let mut impl trait pub use mod match where type package func go defer chan select').split(' ');
+      var KW = {}; KEYWORDS.forEach(function(k){ KW[k] = true; });
+
+      var TOKEN = /(\\/\\/[^\\n]*|#[^\\n]*|\\/\\*[\\s\\S]*?\\*\\/)|("(?:[^"\\\\]|\\\\.)*"|'(?:[^'\\\\]|\\\\.)*'|\`(?:[^\`\\\\]|\\\\.)*\`)|(\\b\\d[\\d_.]*\\b)|([A-Za-z_$][A-Za-z0-9_$]*)/g;
+
+      function highlightLine(line) {
+        var out = '', last = 0, m;
+        TOKEN.lastIndex = 0;
+        while ((m = TOKEN.exec(line)) !== null) {
+          out += escapeText(line.slice(last, m.index));
+          if (m[1])      { out += '<span class="tk-com">' + escapeText(m[1]) + '</span>'; }
+          else if (m[2]) { out += '<span class="tk-str">' + escapeText(m[2]) + '</span>'; }
+          else if (m[3]) { out += '<span class="tk-num">' + escapeText(m[3]) + '</span>'; }
+          else if (m[4]) {
+            out += KW[m[4]]
+              ? '<span class="tk-kw">' + escapeText(m[4]) + '</span>'
+              : escapeText(m[4]);
+          }
+          last = m.index + m[0].length;
+        }
+        out += escapeText(line.slice(last));
+        return out || '&nbsp;';
+      }
+
+      function escapeText(s) {
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }
+
+      var tbody = document.querySelector('#codeTable tbody');
+      CODE.split('\\n').forEach(function(line, i) {
+        var tr = document.createElement('tr');
+        var num = document.createElement('td'); num.className = 'ln'; num.textContent = String(i + 1);
+        var code = document.createElement('td'); code.className = 'lc'; code.innerHTML = highlightLine(line);
+        tr.appendChild(num); tr.appendChild(code); tbody.appendChild(tr);
+      });
+
+      function on(id, fn) { var el = document.getElementById(id); if (el) { el.addEventListener('click', fn); } }
+      on('insertBtn', function() { vscode.postMessage({ type: 'insert' }); });
+      on('revealBtn', function() { vscode.postMessage({ type: 'reveal' }); });
+      on('deleteBtn', function() { vscode.postMessage({ type: 'delete' }); });
+      on('copyBtn', function() {
+        var btn = document.getElementById('copyBtn');
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(CODE).then(function() {
+            btn.textContent = 'Copied!'; setTimeout(function(){ btn.textContent = 'Copy'; }, 1500);
+          }).catch(function() { vscode.postMessage({ type: 'copy' }); });
+        } else { vscode.postMessage({ type: 'copy' }); }
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('.seg button'), function(b) {
+        b.addEventListener('click', function() {
+          vscode.postMessage({ type: 'reclassify', source: b.getAttribute('data-src') });
+        });
       });
     })();
   </script>

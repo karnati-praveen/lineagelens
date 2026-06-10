@@ -5,6 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const readline = require('node:readline');
+const { lockFilePermissions } = require('./lineagelens-cli-fsperm');
 
 function dataDir(mode) {
   const dir = path.join(os.homedir(), '.lineagelens', mode);
@@ -37,11 +38,7 @@ function parseEnv(filePath) {
 function writeEnv(filePath, vars) {
   const lines = Object.entries(vars).map(([k, v]) => `${k}=${v}`);
   fs.writeFileSync(filePath, lines.join('\n') + '\n', 'utf8');
-  try {
-    fs.chmodSync(filePath, 0o600);
-  } catch {
-    // On Windows, chmod is a no-op but shouldn't throw
-  }
+  lockFilePermissions(filePath);
 }
 
 function prompt(question) {
@@ -84,6 +81,9 @@ async function ensureEnv(mode, opts = {}) {
     POSTGRES_PASSWORD: keep('POSTGRES_PASSWORD', randomSecret(16)),
     JWT_SECRET_KEY: keep('JWT_SECRET_KEY', randomSecret(32)),
     JWT_REFRESH_SECRET_KEY: keep('JWT_REFRESH_SECRET_KEY', randomSecret(32)),
+    // Independent key for at-rest field encryption (GitHub tokens, webhook secrets).
+    // Generated separately so a leaked JWT_SECRET_KEY cannot also decrypt DB fields.
+    FIELD_ENCRYPTION_KEY: keep('FIELD_ENCRYPTION_KEY', randomSecret(32)),
     EXPLAIN_LLM_API_KEY: keep('EXPLAIN_LLM_API_KEY', ''),
     PROXY_INGEST_TOKEN: keep('PROXY_INGEST_TOKEN', ''),
     PROXY_UPSTREAM_URL: keep('PROXY_UPSTREAM_URL', 'https://api.anthropic.com'),

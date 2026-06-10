@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const { lockFilePermissions } = require('./lineagelens-cli-fsperm');
 
 const CONFIG_DIR = path.join(os.homedir(), '.lineagelens');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
@@ -19,7 +20,7 @@ function readConfig() {
 function writeConfig(data) {
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(data, null, 2));
-  try { fs.chmodSync(CONFIG_FILE, 0o600); } catch {}
+  lockFilePermissions(CONFIG_FILE);
 }
 
 function getActiveMode() { return readConfig().activeMode ?? null; }

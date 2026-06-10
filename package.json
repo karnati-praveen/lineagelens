@@ -1,8 +1,8 @@
 {
   "name": "lineagelens",
   "displayName": "LineageLens",
-  "description": "AI code intelligence platform — git blame for AI-generated code. Captures every AI insertion and traces it back to its prompt, model, and developer. Works with any editor, any AI tool, any team.",
-  "_extensionRole": "FULL — server-connected edition published to VS Code Marketplace. The standalone zero-server edition lives in lineagelens-base-extension/.",
+  "description": "Records AI-assisted code edits with local or self-hosted provenance metadata.",
+  "_extensionRole": "Server-connected edition. The standalone zero-server edition lives in lineagelens-base-extension/.",
   "keywords": [
     "ai",
     "provenance",
@@ -31,10 +31,6 @@
   "homepage": "https://github.com/karnati-praveen/lineagelens#readme",
   "bugs": {
     "url": "https://github.com/karnati-praveen/lineagelens/issues"
-  },
-  "funding": {
-    "type": "github",
-    "url": "https://github.com/sponsors/karnati-praveen"
   },
   "engines": {
     "vscode": "^1.90.0",

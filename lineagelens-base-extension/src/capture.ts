@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { minimatch } from 'minimatch';
 import { CaptureStore, CaptureSource } from './store';
+import { redactSecrets } from './secrets';
 
 // Extension IDs (or fragments) of known AI coding assistants.
 // Used to boost confidence when one of these is installed and active.
@@ -155,11 +156,16 @@ export class CaptureService {
 
     if (!backendUrl || !ingestToken) { return; }
 
+    // Scrub secrets before anything leaves the machine (local store keeps the
+    // full code). Controlled by lineagelensBase.redactSecretsOnEgress.
+    const redact = cfg.get<boolean>('redactSecretsOnEgress', true);
+    const insertedText = redact ? redactSecrets(record.insertedCode).text : record.insertedCode;
+
     const payload = {
       id: record.id,
       timestampIso: record.timestamp,
       filePath: record.filePath,
-      insertedText: record.insertedCode,
+      insertedText,
       netAddedLines: record.linesAdded,
       workspaceId,
       languageId: record.language,

@@ -450,10 +450,17 @@ async def lifespan(app: FastAPI):
         await engine.dispose()
 
 
+# Disable interactive docs and the OpenAPI schema in production so the full API
+# surface isn't handed to an unauthenticated attacker for reconnaissance.
+_docs_enabled = get_settings().app_env.strip().lower() != "production"
+
 app = FastAPI(
     title=DEFAULT_APP_TITLE,
     version=DEFAULT_APP_VERSION,
     lifespan=lifespan,
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
 
 

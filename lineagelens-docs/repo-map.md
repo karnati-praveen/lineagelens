@@ -80,6 +80,15 @@ All project documentation lives here.
 
 - `docs/repo-map.md` — this file; compact guide to the repository layout.
 - `docs/architecture.md` — full architecture overview with data flow diagrams.
+- `docs/onboarding.md` — 15-minute quickstart for new users.
+- `docs/api-reference.md` — HTTP API guide (auth, ingest, search, integrity, export, health).
+- `docs/troubleshooting.md` — common problems and fixes (proxy detection, 401 errors, ports, Docker, SQLite, Neo4j, setup loop, Windows notes).
+- `docs/tools/claude-code.md` — Claude Code setup and capture details.
+- `docs/tools/codex-cli.md` — OpenAI Codex CLI setup.
+- `docs/tools/gemini-cli.md` — Gemini CLI setup.
+- `docs/tools/cursor.md` — Cursor (editor-only capture, proprietary backend).
+- `docs/tools/copilot.md` — GitHub Copilot (editor-only capture, proprietary backend).
+- `docs/tools/continue.md` — Continue (full or editor-only depending on provider).
 - `docs/lightweight-adapters.md` — lightweight CLI boundary and backend mode behavior.
 - `docs/native-backend.md` — native Python backend setup (no Docker Desktop required).
 - `docs/shipping-modes.md` — release structure and packaging modes (base, lite, plus, max).

@@ -42,6 +42,7 @@ export class BackendAuthSession {
 
   public async initializeAuthentication(resource?: vscode.Uri): Promise<void> {
     const config = getBackendAuthConfig(resource);
+    warnIfInsecureRemoteBackend(config.baseUrl, this.log);
     if (!config.autoAuthOnActivate) {
       return;
     }
@@ -342,6 +343,39 @@ export class BackendAuthSession {
     }
 
     await this.context.secrets.delete(SECRET_BACKEND_REFRESH_TOKEN);
+  }
+}
+
+let _insecureBackendWarned = false;
+
+/**
+ * Warn once if the backend base URL is a remote host over plain HTTP. Tokens and
+ * captured source code would traverse the network in cleartext. Loopback hosts
+ * are exempt (local dev over http is fine).
+ */
+function warnIfInsecureRemoteBackend(baseUrl: string, log: (message: string) => void): void {
+  if (_insecureBackendWarned) {
+    return;
+  }
+  try {
+    const url = new URL(baseUrl);
+    const host = url.hostname.toLowerCase();
+    const isLoopback =
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host === '::1' ||
+      host.endsWith('.localhost');
+    if (url.protocol === 'http:' && !isLoopback) {
+      _insecureBackendWarned = true;
+      const message =
+        'AI Insertion Detector: backend URL uses plain HTTP to a remote host (' +
+        host +
+        '). Access tokens and captured code will be sent unencrypted. Use https:// instead.';
+      log(message);
+      void vscode.window.showWarningMessage(message);
+    }
+  } catch {
+    // Malformed URL — handled elsewhere; nothing to warn about here.
   }
 }
 

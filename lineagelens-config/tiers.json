@@ -40,7 +40,7 @@
       "Does NOT capture the prompt sent to the AI or the model name.",
       "No CodeLens inline blame \u00e2\u20ac\u201d planned for a future release.",
       "All data stays in VS Code globalState on the developer's machine.",
-      "Published to VS Code Marketplace as karnatipraveen.lineagelens-base."
+      "Extension package ID: karnatipraveen.lineagelens-base."
     ],
     "provenanceIntegrity": false,
     "aiBomExport": false
@@ -49,7 +49,7 @@
     "label": "LineageLens Lite",
     "displayName": "Lite",
     "backendMode": "solo",
-    "audience": "Solo developers or small teams who want full local provenance without external infrastructure",
+    "audience": "Individual developers or small private teams who want full local provenance without external infrastructure",
     "storage": "sqlite",
     "backend": true,
     "proxy": true,
@@ -94,7 +94,7 @@
       "Single Docker container \u00e2\u20ac\u201d backend + proxy only.",
       "SQLite file stored in ./data/lineagelens.db \u00e2\u20ac\u201d no Postgres required.",
       "Search is keyword-only (no vector/semantic search).",
-      "Best demo tier: full prompt, model, file, risk, and provenance locally.",
+      "Small local deployment tier: full prompt, model, file, risk, and provenance locally.",
       "Not designed for shared multi-user access \u00e2\u20ac\u201d use Plus for that."
     ],
     "provenanceIntegrity": false,

@@ -1,24 +1,33 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { CaptureStore } from './store';
+import { CaptureStore, CaptureSource } from './store';
 import { CaptureService } from './capture';
-import { CaptureTreeProvider, CaptureTreeItem, ClearAllTreeItem, buildDetailPanel, CAPTURE_DRAG_MIME } from './sidebar';
+import { buildDetailPanel } from './sidebar';
+import { CaptureWebviewProvider } from './webviewSidebar';
 import { captureStoreTojsonl } from './agentTrace';
+import { redactRecords } from './secrets';
 
-/**
- * VS Code passes the tree item when a command is invoked from the context menu,
- * but passes the raw id string when invoked via the item's own command.arguments.
- * ClearAllTreeItem has no record — guard against it being passed here.
- */
-function resolveId(idOrItem: string | CaptureTreeItem | ClearAllTreeItem): string {
-  if (typeof idOrItem === 'string') { return idOrItem; }
-  if (idOrItem instanceof CaptureTreeItem) { return idOrItem.record.id; }
-  return '';  // ClearAllTreeItem — callers must guard against empty string
+/** Whether secrets should be scrubbed from data leaving the machine (default on). */
+function shouldRedactOnEgress(): boolean {
+  return vscode.workspace.getConfiguration('lineagelensBase').get<boolean>('redactSecretsOnEgress', true);
 }
 
-export function activate(context: vscode.ExtensionContext): void {
-  const store = new CaptureStore(context);
+/**
+ * Commands are invoked either with a raw id string (from the webview / detail
+ * panel) or, from the palette, with no argument. Normalise to an id string.
+ */
+function resolveId(idOrItem: unknown): string {
+  if (typeof idOrItem === 'string') { return idOrItem; }
+  if (idOrItem && typeof idOrItem === 'object' && 'record' in idOrItem) {
+    const rec = (idOrItem as { record?: { id?: string } }).record;
+    return typeof rec?.id === 'string' ? rec.id : '';
+  }
+  return '';
+}
+
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  const store = await CaptureStore.create(context);
 
   // Status bar — capture count (right side, click to refresh)
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -44,31 +53,68 @@ export function activate(context: vscode.ExtensionContext): void {
   modeBar.show();
   context.subscriptions.push(modeBar);
 
-  // Sidebar tree — dragAndDropController enables both in-tree reordering and
-  // drag-to-editor code insertion; canSelectMany lets users select + drag multiple items.
-  const treeProvider = new CaptureTreeProvider(store);
-  const treeView = vscode.window.createTreeView('lineagelens.captures', {
-    treeDataProvider: treeProvider,
-    dragAndDropController: treeProvider,
-    canSelectMany: true,
-    showCollapseAll: false,
-  });
+  // Sidebar — custom card-stack webview (replaces the native tree so the panel
+  // can carry its own background, elevation, and inline search/grouping).
+  const webviewProvider = new CaptureWebviewProvider(store, () => syncUi());
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(CaptureWebviewProvider.VIEW_ID, webviewProvider),
+  );
 
-  // Description appears permanently under the "AI CAPTURES" title — shows live count.
-  const refreshDescription = () => {
-    treeView.description = store.count > 0
-      ? `${store.count} capture${store.count !== 1 ? 's' : ''}`
-      : undefined;
+  // Full UI sync after any store change: re-render the cards + status bar count.
+  const syncUi = () => {
+    webviewProvider.refresh();
+    statusBar.text = `$(history) ${store.count} captures`;
   };
-  refreshDescription();
 
-  context.subscriptions.push(treeView);
-  context.subscriptions.push(treeProvider);
+  // ── Shared record actions (reused by tree commands and the detail panel) ──────
+  function insertRecord(record: { insertedCode: string; fileName: string }): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      vscode.window.showWarningMessage('LineageLens: No active editor — open a file first.');
+      return;
+    }
+    editor.edit(editBuilder => {
+      for (const sel of editor.selections) {
+        editBuilder.insert(sel.active, record.insertedCode);
+      }
+    });
+  }
+
+  function copyRecord(record: { insertedCode: string; fileName: string }): void {
+    vscode.env.clipboard.writeText(record.insertedCode).then(() => {
+      vscode.window.showInformationMessage(`LineageLens: Copied code from "${record.fileName}".`);
+    }).catch(() => {});
+  }
+
+  async function revealRecord(record: { filePath: string }): Promise<void> {
+    if (!record.filePath) {
+      vscode.window.showWarningMessage('LineageLens: This capture has no file path.');
+      return;
+    }
+    try {
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(record.filePath));
+      await vscode.window.showTextDocument(doc, { preview: true, viewColumn: vscode.ViewColumn.One });
+    } catch {
+      vscode.window.showWarningMessage(`LineageLens: Could not open ${record.filePath} — the file may have moved or been deleted.`);
+    }
+  }
+
+  /** Confirm + delete one record. Returns true if it was removed. */
+  async function deleteRecord(id: string, fileName: string): Promise<boolean> {
+    const answer = await vscode.window.showWarningMessage(
+      `Delete this capture from "${fileName}"? This cannot be undone.`,
+      { modal: true },
+      'Delete',
+    );
+    if (answer !== 'Delete') { return false; }
+    const removed = store.remove(id);
+    if (removed) { syncUi(); }
+    return removed;
+  }
 
   // Capture service
   const captureService = new CaptureService(store, statusBar, () => {
-    treeProvider.refresh();
-    refreshDescription();
+    webviewProvider.refresh();
     statusBar.text = `$(history) ${store.count} captures`;
   });
   captureService.start();
@@ -76,7 +122,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Open capture detail panel
   context.subscriptions.push(
-    vscode.commands.registerCommand('lineagelens.openCapture', (idOrItem: string | CaptureTreeItem | ClearAllTreeItem) => {
+    vscode.commands.registerCommand('lineagelens.openCapture', (idOrItem: unknown) => {
       const id = resolveId(idOrItem);
       const record = id ? store.getById(id) : undefined;
       if (!record) {
@@ -90,13 +136,39 @@ export function activate(context: vscode.ExtensionContext): void {
         { enableScripts: true },
       );
       buildDetailPanel(panel, record);
+
+      panel.webview.onDidReceiveMessage(async (msg: { type: string; source?: string }) => {
+        // Always re-read from the store — the record may have changed since open.
+        const current = store.getById(id);
+        if (!current) {
+          if (msg.type !== 'delete') { vscode.window.showWarningMessage('LineageLens: This capture no longer exists.'); }
+          panel.dispose();
+          return;
+        }
+        switch (msg.type) {
+          case 'insert': insertRecord(current); break;
+          case 'copy':   copyRecord(current); break;
+          case 'reveal': await revealRecord(current); break;
+          case 'delete':
+            if (await deleteRecord(id, current.fileName)) { panel.dispose(); }
+            break;
+          case 'reclassify': {
+            const src = msg.source as CaptureSource;
+            if (src === 'ai' || src === 'paste' || src === 'unknown') {
+              const updated = store.setClassification(id, src);
+              if (updated) { syncUi(); buildDetailPanel(panel, updated); }
+            }
+            break;
+          }
+        }
+      }, undefined, context.subscriptions);
     }),
   );
 
   // Refresh sidebar
   context.subscriptions.push(
     vscode.commands.registerCommand('lineagelens.refreshSidebar', () => {
-      treeProvider.refresh();
+      webviewProvider.refresh();
       captureService.refreshStatusBar();
     }),
   );
@@ -111,9 +183,7 @@ export function activate(context: vscode.ExtensionContext): void {
       );
       if (answer === 'Clear All') {
         store.clear();
-        treeProvider.refresh();
-        refreshDescription();
-        statusBar.text = `$(history) 0 captures`;
+        syncUi();
         vscode.window.showInformationMessage('LineageLens: All captures cleared.');
       }
     }),
@@ -130,9 +200,14 @@ export function activate(context: vscode.ExtensionContext): void {
         filters: { JSON: ['json'] },
       });
       if (!uri) return;
-      fs.writeFileSync(uri.fsPath, store.exportJson(), 'utf-8');
+      const redact = shouldRedactOnEgress();
+      const { records, total } = redact
+        ? redactRecords(store.getAll())
+        : { records: store.getAll(), total: 0 };
+      fs.writeFileSync(uri.fsPath, JSON.stringify(records, null, 2), 'utf-8');
+      const secretNote = total > 0 ? ` (${total} secret${total !== 1 ? 's' : ''} redacted)` : '';
       const open = await vscode.window.showInformationMessage(
-        `LineageLens: Exported ${store.count} captures.`,
+        `LineageLens: Exported ${store.count} captures${secretNote}.`,
         'Open File',
       );
       if (open === 'Open File') {
@@ -154,10 +229,15 @@ export function activate(context: vscode.ExtensionContext): void {
         filters: { 'Agent Trace JSONL': ['jsonl'] },
       });
       if (!uri) { return; }
-      const jsonl = captureStoreTojsonl(store.getAll(), workspaceId);
+      const redact = shouldRedactOnEgress();
+      const { records, total } = redact
+        ? redactRecords(store.getAll())
+        : { records: store.getAll(), total: 0 };
+      const jsonl = captureStoreTojsonl(records, workspaceId);
       fs.writeFileSync(uri.fsPath, jsonl, 'utf-8');
+      const secretNote = total > 0 ? ` (${total} secret${total !== 1 ? 's' : ''} redacted)` : '';
       const open = await vscode.window.showInformationMessage(
-        `LineageLens: Exported ${store.count} captures as Agent Trace.`,
+        `LineageLens: Exported ${store.count} captures as Agent Trace${secretNote}.`,
         'Open File',
       );
       if (open === 'Open File') {
@@ -168,84 +248,45 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Insert capture code at the active editor cursor (also used by the context menu)
   context.subscriptions.push(
-    vscode.commands.registerCommand('lineagelens.insertAtCursor', (idOrItem: string | CaptureTreeItem | ClearAllTreeItem) => {
+    vscode.commands.registerCommand('lineagelens.insertAtCursor', (idOrItem: unknown) => {
       const id = resolveId(idOrItem);
       const record = id ? store.getById(id) : undefined;
       if (!record) {
         vscode.window.showErrorMessage('LineageLens: Capture not found.');
         return;
       }
-      const editor = vscode.window.activeTextEditor;
-      if (!editor) {
-        vscode.window.showWarningMessage('LineageLens: No active editor — open a file first.');
-        return;
-      }
-      editor.edit(editBuilder => {
-        for (const sel of editor.selections) {
-          editBuilder.insert(sel.active, record.insertedCode);
-        }
-      });
+      insertRecord(record);
     }),
   );
 
   // Copy capture code to clipboard (context menu)
   context.subscriptions.push(
-    vscode.commands.registerCommand('lineagelens.copyCode', (idOrItem: string | CaptureTreeItem | ClearAllTreeItem) => {
+    vscode.commands.registerCommand('lineagelens.copyCode', (idOrItem: unknown) => {
       const id = resolveId(idOrItem);
       const record = id ? store.getById(id) : undefined;
       if (!record) { return; }
-      vscode.env.clipboard.writeText(record.insertedCode).then(() => {
-        vscode.window.showInformationMessage(`LineageLens: Copied code from "${record.fileName}".`);
-      }).catch(() => {});
+      copyRecord(record);
     }),
   );
 
-  // Editor drop handler — fires when the user drops a capture onto any open editor.
-  // Checks our custom MIME first (carries IDs → look up fresh code from store).
-  // Falls back to text/plain (carries the code directly, set in handleDrag).
+  // Delete a single capture (inline trash icon + context menu)
   context.subscriptions.push(
-    vscode.languages.registerDocumentDropEditProvider(
-      '*',   // matches every document — plain '*' is the correct catch-all selector
-      {
-        async provideDocumentDropEdits(
-          _document: vscode.TextDocument,
-          _position: vscode.Position,
-          dataTransfer: vscode.DataTransfer,
-          _token: vscode.CancellationToken,
-        ): Promise<vscode.DocumentDropEdit | undefined> {
-          // Path 1 — custom MIME with IDs (most reliable, IDs are always fresh)
-          const mimeItem = dataTransfer.get(CAPTURE_DRAG_MIME);
-          if (mimeItem) {
-            const ids = (await mimeItem.asString()).split(',').filter(Boolean);
-            const codes = ids
-              .map(id => store.getById(id)?.insertedCode)
-              .filter((c): c is string => c !== undefined);
-            if (codes.length > 0) {
-              const separator = '\n\n// ── AI capture ──────────────────────────────\n\n';
-              const edit = new vscode.DocumentDropEdit(codes.join(separator));
-              const firstName = ids.length === 1 ? store.getById(ids[0])?.fileName : undefined;
-              edit.label = firstName
-                ? `$(file-code) Insert AI capture — ${firstName}`
-                : `$(file-code) Insert ${ids.length} AI captures`;
-              return edit;
-            }
-          }
+    vscode.commands.registerCommand('lineagelens.deleteCapture', async (idOrItem: unknown) => {
+      const id = resolveId(idOrItem);
+      const record = id ? store.getById(id) : undefined;
+      if (!record) { return; }
+      await deleteRecord(id, record.fileName);
+    }),
+  );
 
-          // Path 2 — text/plain fallback (carries code directly from handleDrag)
-          const textItem = dataTransfer.get('text/plain');
-          if (textItem) {
-            const code = await textItem.asString();
-            if (code.trim()) {
-              const edit = new vscode.DocumentDropEdit(code);
-              edit.label = '$(file-code) Insert AI capture';
-              return edit;
-            }
-          }
-
-          return undefined;
-        },
-      },
-    ),
+  // Reveal the source file for a capture
+  context.subscriptions.push(
+    vscode.commands.registerCommand('lineagelens.revealInFile', async (idOrItem: unknown) => {
+      const id = resolveId(idOrItem);
+      const record = id ? store.getById(id) : undefined;
+      if (!record) { return; }
+      await revealRecord(record);
+    }),
   );
 
   // Mode detection — polls proxy health to switch status bar between Easy and Power

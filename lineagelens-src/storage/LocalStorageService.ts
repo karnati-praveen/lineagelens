@@ -13,6 +13,12 @@ import {
 import { pathsReferToSameFile } from '../pathUtils';
 import { normalizeAST, ProvenanceRecord } from '../provenance';
 import {
+  decryptString,
+  encryptString,
+  getOrCreateLocalStoreKey,
+  isEncrypted
+} from './localStoreCrypto';
+import {
   buildSearchText as buildLocalStoreSearchText,
   createEmptyStore as createLocalStoreDocument,
   sanitizeStoreDocument as sanitizeLocalStoreDocument,
@@ -58,11 +64,29 @@ type HttpResponse = {
 export class LocalStorageService implements ProvenanceStorageService {
   public readonly mode = 'local' as const;
   private writeLock: Promise<void> = Promise.resolve();
+  private encryptionKey: Buffer | null = null;
+  private keyResolved = false;
 
   public constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly log: (message: string) => void
   ) {}
+
+  /**
+   * Lazily resolve the at-rest encryption key from the OS keychain. Cached after
+   * first call. Returns null when the keychain is unavailable, in which case the
+   * store falls back to plaintext so the extension keeps working.
+   */
+  private async ensureKey(): Promise<Buffer | null> {
+    if (!this.keyResolved) {
+      this.encryptionKey = await getOrCreateLocalStoreKey(this.context);
+      this.keyResolved = true;
+      if (!this.encryptionKey) {
+        this.log('Keychain unavailable — local provenance store will not be encrypted at rest.');
+      }
+    }
+    return this.encryptionKey;
+  }
 
   private getGlobalStateKey(resource?: vscode.Uri): string {
     const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -589,9 +613,14 @@ export class LocalStorageService implements ProvenanceStorageService {
     const storageFilePath = this.resolveStorageFilePath(resource);
     if (!storageFilePath) {
       const key = this.getGlobalStateKey(resource);
-      const existing = this.context.globalState.get<LocalStoreDocument>(key);
+      const existing = this.context.globalState.get<unknown>(key);
       if (!existing) {
-        await this.context.globalState.update(key, createLocalStoreDocument());
+        const encKey = await this.ensureKey();
+        const fresh = createLocalStoreDocument();
+        await this.context.globalState.update(
+          key,
+          encKey ? encryptString(encKey, JSON.stringify(fresh)) : fresh
+        );
       }
       return;
     }
@@ -601,7 +630,13 @@ export class LocalStorageService implements ProvenanceStorageService {
     try {
       await fs.stat(storageFilePath);
     } catch {
-      await fs.writeFile(storageFilePath, JSON.stringify(createLocalStoreDocument(), null, 2), 'utf8');
+      const encKey = await this.ensureKey();
+      const serialized = JSON.stringify(createLocalStoreDocument(), null, 2);
+      await fs.writeFile(
+        storageFilePath,
+        encKey ? encryptString(encKey, serialized) : serialized,
+        'utf8'
+      );
     }
   }
 
@@ -611,14 +646,27 @@ export class LocalStorageService implements ProvenanceStorageService {
     if (!storageFilePath) {
       const key = this.getGlobalStateKey(resource);
       const existing = this.context.globalState.get<unknown>(key);
-      return migrateStoreDocument(sanitizeLocalStoreDocument(existing));
+      let docInput: unknown = existing;
+      if (isEncrypted(existing)) {
+        const encKey = await this.ensureKey();
+        docInput = encKey ? safeJsonParse(decryptString(encKey, existing)) : undefined;
+      }
+      return migrateStoreDocument(sanitizeLocalStoreDocument(docInput));
     }
 
     await this.ensureStore(resource);
 
     try {
       const raw = await fs.readFile(storageFilePath, 'utf8');
-      const parsed = safeJsonParse(raw);
+      let jsonText = raw;
+      if (isEncrypted(raw)) {
+        const encKey = await this.ensureKey();
+        if (!encKey) {
+          throw new Error('Encrypted local store found but the keychain is unavailable.');
+        }
+        jsonText = decryptString(encKey, raw);
+      }
+      const parsed = safeJsonParse(jsonText);
       return migrateStoreDocument(sanitizeLocalStoreDocument(parsed));
     } catch (error: unknown) {
       this.log('Failed to read local provenance store, using empty store: ' + toErrorMessage(error));
@@ -637,12 +685,22 @@ export class LocalStorageService implements ProvenanceStorageService {
 
     if (!storageFilePath) {
       const key = this.getGlobalStateKey(resource);
-      await this.context.globalState.update(key, normalizedStore);
+      const encKey = await this.ensureKey();
+      await this.context.globalState.update(
+        key,
+        encKey ? encryptString(encKey, JSON.stringify(normalizedStore)) : normalizedStore
+      );
       return;
     }
 
     await fs.mkdir(path.dirname(storageFilePath), { recursive: true });
-    await fs.writeFile(storageFilePath, JSON.stringify(normalizedStore, null, 2), 'utf8');
+    const encKey = await this.ensureKey();
+    const serialized = JSON.stringify(normalizedStore, null, 2);
+    await fs.writeFile(
+      storageFilePath,
+      encKey ? encryptString(encKey, serialized) : serialized,
+      'utf8'
+    );
   }
 
   private resolveStorageFilePath(resource?: vscode.Uri): string | undefined {

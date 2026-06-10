@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # LineageLens Base — VS Code Extension Installer
-# Installs the base extension from a pre-built .vsix or the marketplace.
+# Installs the base extension from a pre-built .vsix or extension identifier.
 #
 # Usage: bash quickstart-base.sh [path/to/lineagelens-base-x.x.x.vsix]
 
@@ -51,10 +51,10 @@ if [[ -n "$VSIX" ]]; then
     $CODE --install-extension "$VSIX"
     ok "Extension installed from VSIX."
 else
-    # Install from marketplace
-    info "Installing lineagelens-base from VS Code Marketplace..."
+    # Install by extension identifier
+    info "Installing lineagelens-base by extension identifier..."
     $CODE --install-extension karnatipraveen.lineagelens
-    ok "Extension installed from Marketplace."
+    ok "Extension installed."
 fi
 
 echo ""

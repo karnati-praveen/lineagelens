@@ -53,9 +53,29 @@ WORKSPACE_ID      = os.environ.get("PROXY_WORKSPACE_ID", "proxy-capture")
 PROXY_PORT        = int(os.environ.get("PROXY_PORT", "8788"))
 PROXY_HOST        = os.environ.get("PROXY_HOST", "0.0.0.0")
 MAX_BODY_BYTES    = int(os.environ.get("PROXY_MAX_BODY_BYTES", "2000000"))
+# Built-in patterns for common secret shapes. These are applied to all captured
+# content before it is sent to the ingest backend, so credentials a developer
+# pasted into a prompt never land in storage. Set PROXY_DISABLE_DEFAULT_REDACTION=1
+# to turn them off (not recommended). Extend with PROXY_REDACT_PATTERNS.
+_DEFAULT_REDACT_PATTERN_STRINGS = [
+    r"sk-[A-Za-z0-9_-]{16,}",                       # OpenAI / generic sk- keys
+    r"sk-ant-[A-Za-z0-9_-]{16,}",                   # Anthropic keys
+    r"AIza[0-9A-Za-z_-]{20,}",                       # Google API keys
+    r"ya29\.[0-9A-Za-z_-]+",                         # Google OAuth access tokens
+    r"gh[pousr]_[A-Za-z0-9]{20,}",                   # GitHub tokens (ghp_, gho_, etc.)
+    r"github_pat_[A-Za-z0-9_]{20,}",                 # GitHub fine-grained PATs
+    r"xox[baprs]-[A-Za-z0-9-]{10,}",                 # Slack tokens
+    r"AKIA[0-9A-Z]{16}",                             # AWS access key IDs
+    r"(?i)bearer\s+[A-Za-z0-9._~+/-]{20,}=*",        # Bearer tokens
+    r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",  # JWTs
+    r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----",     # private keys
+]
+
 # Comma-separated regex patterns to redact from captured content before ingest.
 # Example: PROXY_REDACT_PATTERNS="Bearer [A-Za-z0-9._-]+,sk-[A-Za-z0-9]+"
 _REDACT_PATTERNS_RAW  = [p.strip() for p in os.environ.get("PROXY_REDACT_PATTERNS", "").split(",") if p.strip()]
+if os.environ.get("PROXY_DISABLE_DEFAULT_REDACTION", "").strip().lower() not in {"1", "true", "yes"}:
+    _REDACT_PATTERNS_RAW = _DEFAULT_REDACT_PATTERN_STRINGS + _REDACT_PATTERNS_RAW
 REDACT_PATTERNS: list[re.Pattern] = []
 for _rp in _REDACT_PATTERNS_RAW:
     try:

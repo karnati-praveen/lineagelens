@@ -29,9 +29,3 @@ Please include:
 - Local mode stores provenance in VS Code global state by default.
 - Backend mode sends data to your configured backend endpoints.
 - You control whether external explanation providers are used.
-
-## Funding and Sponsorship
-
-This extension is free to use.
-
-If you want to support maintenance, use: https://github.com/sponsors/karnati-praveen

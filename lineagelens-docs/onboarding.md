@@ -1,6 +1,6 @@
 # LineageLens Onboarding Guide
 
-Welcome to LineageLens! This guide gets you up and running in 15 minutes.
+This guide gets LineageLens running in about 15 minutes.
 
 ## What is LineageLens?
 
@@ -33,7 +33,7 @@ LineageLens runs in one of two modes. The VS Code status bar item (bottom-right)
 
 ### Option A: Easy Mode (zero setup, recommended first run)
 
-1. Install the VS Code extension from the marketplace:
+1. Install the Base extension:
    ```
    code --install-extension karnatipraveen.lineagelens-base
    ```
