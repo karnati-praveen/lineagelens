@@ -20,6 +20,13 @@ type WebviewMessage =
       type: 'explain';
     };
 
+export type ReviewBadgePayload = {
+  hasReview: boolean;
+  depthSignal: string | null;
+  verdict: string | null;
+  attestationId: number | null;
+};
+
 export class ProvenanceSidebarViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   public static readonly viewType = 'aiInsertionDetector.provenanceSidebar';
 
@@ -91,6 +98,10 @@ export class ProvenanceSidebarViewProvider implements vscode.WebviewViewProvider
       this.view.show?.(true);
       await this.loadAndRender(uuid);
     }
+  }
+
+  public updateReviewBadge(badge: ReviewBadgePayload): void {
+    void this.postMessage({ type: 'reviewBadge', payload: badge });
   }
 
   public dispose(): void {
@@ -400,6 +411,26 @@ export class ProvenanceSidebarViewProvider implements vscode.WebviewViewProvider
     .mono {
       font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
     }
+
+    .review-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .badge-deep    { background: #0f03; color: #4c4; }
+    .badge-adequate { background: #fa03; color: #a70; }
+    .badge-shallow  { background: #f003; color: #f44; }
+    .badge-none     { background: color-mix(in srgb, var(--vscode-panel-border) 80%, transparent); color: var(--vscode-descriptionForeground); }
   </style>
 </head>
 <body>
@@ -448,6 +479,13 @@ export class ProvenanceSidebarViewProvider implements vscode.WebviewViewProvider
     <section class="card">
       <h3>Context Snapshot</h3>
       <pre id="context-view"></pre>
+    </section>
+
+    <section class="card" id="review-badge-card">
+      <h3>Human Review Attestation</h3>
+      <div id="review-badge" class="review-badge">
+        <span class="badge badge-none">Not reviewed</span>
+      </div>
     </section>
   </div>
 
@@ -530,8 +568,54 @@ export class ProvenanceSidebarViewProvider implements vscode.WebviewViewProvider
         const explanation = message.payload ? message.payload.explanation : null;
         const explanationError = message.payload ? message.payload.explanationError : null;
         updateExplanation(explanation, explanationError);
+        return;
+      }
+
+      if (message.type === 'reviewBadge') {
+        renderReviewBadge(message.payload || {});
       }
     });
+
+    const reviewBadgeView = document.getElementById('review-badge');
+
+    function renderReviewBadge(badge) {
+      if (!reviewBadgeView) { return; }
+      reviewBadgeView.textContent = '';
+
+      const hasReview = badge && badge.hasReview === true;
+      if (!hasReview) {
+        const span = document.createElement('span');
+        span.className = 'badge badge-none';
+        span.textContent = 'Not reviewed';
+        reviewBadgeView.appendChild(span);
+        return;
+      }
+
+      const signal = String(badge.depthSignal || '');
+      const depthSpan = document.createElement('span');
+      const depthClass =
+        signal === 'deep' ? 'badge-deep' :
+        signal === 'adequate' ? 'badge-adequate' : 'badge-shallow';
+      depthSpan.className = 'badge ' + depthClass;
+      depthSpan.textContent = signal || 'unknown';
+      reviewBadgeView.appendChild(depthSpan);
+
+      const verdict = String(badge.verdict || '');
+      if (verdict) {
+        const verdictSpan = document.createElement('span');
+        verdictSpan.className = 'badge badge-none';
+        verdictSpan.textContent = verdict;
+        reviewBadgeView.appendChild(verdictSpan);
+      }
+
+      if (badge.attestationId != null) {
+        const attSpan = document.createElement('span');
+        attSpan.className = 'muted';
+        attSpan.style.fontSize = '11px';
+        attSpan.textContent = 'att#' + String(badge.attestationId);
+        reviewBadgeView.appendChild(attSpan);
+      }
+    }
 
     function setStatus(text) {
       statusView.textContent = text;

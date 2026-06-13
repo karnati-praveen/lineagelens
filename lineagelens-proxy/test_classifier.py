@@ -197,6 +197,7 @@ def test_gemini_body_with_system_instruction_complex():
 
 def test_ten_users_different_tiers():
     """Simulate 10 users sending requests that should each get distinct tiers."""
+    _nl = "\n"
     cases = [
         # (body, expected_tier)
         ({"messages": [{"role": "user", "content": "hi"}]}, "simple"),
@@ -205,7 +206,7 @@ def test_ten_users_different_tiers():
         ({"messages": [{"role": "user", "content": "a" * 32_100}]}, "complex"),
         ({"system": "refactor legacy code", "messages": [{"role": "user", "content": "go"}]}, "complex"),
         # Rule 4: code fence with >100 lines → "standard" (NOT complex — rule 4 is for standard)
-        ({"messages": [{"role": "user", "content": f"```py\n{'line\n'*110}```"}]}, "standard"),
+        ({"messages": [{"role": "user", "content": f"```py{_nl}{('line' + _nl) * 110}```"}]}, "standard"),
         ({"messages": [{"role": "user", "content": "short"}]}, "simple"),
         ({"messages": [{"role": "user", "content": "another 250 char " + "x" * 240}]}, "standard"),
         ({"messages": [{"role": "user", "content": "quick q"}]}, "simple"),

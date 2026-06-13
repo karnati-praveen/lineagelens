@@ -15,13 +15,12 @@ import {
   ProvenanceSearchResultItem,
   ProvenanceStorageService
 } from './StorageService';
+import { DEFAULT_BACKEND_BASE_URL, REQUEST_TIMEOUT_MS } from '../src/constants';
 
 const CONFIG_SECTION = 'aiInsertionDetector';
-const DEFAULT_BACKEND_BASE_URL = 'http://127.0.0.1:8787';
 const DEFAULT_FALLBACK_PROXY_PORT = 8787;
 const DEFAULT_VECTOR_SEARCH_PATH = '/search';
 const DEFAULT_INSIGHTS_DASHBOARD_PATH = '/insights/dashboard';
-const REQUEST_TIMEOUT_MS = 12_000;
 const DEFAULT_LIMIT = 50;
 const API_VERSION = 'v1';
 

@@ -17,27 +17,30 @@ from typing import Any
 
 # Detection patterns for dangerous constructs in AI-generated code.
 # These are regex strings used to scan insertions — they are never executed.
-# 4-tuple: (patterns, score_delta, reason_text, category)
-_CODE_PATTERN_RULES: list[tuple[list[str], int, str, str]] = [
+# 5-tuple: (patterns, score_delta, reason_text, legacy_category, ingest_slug)
+# legacy_category — used by compute_risk_from_record (insights path); keeps
+#   existing "security"/"reliability"/"compliance" labels that tests depend on.
+# ingest_slug — used by compute_risk_score (ingest path) for ai-category tags.
+_CODE_PATTERN_RULES: list[tuple[list[str], int, str, str, str]] = [
     ([r"api[_-]?key", r"access[_-]?token", r"private[_-]?key"], 28,
-     "The inserted block appears to contain credential-like material.", "security"),
+     "The inserted block appears to contain credential-like material.", "security", "secrets"),
     ([r"\beval\b", r"\bFunction\s*\(", r"new Function", r"\bexec\s*\(", r"\bexecSync\s*\("], 24,
-     "Dynamic code execution is present in the generated block.", "security"),
+     "Dynamic code execution is present in the generated block.", "security", "shell"),
     ([r"\bsubprocess\.", r"\bos\.system\b", r"\bchild_process\b", r"\bspawn(?:Sync)?\b"], 22,
-     "Shell or process execution was introduced by the generated block.", "security"),
+     "Shell or process execution was introduced by the generated block.", "security", "shell"),
     ([r"dangerouslySetInnerHTML", r"\binnerHTML\s*="], 20,
-     "Unsafe DOM mutation patterns were introduced.", "security"),
+     "Unsafe DOM mutation patterns were introduced.", "security", "dom"),
     ([r"\bSELECT\s+.+\bFROM\b", r"\bINSERT\s+INTO\b", r"\bUPDATE\s+\w+\s+SET\b", r"\bDELETE\s+FROM\b"], 16,
-     "Raw SQL appears in the generated block.", "reliability"),
+     "Raw SQL appears in the generated block.", "reliability", "sql"),
     ([r"\bpassword\b", r"\btoken\b", r"\bauth\b", r"\bcredential\b"], 12,
-     "Authentication or credential handling appears in the generated block.", "compliance"),
+     "Authentication or credential handling appears in the generated block.", "compliance", "secrets"),
 ]
 
-_FILE_PATTERN_RULES: list[tuple[list[str], int, str, str]] = [
+_FILE_PATTERN_RULES: list[tuple[list[str], int, str, str, str]] = [
     ([r"auth", r"security", r"permission", r"oauth", r"token", r"secret", r"credential"], 14,
-     "The file path suggests a security-sensitive surface.", "compliance"),
+     "The file path suggests a security-sensitive surface.", "compliance", "auth"),
     ([r"payment", r"billing", r"invoice", r"ledger", r"finance"], 14,
-     "The file path suggests a financially sensitive surface.", "compliance"),
+     "The file path suggests a financially sensitive surface.", "compliance", "payments"),
 ]
 
 
@@ -64,8 +67,8 @@ def compute_risk_score(
     prompt_messages: object | None = None,
     model_name: str | None = None,
     file_path: str | None = None,
-) -> tuple[int, list[str]]:
-    """Ingest-time risk score from raw field values. Returns (score 0-100, reasons).
+) -> tuple[int, list[str], list[str]]:
+    """Ingest-time risk score from raw field values. Returns (score 0-100, reasons, category_slugs).
 
     Called for every tier including Lite. Does not include insights-only signals
     (correlation confidence, agentic session) because those are unavailable at
@@ -73,6 +76,7 @@ def compute_risk_score(
     """
     score = 12
     reason_set: set[str] = set()
+    categories: set[str] = set()
 
     if prompt_messages is None:
         score += 24
@@ -84,22 +88,25 @@ def compute_risk_score(
     if net_lines >= 80:
         score += 18
         reason_set.add("A large AI-generated block was introduced.")
+        categories.add("large-block")
     elif net_lines >= 30:
         score += 10
         reason_set.add("The generated block is large enough to warrant focused review.")
 
-    for patterns, delta, reason, _category in _CODE_PATTERN_RULES:
+    for patterns, delta, reason, _legacy, slug in _CODE_PATTERN_RULES:
         if _contains_pattern(code_str, patterns):
             score += delta
             reason_set.add(reason)
+            categories.add(slug)
 
     fp = file_path or ""
-    for patterns, delta, reason, _category in _FILE_PATTERN_RULES:
+    for patterns, delta, reason, _legacy, slug in _FILE_PATTERN_RULES:
         if _contains_pattern(fp, patterns):
             score += delta
             reason_set.add(reason)
+            categories.add(slug)
 
-    return min(score, 100), sorted(reason_set)
+    return min(score, 100), sorted(reason_set), sorted(categories)
 
 
 def compute_risk_from_record(
@@ -160,17 +167,17 @@ def compute_risk_from_record(
         reasons.append("The generated block is large enough to warrant focused review.")
         categories.add("reliability")
 
-    for patterns, delta, reason, category in _CODE_PATTERN_RULES:
+    for patterns, delta, reason, legacy_cat, _slug in _CODE_PATTERN_RULES:
         if _contains_pattern(inserted_code, patterns):
             score += delta
             reasons.append(reason)
-            categories.add(category)
+            categories.add(legacy_cat)
 
-    for patterns, delta, reason, category in _FILE_PATTERN_RULES:
+    for patterns, delta, reason, legacy_cat, _slug in _FILE_PATTERN_RULES:
         if _contains_pattern(file_path, patterns):
             score += delta
             reasons.append(reason)
-            categories.add(category)
+            categories.add(legacy_cat)
 
     if is_agentic:
         score += 6

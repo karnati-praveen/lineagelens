@@ -51,6 +51,14 @@ from app.api.routes.sso import router as sso_router
 from app.api.routes.setup import router as setup_router
 from app.api.routes.integrity import router as integrity_router
 from app.api.routes.agent_trace import router as agent_trace_router
+from app.api.routes.agent_actions import router as agent_actions_router
+from app.api.routes.incidents import router as incidents_router
+from app.api.routes.recall import router as recall_router
+from app.api.routes.trust import router as trust_router
+from app.api.routes.attestation import router as attestation_router
+from app.api.routes.indemnity import router as indemnity_router
+from app.api.routes.license_scan import router as license_scan_router
+from app.api.routes.human_review import router as human_review_router
 from app.core.config import Settings, get_settings
 from app.core.rate_limit import InMemoryRateLimiter
 from app.db.session import create_engine_from_settings, create_session_factory, initialize_database
@@ -369,6 +377,10 @@ async def _seed_admin_user(session_factory, settings: Settings) -> None:
         await session.flush()
         await session.refresh(user)
         workspace.owner_id = str(user.id)
+
+        from app.services.default_questions import seed_default_questions
+        await seed_default_questions(session, workspace_id)
+
         await session.commit()
         logger.info(
             "Admin seed: created admin user '%s' in workspace '%s'.",
@@ -533,6 +545,14 @@ app.include_router(sso_router)
 app.include_router(setup_router)
 app.include_router(integrity_router)
 app.include_router(agent_trace_router)
+app.include_router(agent_actions_router)
+app.include_router(incidents_router)
+app.include_router(recall_router)
+app.include_router(trust_router)
+app.include_router(attestation_router)
+app.include_router(indemnity_router)
+app.include_router(license_scan_router)
+app.include_router(human_review_router)
 
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 

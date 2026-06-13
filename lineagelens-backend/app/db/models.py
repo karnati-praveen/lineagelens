@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import uuid as uuid_pkg
 from datetime import datetime
 
@@ -8,6 +7,7 @@ from sqlalchemy import JSON, Boolean, DateTime, Float, Index, Integer, String, T
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.config import get_settings
 from app.db.base import Base
 
 # pgvector is optional — only available when Postgres + pgvector extension are used.
@@ -21,9 +21,10 @@ _JSON_TYPE = JSON().with_variant(postgresql.JSONB(astext_type=Text()), "postgres
 # Only use the Vector primary type when VECTOR_SEARCH_ENABLED=true is explicitly set.
 # If the pgvector Python package is installed but the DB extension is not, emitting
 # vector(256) DDL would crash startup.  Defaulting to JSON is safe everywhere.
+# Single source of truth: Settings (reads .env + real env vars, env vars take precedence).
 _vector_search_active = (
     _Vector is not None
-    and os.environ.get("VECTOR_SEARCH_ENABLED", "false").strip().lower() in ("true", "1", "yes")
+    and get_settings().vector_search_enabled
 )
 if _vector_search_active:
     # Vector is the primary type so its Comparator (cosine_distance etc.) works on PG.
@@ -89,10 +90,25 @@ class ProvenanceRecord(Base):
     # Schema: [{signal, value, weight, contribution, rationale}, ...]
     confidence_breakdown: Mapped[list | None] = mapped_column(_JSON_TYPE, nullable=True)
 
+    # F2: quarantine state — set by recall campaigns.
+    # Values: active | flagged | quarantined | cleared (default active).
+    quarantine_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="active", server_default="active", index=True
+    )
+    quarantine_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quarantine_recall_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    quarantined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # Tamper-evident hash chain (Plus/Max only — NULL on Lite and pre-migration rows).
     # record_hash = SHA-256 of canonical fields; prev_hash links to predecessor in workspace.
     record_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     prev_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # F5 license-contamination fields — populated by license_match_service.scan_and_record.
+    # NULL means not yet scanned.  Values: clean | review | match.
+    license_status: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    license_match_license: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    license_similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     provenance_payload: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False)
 
@@ -360,6 +376,87 @@ class Workspace(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class Incident(Base):
+    __tablename__ = "incidents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    uuid: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(), unique=True, index=True, nullable=False)
+    workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    affected_files: Mapped[list] = mapped_column(_JSON_TYPE, nullable=False, default=list)
+    external_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    external_ref: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    created_by: Mapped[uuid_pkg.UUID | None] = mapped_column(Uuid(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_incident_workspace_started", "workspace_id", "started_at"),
+    )
+
+
+class IncidentIntegration(Base):
+    """Per-workspace webhook configuration for incident intake."""
+
+    __tablename__ = "incident_integrations"
+
+    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid_pkg.uuid4)
+    workspace_id: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    webhook_secret: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class RecallCampaign(Base):
+    __tablename__ = "recall_campaigns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    criteria_json: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open", server_default="open")
+    matched_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_recall_campaign_workspace", "workspace_id"),
+    )
+
+
+class RecordOutcome(Base):
+    __tablename__ = "record_outcomes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    record_uuid: Mapped[str] = mapped_column(String(64), nullable=False)
+    workspace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    outcome_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    detail_json: Mapped[dict | None] = mapped_column(_JSON_TYPE, nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_record_outcome_workspace_uuid", "workspace_id", "record_uuid"),
+        Index("ix_record_outcome_workspace_type", "workspace_id", "outcome_type"),
+    )
+
+
 class RoutingPolicy(Base):
     """Per-workspace, per-provider dynamic model routing policy.
 
@@ -397,4 +494,143 @@ class RoutingPolicy(Base):
     __table_args__ = (
         UniqueConstraint("workspace_id", "provider", name="uq_routing_policy_workspace_provider"),
         Index("ix_routing_policy_workspace", "workspace_id"),
+    )
+
+
+class Attestation(Base):
+    """Cryptographically signed attestation statement anchored to the hash chain.
+
+    subject_type: record | certificate | review | recall
+    """
+
+    __tablename__ = "attestations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    subject_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    statement_json: Mapped[str] = mapped_column(Text, nullable=False)
+    signature: Mapped[str] = mapped_column(String(256), nullable=False)
+    public_key_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    prev_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_attestation_workspace_subject", "workspace_id", "subject_type", "subject_id"),
+    )
+
+
+class HumanReviewAttestation(Base):
+    """Signed attestation that a human reviewed AI-generated lines in a change.
+
+    scope_ref: a provenance record UUID or a PR reference (e.g. 'pr/42' or 'pr/main').
+    depth_signal: computed from time-on-diff + comment count + lines reviewed.
+      shallow  — implausibly fast or negligible engagement.
+      adequate — genuine review at normal reading pace.
+      deep     — thorough review with comments and broad coverage.
+    attestation_id: FK to the Attestation row holding the Ed25519-signed statement.
+    """
+
+    __tablename__ = "human_review_attestations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    scope_ref: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    reviewer_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    lines_reviewed: Mapped[int] = mapped_column(Integer, nullable=False)
+    seconds_on_diff: Mapped[int] = mapped_column(Integer, nullable=False)
+    comment_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    depth_signal: Mapped[str] = mapped_column(String(16), nullable=False)  # shallow | adequate | deep
+    verdict: Mapped[str] = mapped_column(String(32), nullable=False)  # approved | changes_requested
+    attestation_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_human_review_workspace_scope", "workspace_id", "scope_ref"),
+        Index("ix_human_review_workspace_reviewer", "workspace_id", "reviewer_user_id"),
+    )
+
+
+class IndemnityPolicy(Base):
+    """Per-workspace coverage policy that governs indemnity certificate eligibility."""
+
+    __tablename__ = "indemnity_policies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    # Eligibility thresholds: max_risk_score, require_license_clean, require_human_review,
+    # allowed_models (list[str] or []), unknown_review_pass (bool), cert_ttl_days (int).
+    rules_json: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False, default=dict)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class AgentAction(Base):
+    """Tamper-evident ledger of every autonomous agent action within a session.
+
+    Records shell commands, file mutations, dependency installs, and network
+    calls emitted by the AI agent, bound to the prompt/session that authorized
+    them.  The prev_hash column anchors each row into the workspace's hash chain
+    so any retrospective modification is detectable via verify_action_chain().
+    """
+
+    __tablename__ = "agent_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    session_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    # SHA-256 prefix of the originating prompt context — links action → prompt → code
+    prompt_context_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # shell | file_write | file_delete | dependency_install | network | other
+    action_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Redacted, size-bounded JSON dict of tool arguments
+    arguments_json: Mapped[dict | None] = mapped_column(_JSON_TYPE, nullable=True)
+    # Risky pattern flags: {"patterns": [...], "riskLevel": "high|medium|low"}
+    risk_flags_json: Mapped[dict | None] = mapped_column(_JSON_TYPE, nullable=True)
+    # Tamper-evident chain: SHA-256 of this record; prev_hash links to predecessor
+    record_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    prev_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_agent_action_workspace_session_time", "workspace_id", "session_key", "occurred_at"),
+        Index("ix_agent_action_workspace_time", "workspace_id", "occurred_at"),
+    )
+
+
+class IndemnityCertificate(Base):
+    """Signed indemnity certificate issued against a provenance scope."""
+
+    __tablename__ = "indemnity_certificates"
+
+    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid_pkg.uuid4)
+    workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    # scope: record | pr | release
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    scope_ref: Mapped[str] = mapped_column(String(256), nullable=False)
+    # eligibility: eligible | ineligible
+    eligibility: Mapped[str] = mapped_column(String(16), nullable=False)
+    reasons_json: Mapped[list] = mapped_column(_JSON_TYPE, nullable=False, default=list)
+    attestation_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_indemnity_cert_workspace_scope", "workspace_id", "scope", "scope_ref"),
     )

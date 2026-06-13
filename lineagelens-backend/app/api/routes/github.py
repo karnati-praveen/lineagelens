@@ -81,7 +81,7 @@ async def check_code_risk(
     threshold = config.risk_threshold if config else 70
     block_on_high = config.block_on_high_risk if config else True
 
-    risk_score, reasons = compute_risk_score(
+    risk_score, reasons, _categories = compute_risk_score(
         inserted_code=payload.code,
         file_path=payload.file_path,
     )

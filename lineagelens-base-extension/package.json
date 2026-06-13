@@ -1,7 +1,7 @@
 {
   "name": "lineagelens-base",
   "displayName": "LineageLens Base",
-  "description": "Lightweight AI code provenance â€” capture and review every AI-generated insertion locally, no server required.",
+  "description": "Lightweight AI code provenance — capture and review every AI-generated insertion locally, no server required.",
   "_extensionRole": "BASE — zero-server standalone edition. Install for local-only capture with no backend, no proxy, and no account required. The full server-connected edition (Lite/Plus/Max) lives in the repo root package.json.",
   "version": "1.3.0",
   "publisher": "karnatipraveen",
@@ -184,6 +184,11 @@
           "type": "boolean",
           "default": true,
           "description": "Scrub detected secrets (API keys, tokens, private keys) from captures before they leave this machine — i.e. on JSON/Agent Trace export and backend ingest. The locally stored copy is unaffected."
+        },
+        "lineagelensBase.clipboardPasteDetection": {
+          "type": "boolean",
+          "default": true,
+          "description": "Read the clipboard to detect whether a large insertion was pasted rather than AI-generated (reduces false positives). The clipboard is read locally on this machine and is never stored or transmitted. Disable if you do not want any clipboard access."
         }
       }
     }

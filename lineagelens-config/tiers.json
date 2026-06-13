@@ -38,12 +38,13 @@
     "notes": [
       "Captures filePath, insertedCode, linesAdded, confidence, and source only.",
       "Does NOT capture the prompt sent to the AI or the model name.",
-      "No CodeLens inline blame \u00e2\u20ac\u201d planned for a future release.",
+      "No CodeLens inline blame — planned for a future release.",
       "All data stays in VS Code globalState on the developer's machine.",
       "Extension package ID: karnatipraveen.lineagelens-base."
     ],
     "provenanceIntegrity": false,
-    "aiBomExport": false
+    "aiBomExport": false,
+    "productionIncidents": false
   },
   "lite": {
     "label": "LineageLens Lite",
@@ -91,14 +92,15 @@
       "lineagelens-scripts/quickstart-lite.sh"
     ],
     "notes": [
-      "Single Docker container \u00e2\u20ac\u201d backend + proxy only.",
-      "SQLite file stored in ./data/lineagelens.db \u00e2\u20ac\u201d no Postgres required.",
+      "Single Docker container — backend + proxy only.",
+      "SQLite file stored in ./data/lineagelens.db — no Postgres required.",
       "Search is keyword-only (no vector/semantic search).",
       "Small local deployment tier: full prompt, model, file, risk, and provenance locally.",
-      "Not designed for shared multi-user access \u00e2\u20ac\u201d use Plus for that."
+      "Not designed for shared multi-user access — use Plus for that."
     ],
     "provenanceIntegrity": false,
-    "aiBomExport": false
+    "aiBomExport": false,
+    "productionIncidents": false
   },
   "plus": {
     "label": "LineageLens Plus",
@@ -148,13 +150,14 @@
     "notes": [
       "PostgreSQL required (pgvector image used but vector search is off by default).",
       "Search is keyword-only. VECTOR_SEARCH_ENABLED=false in this tier.",
-      "SSO/OIDC is NOT included \u00e2\u20ac\u201d use Max for that.",
+      "SSO/OIDC is NOT included — use Max for that.",
       "MCP server available for Claude Code / Cursor / Continue integration.",
       "GitHub Actions gate for blocking high-risk AI code in CI.",
       "Includes team management, RBAC (admin/member), audit export, reviews, and webhooks."
     ],
     "provenanceIntegrity": true,
-    "aiBomExport": true
+    "aiBomExport": true,
+    "productionIncidents": true
   },
   "max": {
     "label": "LineageLens Max",
@@ -203,15 +206,16 @@
       "lineagelens-k8s/helm/"
     ],
     "notes": [
-      "Neo4j 5+ required \u00e2\u20ac\u201d adds ~60s cold-start on first boot.",
+      "Neo4j 5+ required — adds ~60s cold-start on first boot.",
       "pgvector with cosine_distance for similarity search. With default EMBEDDING_PROVIDER=hash this is hash-based (deterministic, not semantic meaning). Set EMBEDDING_PROVIDER=openai for real semantic search.",
       "SSO/OIDC via full OIDC discovery (works with Okta, Auth0, Azure AD, etc.).",
       "Retention and redaction policies per workspace.",
       "Helm chart available for Kubernetes deployment.",
       "EMBEDDING_PROVIDER defaults to hash (deterministic, no quality); set to openai for real embeddings.",
-      "Not yet SOC 2 / ISO 27001 validated \u00e2\u20ac\u201d treat as developer-governance tooling until that work is done."
+      "Not yet SOC 2 / ISO 27001 validated — treat as developer-governance tooling until that work is done."
     ],
     "provenanceIntegrity": true,
-    "aiBomExport": true
+    "aiBomExport": true,
+    "productionIncidents": true
   }
 }

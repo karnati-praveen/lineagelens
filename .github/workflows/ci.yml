@@ -104,6 +104,12 @@ jobs:
       - name: Run backend tests
         run: pytest tests -q
 
+      - name: Validate tier contract
+        working-directory: .
+        run: |
+          pip install pyyaml -q
+          python lineagelens-scripts/check-tier-contract.py
+
   backend-postgres:
     name: Backend Integration Tests (Postgres + pgvector)
     runs-on: ubuntu-latest
@@ -160,3 +166,35 @@ jobs:
 
       - name: Run backend tests against Postgres
         run: pytest tests -q
+
+  proxy:
+    name: Proxy Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lineagelens-proxy
+    env:
+      UPSTREAM_URL: "http://127.0.0.1:19999"
+      BACKEND_URL: "http://127.0.0.1:19998"
+      BACKEND_INGEST_TOKEN: "test-token"
+      PROXY_WORKSPACE_ID: "ws-test"
+      ANTHROPIC_UPSTREAM_URL: "https://api.anthropic.com"
+      OPENAI_UPSTREAM_URL: "https://api.openai.com"
+      GEMINI_UPSTREAM_URL: "https://generativelanguage.googleapis.com"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install proxy dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run proxy tests
+        run: pytest -q

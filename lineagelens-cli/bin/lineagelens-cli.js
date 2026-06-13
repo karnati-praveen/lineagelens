@@ -12,6 +12,8 @@ const { backup } = require('../src/commands/lineagelens-cli-backup');
 const { upgrade } = require('../src/commands/lineagelens-cli-upgrade');
 const { rollback } = require('../src/commands/lineagelens-cli-rollback');
 const { configCmd } = require('../src/commands/lineagelens-cli-config-cmd');
+const { blame } = require('../src/commands/lineagelens-cli-blame');
+const { report } = require('../src/commands/lineagelens-cli-report');
 const { setJsonMode, isJsonMode } = require('../src/utils/lineagelens-cli-output');
 const { getActiveMode } = require('../src/utils/lineagelens-cli-config');
 const pkg = require('../package.json');
@@ -158,6 +160,39 @@ program
     const mode = resolveMode(opts.mode, 'plus');
     assertMode(mode);
     await rollback(mode, opts);
+  });
+
+program
+  .command('blame <file>')
+  .description('Per-line AI attribution for a file — git blame, but it tells you which AI')
+  .option('-i, --input <records>', 'Record source: extension captures.json, agent-trace .jsonl, or saved /search response')
+  .option('-u, --url <backendUrl>', 'LineageLens backend URL (or env LINEAGELENS_URL)')
+  .option('-t, --token <jwt>', 'Backend access token (or env LINEAGELENS_TOKEN)')
+  .option('-w, --workspace <id>', 'Workspace id for backend mode (or env LINEAGELENS_WORKSPACE)')
+  .option('--review-status <status>', 'Filter by review status: unreviewed | pending | reviewed (backend mode only)')
+  .option('--category <slug>', 'Filter by risk category: auth | secrets | sql | shell | dom | payments | eval | large-block (backend mode only)')
+  .option('--stats', 'Print only the summary, not the annotated file', false)
+  .option('--min-confidence <n>', 'Ignore records below this confidence (0–1)', parseFloat)
+  .option('--no-color', 'Disable ANSI colors')
+  .action(async (file, opts) => {
+    await blame(file, opts);
+  });
+
+program
+  .command('report [dir]')
+  .description('Repo-wide AI attribution report — how much of this codebase did AI write?')
+  .option('-i, --input <records>', 'Record source: extension captures.json, agent-trace .jsonl, or saved /search response')
+  .option('-u, --url <backendUrl>', 'LineageLens backend URL (or env LINEAGELENS_URL)')
+  .option('-t, --token <jwt>', 'Backend access token (or env LINEAGELENS_TOKEN)')
+  .option('-w, --workspace <id>', 'Workspace id for backend mode (or env LINEAGELENS_WORKSPACE)')
+  .option('--review-status <status>', 'Filter by review status: unreviewed | pending | reviewed (backend mode only)')
+  .option('--category <slug>', 'Filter by risk category: auth | secrets | sql | shell | dom | payments | eval | large-block (backend mode only)')
+  .option('--md', 'Output a paste-ready markdown report (for READMEs and PRs)', false)
+  .option('--top <n>', 'Show at most n files in the table', '25')
+  .option('--min-confidence <n>', 'Ignore records below this confidence (0–1)', parseFloat)
+  .option('--no-color', 'Disable ANSI colors')
+  .action(async (dir, opts) => {
+    await report(dir, opts);
   });
 
 program

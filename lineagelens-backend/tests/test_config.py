@@ -84,3 +84,70 @@ def test_settings_registration_can_be_disabled() -> None:
     settings = build_settings(REGISTRATION_ENABLED=False)
 
     assert settings.registration_enabled is False
+
+
+# ── M3: PROXY_STATIC_TOKEN validation ─────────────────────────────────────────
+
+def test_settings_accepts_empty_proxy_static_token() -> None:
+    settings = build_settings(PROXY_STATIC_TOKEN="")
+    assert settings.proxy_static_token == ""
+
+
+def test_settings_accepts_strong_proxy_static_token() -> None:
+    strong = "x" * 40
+    settings = build_settings(PROXY_STATIC_TOKEN=strong)
+    assert settings.proxy_static_token == strong
+
+
+def test_settings_rejects_short_proxy_static_token() -> None:
+    with pytest.raises(ValueError, match="at least 32 characters"):
+        build_settings(PROXY_STATIC_TOKEN="short-token")
+
+
+def test_settings_rejects_weak_proxy_static_token() -> None:
+    with pytest.raises(ValueError, match="known-weak"):
+        build_settings(PROXY_STATIC_TOKEN="proxy-token")
+
+
+def test_settings_rejects_secret_as_proxy_static_token() -> None:
+    with pytest.raises(ValueError, match="known-weak"):
+        build_settings(PROXY_STATIC_TOKEN="secret")
+
+
+def test_settings_rejects_token_exactly_31_chars() -> None:
+    with pytest.raises(ValueError, match="at least 32 characters"):
+        build_settings(PROXY_STATIC_TOKEN="x" * 31)
+
+
+def test_settings_accepts_token_exactly_32_chars() -> None:
+    settings = build_settings(PROXY_STATIC_TOKEN="x" * 32)
+    assert len(settings.proxy_static_token) == 32
+
+
+# ── W1: single source of truth for SMTP + VECTOR_SEARCH_ENABLED ───────────────
+
+def test_settings_exposes_smtp_fields_with_defaults() -> None:
+    settings = build_settings()
+    assert settings.smtp_host is None
+    assert settings.smtp_port == 587
+    assert settings.smtp_user is None
+    assert settings.smtp_password is None
+    assert settings.smtp_from is None
+
+
+def test_settings_reads_smtp_host() -> None:
+    settings = build_settings(SMTP_HOST="smtp.example.com", SMTP_FROM="alerts@example.com")
+    assert settings.smtp_host == "smtp.example.com"
+    assert settings.smtp_from == "alerts@example.com"
+
+
+def test_vector_search_enabled_consistent_with_models() -> None:
+    """Settings.vector_search_enabled is the single reader; models._vector_search_active
+    now delegates to it, so both sides agree on the same value."""
+    from app.core.config import get_settings
+    from app.db import models as db_models
+
+    cfg = get_settings()
+    # _vector_search_active is False in the test env (VECTOR_SEARCH_ENABLED=false in conftest).
+    # Verify Settings agrees so the two paths can never diverge.
+    assert cfg.vector_search_enabled == db_models._vector_search_active

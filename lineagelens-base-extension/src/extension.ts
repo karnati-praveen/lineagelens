@@ -113,11 +113,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
 
   // Capture service
-  const captureService = new CaptureService(store, statusBar, () => {
+  const captureService = new CaptureService(store, statusBar, context, () => {
     webviewProvider.refresh();
     statusBar.text = `$(history) ${store.count} captures`;
   });
   captureService.start();
+  // Retry any pending outbox entries left over from a previous session.
+  captureService.retryOutbox().catch(() => {});
   context.subscriptions.push({ dispose: () => captureService.dispose() });
 
   // Open capture detail panel

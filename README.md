@@ -40,9 +40,9 @@ With LineageLens:     prompt="add rate limiting…" model=claude-opus-4-5 file=a
 | Mode | Who it's for | Storage | Captures prompt + model | Start command |
 |---|---|---|---|---|
 | **Easy (Base)** | Anyone — zero setup, local or backend-synced | VS Code global state / backend | No — file + lines only | `code --install-extension karnatipraveen.lineagelens-base` |
-| **Power (Lite)** | Solo dev or team ≤ 10, single box | SQLite + Docker | Yes | `bash lineagelens-scripts/quickstart-lite.sh` |
-| **Power (Plus)** | Teams 10–100, governance + CI gate | PostgreSQL | Yes | `bash lineagelens-scripts/quickstart-plus.sh` |
-| **Power (Max)** | Compliance, graph lineage, SSO | PostgreSQL + Neo4j + pgvector | Yes | `bash lineagelens-scripts/quickstart-max.sh` |
+| **Power (Lite)** | Solo dev or team ≤ 10, single box | SQLite + Docker | Yes | macOS/Linux: `bash lineagelens-scripts/quickstart-lite.sh` · Windows: `.\lineagelens-scripts\quickstart-lite.ps1` |
+| **Power (Plus)** | Teams 10–100, governance + CI gate | PostgreSQL | Yes | macOS/Linux: `bash lineagelens-scripts/quickstart-plus.sh` · Windows: see PS1 |
+| **Power (Max)** | Compliance, graph lineage, SSO | PostgreSQL + Neo4j + pgvector | Yes | macOS/Linux: `bash lineagelens-scripts/quickstart-max.sh` · Windows: see PS1 |
 
 The full tier capability matrix is the single source of truth in
 [`lineagelens-config/tiers.json`](lineagelens-config/tiers.json).
@@ -72,11 +72,21 @@ the proxy: set `lineagelensBase.backendUrl` and `lineagelensBase.ingestToken` in
 
 Power Mode adds the proxy alongside the extension:
 
+**macOS / Linux:**
 ```bash
 git clone https://github.com/karnati-praveen/lineagelens
 cd lineagelens
 bash lineagelens-scripts/quickstart-lite.sh
 ```
+
+**Windows (PowerShell 5.1+):**
+```powershell
+git clone https://github.com/karnati-praveen/lineagelens
+cd lineagelens
+.\lineagelens-scripts\quickstart-lite.ps1
+```
+
+> Git Bash / WSL users on Windows can also use the bash command above.
 
 Open `http://localhost:8787/setup`, create an admin, then point your AI tools at the proxy:
 

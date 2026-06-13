@@ -52,6 +52,7 @@ export class CaptureStore {
   private records: CaptureRecord[] = [];
   private maxCaptures: number;
   private key: Buffer | null;
+  private _saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * Construct a store. `key` enables at-rest encryption; when omitted the store
@@ -131,25 +132,35 @@ export class CaptureStore {
   }
 
   private save(): void {
+    this._saveAsync().catch(err =>
+      console.error('LineageLens Base: failed to persist captures:', err),
+    );
+  }
+
+  // Used by add() to coalesce rapid consecutive captures into one write.
+  private saveDebounced(): void {
+    if (this._saveDebounceTimer !== null) { return; }
+    this._saveDebounceTimer = setTimeout(() => {
+      this._saveDebounceTimer = null;
+      this.save();
+    }, 500);
+  }
+
+  private async _saveAsync(): Promise<void> {
     const tmp = this.storePath + '.tmp';
+    const content = this.encrypt(JSON.stringify(this.records, null, 2));
     try {
-      fs.writeFileSync(tmp, this.encrypt(JSON.stringify(this.records, null, 2)), 'utf-8');
+      await fs.promises.writeFile(tmp, content, 'utf-8');
       try {
-        fs.renameSync(tmp, this.storePath);
+        await fs.promises.rename(tmp, this.storePath);
       } catch {
-        // On Windows, renameSync throws EPERM when overwriting an existing file
-        // that is briefly held open. Fall back to copy + delete (non-atomic but
-        // correct; the .tmp file still contains the complete state).
-        fs.copyFileSync(tmp, this.storePath);
-        fs.unlinkSync(tmp);
+        // On Windows, rename throws EPERM when the target is briefly held open.
+        await fs.promises.copyFile(tmp, this.storePath);
+        await fs.promises.unlink(tmp);
       }
     } catch (error) {
-      try {
-        if (fs.existsSync(tmp)) { fs.unlinkSync(tmp); }
-      } catch {
-        // best-effort cleanup; ignore secondary failure
-      }
-      console.error('LineageLens Base: failed to persist captures:', error);
+      await fs.promises.unlink(tmp).catch(() => {});
+      throw error;
     }
   }
 
@@ -169,7 +180,7 @@ export class CaptureStore {
     if (this.records.length > cap) {
       this.records = this.records.slice(0, cap);
     }
-    this.save();
+    this.saveDebounced();
     return record;
   }
 

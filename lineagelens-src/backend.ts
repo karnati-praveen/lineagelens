@@ -5,17 +5,15 @@ import * as vscode from 'vscode';
 import WebSocket, { RawData } from 'ws';
 import { BackendAuthSession } from './backendAuth';
 import type { ProvenanceRecord } from './provenance';
+import { DEFAULT_BACKEND_BASE_URL, REQUEST_TIMEOUT_MS } from './src/constants';
 
 const CONFIG_SECTION = 'aiInsertionDetector';
 
-const DEFAULT_BACKEND_BASE_URL = 'http://127.0.0.1:8787';
 const DEFAULT_BACKEND_WEBSOCKET_URL = 'ws://127.0.0.1:8787/ws/capture';
 const DEFAULT_BACKEND_INGEST_PATH = '/ingest';
 
 const DEFAULT_WEBSOCKET_RETRY_ATTEMPTS = 2;
 const DEFAULT_HTTP_RETRY_ATTEMPTS = 2;
-
-const REQUEST_TIMEOUT_MS = 12_000;
 const WEBSOCKET_CONFIRMATION_TIMEOUT_MS = 8_000;
 const RETRY_DELAY_BASE_MS = 300;
 
@@ -156,6 +154,25 @@ export class BackendIngestClient implements vscode.Disposable {
 
   public get productMode(): string {
     return this._productMode;
+  }
+
+  public async callApi(
+    method: 'GET' | 'POST',
+    path: string,
+    body?: unknown,
+    resource?: vscode.Uri
+  ): Promise<{ statusCode: number; body: string }> {
+    const config = getBackendIngestConfig(resource);
+    const url = joinUrl(config.baseUrl, path);
+    const authHeader = await this.authSession.getAuthorizationHeader(resource, false, false);
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    };
+    if (authHeader) {
+      headers['Authorization'] = authHeader;
+    }
+    return requestJson(method, url, headers, body);
   }
 
   public async checkBackendHealth(resource?: vscode.Uri): Promise<boolean> {

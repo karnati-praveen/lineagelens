@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import AuthContext, ensure_workspace_scope, get_current_auth_context
@@ -148,24 +148,25 @@ async def analytics_routing_savings(
     """
     cutoff = datetime.now(tz=timezone.utc) - timedelta(days=30)
 
-    result = await session.execute(
-        select(ProvenanceRecord.routing_decision)
+    row = (await session.execute(
+        select(
+            func.coalesce(
+                func.sum(
+                    func.coalesce(
+                        ProvenanceRecord.routing_decision["savings_estimate_usd"].as_float(),
+                        0.0,
+                    )
+                ),
+                0.0,
+            ).label("total_savings"),
+            func.count(ProvenanceRecord.id).label("routed_count"),
+        )
         .where(ProvenanceRecord.workspace_id == auth.workspace_id)
         .where(ProvenanceRecord.created_at >= cutoff)
         .where(ProvenanceRecord.routing_decision.isnot(None))
-    )
-    rows = result.all()
-
-    total: float = 0.0
-    routed_count: int = 0
-    for (rd,) in rows:
-        if isinstance(rd, dict):
-            savings = rd.get("savings_estimate_usd", 0.0)
-            if isinstance(savings, (int, float)):
-                total += float(savings)
-            routed_count += 1
+    )).one()
 
     return {
-        "savings_usd_30d": round(total, 6),
-        "routed_requests_30d": routed_count,
+        "savings_usd_30d": round(float(row.total_savings or 0.0), 6),
+        "routed_requests_30d": int(row.routed_count or 0),
     }

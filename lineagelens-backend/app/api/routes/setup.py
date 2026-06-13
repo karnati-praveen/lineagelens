@@ -9,8 +9,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
-from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -25,6 +25,7 @@ _STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "static")
 router = APIRouter(tags=["setup"])
 
 _DEFAULT_WORKSPACE_NAME = "My Workspace"
+_SETUP_SENTINEL_ID = "__setup_singleton__"
 
 
 class SetupRequest(BaseModel):
@@ -63,6 +64,33 @@ async def run_setup(
 ) -> JSONResponse:
     if await is_setup_complete(session):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Setup already complete.")
+
+    # Prevent two concurrent first-setup requests from both creating admin accounts.
+    #
+    # Postgres path: acquire a transaction-level advisory lock so only one request
+    # proceeds at a time, then re-check is_setup_complete inside the lock.
+    #
+    # SQLite/other path: insert a unique sentinel workspace row with a fixed ID.
+    # The Workspace.id column has a UNIQUE constraint, so the second concurrent
+    # request hits IntegrityError when it tries to insert the same sentinel.
+    # OperationalError ("database is locked") is also caught to handle the case
+    # where the first request still holds SQLite's write lock.
+    if not settings.is_sqlite:
+        await session.execute(text("SELECT pg_advisory_xact_lock(6079875813)"))
+        if await is_setup_complete(session):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Setup already complete."
+            )
+    else:
+        try:
+            sentinel = Workspace(id=_SETUP_SENTINEL_ID, name="__setup_lock__")
+            session.add(sentinel)
+            await session.flush()
+        except (IntegrityError, OperationalError):
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Setup already complete."
+            )
 
     username = _normalize_username(payload.username)
     _validate_password(payload.password, settings)
@@ -107,6 +135,9 @@ async def run_setup(
 
         ws = Workspace(id=workspace_id, name=workspace_name, owner_id=str(user.id))
         session.add(ws)
+
+        from app.services.default_questions import seed_default_questions
+        await seed_default_questions(session, workspace_id)
 
         await session.commit()
     except IntegrityError:

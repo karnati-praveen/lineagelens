@@ -43,6 +43,20 @@ from app.schemas.auth import (
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# Constant dummy hash consumed when a username is not found so that the
+# verify_password PBKDF2 work is always performed, making "user not found"
+# and "wrong password" responses take the same amount of time.
+# The salt/digest values are all-zero bytes; the hash will never match any
+# real password — the point is only to run the KDF.
+# Format: pbkdf2_sha256$ITERATIONS$SALT_B64$DIGEST_B64
+# (salt = 16 zero-bytes, digest = 32 zero-bytes, urlsafe-b64 without padding)
+_DUMMY_HASH = (
+    "pbkdf2_sha256"
+    "$600000"
+    "$AAAAAAAAAAAAAAAAAAAAAA"   # 22 chars → 16 bytes after _pad_base64
+    "$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"  # 43 chars → 32 bytes
+)
+
 
 @router.post("/token", dependencies=[Depends(require_auth_rate_limit)])
 async def token_login(
@@ -59,13 +73,13 @@ async def token_login(
     username = normalize_username(form_data.username)
     user = await get_user_by_username(session, username)
 
-    if user is None or not verify_password(form_data.password, user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password.",
-        )
+    # Always call verify_password — even when the user doesn't exist — so that
+    # "unknown username" and "wrong password" responses take identical time and
+    # cannot be distinguished by a timing oracle.
+    stored_hash = user.password_hash if user is not None else _DUMMY_HASH
+    password_ok = verify_password(form_data.password, stored_hash)
 
-    if not user.is_active:
+    if user is None or not password_ok or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password.",
@@ -126,6 +140,9 @@ async def register_user(
             detail=_registration_conflict_detail(exc),
         )
 
+    from app.services.default_questions import seed_default_questions
+    await seed_default_questions(session, workspace_id)
+
     # issue_token_response generates the JTI, writes it to user, and does the
     # single final commit — no pre-commit here avoids the partial-write window.
     return await issue_token_response(session, user, settings)
@@ -140,13 +157,11 @@ async def login_user(
     username = normalize_username(payload.username)
     user = await get_user_by_username(session, username)
 
-    if user is None or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password.",
-        )
+    # Always run the KDF — even for unknown usernames — to prevent timing oracles.
+    stored_hash = user.password_hash if user is not None else _DUMMY_HASH
+    password_ok = verify_password(payload.password, stored_hash)
 
-    if not user.is_active:
+    if user is None or not password_ok or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password.",

@@ -15,6 +15,13 @@ DISALLOWED_JWT_SECRETS = {
     "secret",
     "password",
 }
+DISALLOWED_PROXY_TOKENS = DISALLOWED_JWT_SECRETS | {
+    "proxy-token",
+    "token",
+    "proxy",
+    "static-token",
+    "proxy-static-token",
+}
 DISALLOWED_PRODUCTION_PASSWORDS = {
     "",
     "neo4j",
@@ -120,12 +127,31 @@ class Settings(BaseSettings):
     explain_llm_model: str = Field(default="gpt-4o-mini", alias="EXPLAIN_LLM_MODEL")
     explain_llm_timeout_seconds: int = Field(default=25, alias="EXPLAIN_LLM_TIMEOUT_SECONDS")
 
+    smtp_host: str | None = Field(default=None, alias="SMTP_HOST")
+    smtp_port: int = Field(default=587, alias="SMTP_PORT")
+    smtp_user: str | None = Field(default=None, alias="SMTP_USER")
+    smtp_password: str | None = Field(default=None, alias="SMTP_PASSWORD")
+    smtp_from: str | None = Field(default=None, alias="SMTP_FROM")
+
     proxy_static_token: str = Field(default="", alias="PROXY_STATIC_TOKEN")
 
     # Field-level encryption key for sensitive DB columns (GitHub tokens, webhook secrets).
     # If unset the system falls back to deriving a key from JWT_SECRET_KEY.
     # Set explicitly in production to decouple field encryption from JWT rotation.
     field_encryption_key: str | None = Field(default=None, alias="FIELD_ENCRYPTION_KEY")
+
+    # Ed25519 attestation signing key: base64-encoded 32-byte raw seed.
+    # If unset in non-production a key is derived from JWT_SECRET_KEY (logged as warning).
+    # Must be set explicitly in production (enforced by validate_secrets_for_environment).
+    attestation_signing_key: str | None = Field(default=None, alias="ATTESTATION_SIGNING_KEY")
+
+    # Path to a JSON file containing license fingerprint corpus for F5 license matching.
+    # If unset, all scans return "clean" (safe default — no false positives without corpus).
+    license_fingerprint_path: str | None = Field(default=None, alias="LICENSE_FINGERPRINT_PATH")
+
+    # When true, records with unknown human-review status pass the F1 eligibility check.
+    # When false (default), unknown review status causes ineligibility for indemnity.
+    indemnity_unknown_review_pass: bool = Field(default=False, alias="INDEMNITY_UNKNOWN_REVIEW_PASS")
 
     # Tighter per-IP rate limit applied exclusively to authentication endpoints.
     # This is separate from the global HTTP rate limit so that login brute-force
@@ -169,6 +195,22 @@ class Settings(BaseSettings):
     @property
     def product_mode(self) -> str:
         return {"solo": "lite", "enterprise": "max"}.get(self.backend_mode, "plus")
+
+    @field_validator("proxy_static_token")
+    @classmethod
+    def validate_proxy_static_token(cls, value: str) -> str:
+        token = value.strip()
+        if not token:
+            return value
+        if token.lower() in DISALLOWED_PROXY_TOKENS:
+            raise ValueError(
+                "PROXY_STATIC_TOKEN must not be set to a known-weak value."
+            )
+        if len(token) < 32:
+            raise ValueError(
+                "PROXY_STATIC_TOKEN must be at least 32 characters long when set."
+            )
+        return value
 
     @field_validator("auth_password_min_length")
     @classmethod
@@ -252,6 +294,19 @@ class Settings(BaseSettings):
             raise ValueError(
                 "JWT_REFRESH_SECRET_KEY must differ from JWT_SECRET_KEY in production."
             )
+
+        if not self.attestation_signing_key or not self.attestation_signing_key.strip():
+            raise ValueError(
+                "ATTESTATION_SIGNING_KEY must be set explicitly in production. "
+                "Generate with: python -c \"import base64,os; print(base64.b64encode(os.urandom(32)).decode())\""
+            )
+        try:
+            import base64 as _b64
+            seed = _b64.b64decode(self.attestation_signing_key.strip())
+            if len(seed) != 32:
+                raise ValueError(f"Expected 32 bytes after base64 decode, got {len(seed)}")
+        except Exception as exc:
+            raise ValueError(f"ATTESTATION_SIGNING_KEY is not a valid base64-encoded 32-byte value: {exc}") from exc
 
         return self
 

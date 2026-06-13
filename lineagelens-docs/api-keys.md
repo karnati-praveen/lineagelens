@@ -30,16 +30,54 @@ Response:
 
 ## Using API Keys
 
-Include the key as a Bearer token in all requests:
+API keys are sent as the `X-API-Key` request header:
 
 ```bash
-curl http://localhost:8787/provenance \
-  -H "Authorization: Bearer llk_<your-key>"
+# CI/CD gate check (the primary use-case for API keys today)
+curl -X POST http://localhost:8787/github/check \
+  -H "X-API-Key: llk_<your-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"filePath": "src/auth.py", "code": "..."}'
 ```
 
-Or in the MCP server:
-```bash
-export LINEAGELENS_ACCESS_TOKEN=llk_<your-key>
+> **Note:** The query endpoints (`/search`, `/provenance`, `/insights/dashboard`, `/explain`)
+> currently require a JWT Bearer token. Use `LINEAGELENS_ACCESS_TOKEN` or
+> `LINEAGELENS_USERNAME` + `LINEAGELENS_PASSWORD` for those endpoints.
+
+In the MCP server, set `LINEAGELENS_API_KEY` (preferred) or fall back to JWT auth:
+
+```json
+{
+  "mcpServers": {
+    "lineagelens": {
+      "command": "python",
+      "args": ["lineagelens-mcp/lineagelens-mcp.py"],
+      "env": {
+        "LINEAGELENS_API_KEY": "llk_<your-key>",
+        "LINEAGELENS_BACKEND_URL": "http://localhost:8787"
+      }
+    }
+  }
+}
+```
+
+For JWT-authenticated endpoints (search, insights, explain), use a dedicated read-only
+member account rather than an admin account:
+
+```json
+{
+  "mcpServers": {
+    "lineagelens": {
+      "command": "python",
+      "args": ["lineagelens-mcp/lineagelens-mcp.py"],
+      "env": {
+        "LINEAGELENS_USERNAME": "mcp-readonly",
+        "LINEAGELENS_PASSWORD": "<password>",
+        "LINEAGELENS_BACKEND_URL": "http://localhost:8787"
+      }
+    }
+  }
+}
 ```
 
 ## Scopes

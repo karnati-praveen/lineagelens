@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
-from sqlalchemy import and_, case, func, select
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import Text, and_, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import log_audit_event
@@ -16,13 +16,15 @@ from app.core.security import (
     get_current_auth_context,
     get_verified_user_role,
 )
-from app.db.models import ProvenanceRecord
+from app.db.models import ProvenanceRecord, ProvenanceTag
 from app.db.session import get_db_session
 from app.schemas.provenance import SearchRequest, SearchResponse, SearchResultItem
 from app.services.provenance_service import search_provenance_records, serialize_provenance_record
 
 
 router = APIRouter(tags=["search"])
+
+_VALID_REVIEW_STATUSES = {"unreviewed", "pending", "reviewed"}
 
 
 @router.post("/search", dependencies=[Depends(require_non_solo)])
@@ -33,6 +35,12 @@ async def search_provenance(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> SearchResponse:
     ensure_workspace_scope(auth, payload.workspace_id)
+
+    if payload.review_status is not None and payload.review_status not in _VALID_REVIEW_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"reviewStatus must be one of {sorted(_VALID_REVIEW_STATUSES)}",
+        )
 
     settings: Settings = request.app.state.settings
     role = await get_verified_user_role(session, auth)
@@ -175,9 +183,33 @@ async def get_search_facets(
         key=lambda x: -x["count"],
     )[:20]
 
+    # ai_category facet — count records per ai-category:* tag, restricted by access clause
+    cat_rows = await session.execute(
+        select(ProvenanceTag.tag, func.count(ProvenanceTag.id).label("cnt"))
+        .join(
+            ProvenanceRecord,
+            and_(
+                func.replace(cast(ProvenanceRecord.uuid, Text), "-", "")
+                == func.replace(ProvenanceTag.record_uuid, "-", ""),
+                ws,
+            ),
+        )
+        .where(
+            ProvenanceTag.workspace_id == auth.workspace_id,
+            ProvenanceTag.tag.like("ai-category:%"),
+        )
+        .group_by(ProvenanceTag.tag)
+        .order_by(func.count(ProvenanceTag.id).desc())
+    )
+    ai_category_facets = [
+        {"value": r.tag[len("ai-category:"):], "count": r.cnt}
+        for r in cat_rows
+    ]
+
     return {
         "model_name": model_facets,
         "risk_level": risk_facets,
         "capture_status": capture_facets,
         "file_extension": ext_facets,
+        "ai_category": ai_category_facets,
     }

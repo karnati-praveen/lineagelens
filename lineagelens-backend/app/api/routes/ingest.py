@@ -45,6 +45,8 @@ async def _ensure_workspace_exists(session: AsyncSession, workspace_id: str) -> 
     try:
         await session.flush()
         _known_workspace_ids.add(workspace_id)
+        from app.services.default_questions import seed_default_questions
+        await seed_default_questions(session, workspace_id)
     except IntegrityError:
         # Another concurrent request created it first — reset and continue.
         await session.rollback()

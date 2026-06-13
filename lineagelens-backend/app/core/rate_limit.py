@@ -105,15 +105,31 @@ def effective_client_ip(
     real_ip_header: str,
     trusted_proxy_ips: str | None = None,
 ) -> str:
-    """Return the real client IP, honoring forwarded headers only from allowlisted proxies."""
+    """Return the real client IP, honoring forwarded headers only from allowlisted proxies.
+
+    Walks the X-Forwarded-For chain right-to-left (i.e. from the last hop added
+    by a trusted proxy towards the original client) and returns the first entry
+    that is NOT in trusted_proxy_ips.  This prevents a spoofed left-most entry
+    from being used as the "real" IP: an attacker can forge any value they like
+    in the leftmost XFF position, but they cannot forge the rightmost entry
+    because that is appended by the trusted proxy closest to us.
+    """
     trusted_ips = _parse_trusted_proxy_ips(trusted_proxy_ips)
     normalized_peer = (peer_host or "").strip()
 
-    if normalized_peer and normalized_peer in trusted_ips:
-        forwarded_chain = [e.strip() for e in forwarded_for_header.split(",") if e.strip()]
-        if forwarded_chain:
-            return client_identifier(forwarded_chain[0])
-        real_ip = real_ip_header.strip()
-        if real_ip:
-            return client_identifier(real_ip)
+    # If the direct peer is not a trusted proxy, use it as-is.
+    if normalized_peer not in trusted_ips:
+        return client_identifier(peer_host)
+
+    # Peer is trusted: walk XFF right-to-left for the first untrusted entry.
+    if forwarded_for_header.strip():
+        chain = [e.strip() for e in forwarded_for_header.split(",") if e.strip()]
+        for ip in reversed(chain):
+            if ip not in trusted_ips:
+                return client_identifier(ip)
+
+    # Fall back to X-Real-IP, then to the direct peer.
+    real_ip = real_ip_header.strip()
+    if real_ip:
+        return client_identifier(real_ip)
     return client_identifier(peer_host)

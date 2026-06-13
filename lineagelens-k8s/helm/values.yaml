@@ -45,12 +45,13 @@ secrets:
   neo4jUri: ""
   neo4jUser: ""
   neo4jPassword: ""
-  openaiApiKey: ""
-  anthropicApiKey: ""
+  embeddingApiKey: ""
+  explainLlmApiKey: ""
   smtpHost: ""
   smtpPort: "587"
   smtpUser: ""
   smtpPassword: ""
+  smtpFrom: ""
 
 resources:
   backend:

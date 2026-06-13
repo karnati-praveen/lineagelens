@@ -24,6 +24,9 @@
     "src/",
     "deploy/"
   ],
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  },
   "dependencies": {
     "commander": "^12.1.0"
   }

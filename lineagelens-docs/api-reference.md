@@ -33,6 +33,7 @@ The proxy uses a separate static token (`PROXY_STATIC_TOKEN` on the backend, mat
 - [Provenance](#provenance)
 - [Integrity](#integrity)
 - [Export / Agent Trace](#export--agent-trace)
+- [Incidents](#incidents)
 - [Health](#health)
 
 ---
@@ -283,7 +284,18 @@ Example response:
 }
 ```
 
-Additional filter fields: `modelName`, `filePath`, `riskLevel` (`low`/`medium`/`high`/`critical`), `dateFrom`, `dateTo`, `captureStatus` (`full` or `file_diff`).
+**Standard filter fields:** `modelName`, `filePath`, `riskLevel` (`low`/`medium`/`high`/`critical`), `riskMin`, `riskMax`, `dateFrom`, `dateTo`, `captureStatus` (`full` or `file_diff`), `isRedacted`, `hasPrompt`, `tags` (array), `fileExtension`.
+
+**Review-status filter — `reviewStatus`:** Limits results by whether the record has a review-queue entry.
+- `"unreviewed"` — no review queue row exists for the record
+- `"pending"` — a review queue row exists with `status == "pending"`
+- `"reviewed"` — a review queue row exists with `status` in `approved`, `rejected`, or `deferred`
+
+Any other value returns `400`.
+
+**Model-family filter — `modelFamily`:** Case-insensitive prefix match on the stored model name. Use `"claude"` to match all Claude models, `"gpt"` for all GPT models, `"gemini"` for Gemini, etc. Composes with `modelName` (both filters are ANDed).
+
+**Category filter — `category`:** Filters to records that were automatically categorised at ingest time. Valid slugs: `auth`, `secrets`, `sql`, `shell`, `dom`, `payments`, `large-block`. Categories are written as `ai-category:<slug>` tags during ingest based on the inserted code and file path.
 
 ---
 
@@ -301,9 +313,12 @@ curl -s http://localhost:8787/search/facets \
   "model_name": [{"value": "claude-opus-4-5", "count": 42}],
   "risk_level": [{"value": "medium", "count": 30}, {"value": "high", "count": 12}],
   "capture_status": [{"value": "captured", "count": 40}, {"value": "uncaptured", "count": 2}],
-  "file_extension": [{"value": ".py", "count": 28}]
+  "file_extension": [{"value": ".py", "count": 28}],
+  "ai_category": [{"value": "auth", "count": 15}, {"value": "secrets", "count": 8}, {"value": "sql", "count": 3}]
 }
 ```
+
+**`ai_category` facet:** counts distinct records per risk category tag (`ai-category:*`) that were written automatically at ingest. Use the `value` strings as the `category` filter in `POST /search`.
 
 ---
 
@@ -520,5 +535,143 @@ curl -s http://localhost:8787/health | jq .
 ```
 
 When called from `localhost` in a non-production environment, the response also includes `environment`, `backendMode`, and a `features` object listing which subsystems are active. This extended response is intentionally restricted to loopback callers to prevent infrastructure enumeration.
+
+---
+
+## Incidents
+
+**Tiers:** Plus · Max (gated by `require_non_solo` — unavailable in Lite solo mode)
+
+Production-incident records linked to AI provenance data. The payoff query is `GET /incidents/{uuid}/provenance`, which answers: *"show every AI-generated code insertion that touched a file involved in this incident, in the 90 days before it started."*
+
+All routes require a Bearer token. Webhook intake (`POST /incidents/webhook`) authenticates via HMAC-SHA256 instead.
+
+---
+
+### `POST /incidents`
+
+Create an incident manually. **Admin only.**
+
+```bash
+curl -s -X POST http://localhost:8787/incidents \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Payment service 500s after deploy",
+    "startedAt": "2026-06-12T14:00:00Z",
+    "affectedFiles": [
+      "services/payment/checkout.py",
+      "services/payment/refund.py"
+    ],
+    "externalSource": "pagerduty",
+    "externalRef": "INC-4421"
+  }' | jq .
+```
+
+`affectedFiles` must be a non-empty list of strings. `startedAt` is required; `resolvedAt`, `description`, `externalSource`, and `externalRef` are optional.
+
+---
+
+### `GET /incidents`
+
+List incidents for the authenticated workspace, newest first.
+
+Query params: `limit` (1–200, default 50), `offset` (default 0).
+
+---
+
+### `GET /incidents/{uuid}`
+
+Get a single incident by UUID. Returns 404 if not found or in a different workspace.
+
+---
+
+### `PATCH /incidents/{uuid}`
+
+Update `title`, `resolvedAt`, and/or `affectedFiles`. **Admin only.**
+
+```json
+{ "resolvedAt": "2026-06-12T16:30:00Z" }
+```
+
+---
+
+### `PUT /incidents/webhook/config`
+
+Configure the HMAC webhook secret for this workspace. **Admin only.**
+
+```json
+{ "webhookSecret": "your-secret-min-8-chars" }
+```
+
+---
+
+### `POST /incidents/webhook`
+
+External incident intake (Sentry, PagerDuty, or any generic source). Authenticates via HMAC-SHA256 — no Bearer token required.
+
+Required headers:
+- `X-LineageLens-Workspace: <workspace_id>`
+- `X-Hub-Signature-256: sha256=<hmac-hex>`
+
+**Generic payload:**
+
+```json
+{
+  "title": "Payment service errors",
+  "startedAt": "2026-06-12T14:00:00Z",
+  "files": ["services/payment/checkout.py"],
+  "source": "pagerduty",
+  "externalRef": "INC-4421"
+}
+```
+
+**Sentry issue-alert shape** is also accepted. File paths are extracted best-effort from stacktrace frames (`filename` / `abs_path`).
+
+Returns `{"received": true, "incidentUuid": "<uuid>"}` on success. Returns 403 if webhooks are not configured, 401 if the signature is wrong.
+
+---
+
+### `GET /incidents/{uuid}/provenance`
+
+**The payoff endpoint.** Returns provenance records for files affected by this incident.
+
+Query params: `windowDays` (1–3650, default 90) — how far back before `startedAt` to search.
+
+Matching logic:
+- `workspace_id` must match.
+- `file_path` is matched by exact path **or** basename (normalises `\` → `/`), so captures from dev machines with absolute paths match incident files regardless of directory prefix.
+- `timestamp_iso ≤ startedAt` (records after the incident are excluded).
+- `timestamp_iso ≥ startedAt − windowDays`.
+- Ordered by `risk_score DESC NULLS LAST`, then `timestamp DESC`.
+
+Each item includes `riskScore`, `modelName`, `confidenceBreakdown`, `tags`, and a 200-char `insertedCodePreview`.
+
+```bash
+curl -s "http://localhost:8787/incidents/3fa85f64-.../provenance?windowDays=30" \
+  -H "Authorization: Bearer <token>" | jq '.items[] | {filePath, riskScore, modelName}'
+```
+
+Example response snippet:
+
+```json
+{
+  "incident": { "uuid": "...", "title": "Payment service 500s", "startedAt": "2026-06-12T14:00:00+00:00" },
+  "windowDays": 30,
+  "total": 3,
+  "items": [
+    {
+      "uuid": "...",
+      "filePath": "/home/ci/services/payment/checkout.py",
+      "timestampIso": "2026-06-11T09:15:00+00:00",
+      "modelName": "claude-sonnet-4-6",
+      "riskScore": 87,
+      "confidenceBreakdown": null,
+      "tags": ["ai-generated", "no-review"],
+      "insertedCodePreview": "async def process_payment(amount, card_token):\n    ..."
+    }
+  ]
+}
+```
 
 The proxy exposes its own health check at `GET http://localhost:8788/proxy-health` → `{"status": "ok"}`. This is the endpoint the VS Code extension polls every 30 s to detect whether Power Mode is available.

@@ -66,12 +66,15 @@ class SearchRequest(BaseModel):
     risk_min: int | None = Field(default=None, alias="riskMin", ge=0, le=100)
     risk_max: int | None = Field(default=None, alias="riskMax", ge=0, le=100)
     model_name: str | None = Field(default=None, alias="modelName")
+    model_family: str | None = Field(default=None, alias="modelFamily")
     agent_tool: str | None = Field(default=None, alias="agentTool")
     file_extension: str | None = Field(default=None, alias="fileExtension")
     capture_status: str | None = Field(default=None, alias="captureStatus")
     has_prompt: bool | None = Field(default=None, alias="hasPrompt")
     is_redacted: bool | None = Field(default=None, alias="isRedacted")
     tags: list[str] | None = None
+    review_status: str | None = Field(default=None, alias="reviewStatus")
+    category: str | None = None
 
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 

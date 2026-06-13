@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.db.models import ProvenanceRecord, ScheduledReport
 
 logger = logging.getLogger(__name__)
@@ -140,7 +140,8 @@ async def _build_report_body(session: AsyncSession, report: ScheduledReport) -> 
 
 
 async def _dispatch_email(report: ScheduledReport, body: str) -> None:
-    smtp_host = os.environ.get("SMTP_HOST")
+    cfg = get_settings()
+    smtp_host = cfg.smtp_host
     if not smtp_host:
         logger.warning("SMTP_HOST not configured; skipping scheduled report email dispatch.")
         return
@@ -148,10 +149,10 @@ async def _dispatch_email(report: ScheduledReport, body: str) -> None:
     import smtplib
     from email.mime.text import MIMEText
 
-    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
-    smtp_user = os.environ.get("SMTP_USER")
-    smtp_pass = os.environ.get("SMTP_PASSWORD")
-    from_addr = os.environ.get("SMTP_FROM", smtp_user or "noreply@lineagelens.io")
+    smtp_port = cfg.smtp_port
+    smtp_user = cfg.smtp_user
+    smtp_pass = cfg.smtp_password
+    from_addr = cfg.smtp_from or smtp_user or "noreply@lineagelens.io"
     subject = f"LineageLens {report.report_type.replace('_', ' ').title()} Report"
 
     def _send() -> None:

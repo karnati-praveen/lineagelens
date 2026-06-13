@@ -49,6 +49,16 @@ lineagelens-prafea
 lineagelens-marketing/
 lineagelens-n8n/
 
+# Dated working / planning documents (local only — never commit)
+SATURDAY_CONTENT*.md
+BUILD_PROMPTS*.md
+SECURITY_AUDIT*.md
+STRATEGY_MARKET*.md
+WIRING_AUDIT*.md
+*_CONTENT_*.md
+*_MARKET_*.md
+*_AUDIT_*.md
+
 # Local environment files
 .env
 .env.*

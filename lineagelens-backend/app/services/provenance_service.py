@@ -10,13 +10,13 @@ import re
 import uuid as uuid_pkg
 from typing import Any
 
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import Text, and_, cast, desc, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.core.security import AuthContext
-from app.db.models import ProvenanceRecord, ProvenanceTag
+from app.db.models import ProvenanceRecord, ProvenanceTag, ReviewQueue
 from app.schemas.provenance import SearchRequest, decode_cursor, encode_cursor
 from app.services.ast_normalizer import normalize_ast_tokens
 from app.services.embedding_service import generate_embedding
@@ -29,6 +29,34 @@ from app.services.risk_service import compute_risk_score
 logger = logging.getLogger(__name__)
 
 _BG_TASKS: set[asyncio.Task] = set()
+
+
+async def _backfill_embedding(
+    record_id: int,
+    embedding_text: str,
+    dimensions: int,
+    settings: "Settings",
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Compute an embedding and write it back to an already-committed record.
+
+    Called as a background task so the embedding API call (up to 10 s for
+    OpenAI) is out of the ingest response critical path.  Search tolerates a
+    few seconds of staleness while this runs.
+    """
+    try:
+        vector = await generate_embedding(embedding_text, dimensions, settings)
+        if vector is None or all(math.isclose(v, 0.0) for v in vector):
+            return
+        async with session_factory() as session:
+            await session.execute(
+                update(ProvenanceRecord)
+                .where(ProvenanceRecord.id == record_id)
+                .values(embedding_vector=vector)
+            )
+            await session.commit()
+    except Exception as exc:
+        logger.warning("Background embedding backfill failed for record %s: %s", record_id, exc)
 
 
 @dataclass(slots=True)
@@ -101,7 +129,19 @@ async def ingest_provenance_event(
     ast_snapshot.setdefault("normalizedTokenCount", len(ast_tokens))
 
     embedding_text = compose_embedding_text(payload)
-    embedding_vector = await generate_embedding(embedding_text, settings.pgvector_dimension, settings)
+    # For OpenAI embeddings the network round-trip can take up to 10 s; defer to
+    # a background task so the ingest response isn't blocked on it.  Hash-based
+    # embeddings are instant and stay in the critical path.
+    _defer_embedding = (
+        getattr(settings, "embedding_provider", "hash") == "openai"
+        and bool(getattr(settings, "embedding_api_key", None))
+        and app_state is not None
+        and hasattr(app_state, "db_session_factory")
+    )
+    if _defer_embedding:
+        embedding_vector = None
+    else:
+        embedding_vector = await generate_embedding(embedding_text, settings.pgvector_dimension, settings)
 
     embeddings = dict(payload.embeddings or {})
     embeddings.setdefault("vectorDimension", settings.pgvector_dimension)
@@ -112,7 +152,7 @@ async def ingest_provenance_event(
     except (ValueError, AttributeError):
         stored_user_id = None
 
-    risk_score_value, _risk_reasons = compute_risk_score(
+    risk_score_value, _risk_reasons, risk_categories = compute_risk_score(
         inserted_code=payload.inserted_text,
         prompt_messages=payload.prompt_messages,
         model_name=payload.model_name,
@@ -150,6 +190,13 @@ async def ingest_provenance_event(
         session.add(record)
         await session.flush()
 
+        for slug in risk_categories:
+            session.add(ProvenanceTag(
+                workspace_id=record.workspace_id,
+                record_uuid=str(record.uuid),
+                tag=f"ai-category:{slug}",
+            ))
+
         if not settings.is_solo_mode:
             await _attach_hash_chain(session, record)
 
@@ -173,6 +220,19 @@ async def ingest_provenance_event(
         from app.services.insights_service import invalidate_insights_cache
 
         invalidate_insights_cache(record.workspace_id)
+
+        if _defer_embedding and record.id is not None:
+            _emb_task = asyncio.create_task(
+                _backfill_embedding(
+                    record_id=record.id,
+                    embedding_text=embedding_text,
+                    dimensions=settings.pgvector_dimension,
+                    settings=settings,
+                    session_factory=app_state.db_session_factory,
+                )
+            )
+            _BG_TASKS.add(_emb_task)
+            _emb_task.add_done_callback(_BG_TASKS.discard)
 
         if app_state is not None and record.risk_score is not None:
             try:
@@ -273,6 +333,14 @@ async def _attach_hash_chain(
     Uses SELECT FOR UPDATE on the previous record to serialise concurrent
     ingests within the same workspace — each ingest waits for the prior one's
     commit before reading prev_hash, keeping the chain append-only.
+
+    SCALABILITY NOTE: The FOR UPDATE lock serialises all ingests per workspace,
+    capping workspace ingest throughput at one-at-a-time.  This is intentional
+    correctness trade-off for the audit chain.  If you run a single worker
+    process this is invisible; if you scale to multiple workers the lock
+    contention becomes measurable.  Mitigation if needed: a per-workspace
+    in-process asyncio.Lock avoids cross-connection contention while still
+    maintaining order within a single worker.
     """
     if record.id is None:
         # No real DB row yet (e.g. stub session in tests) — skip silently.
@@ -397,10 +465,27 @@ async def _keyword_search(
     offset: int,
     limit: int,
 ) -> tuple[list[tuple[ProvenanceRecord, float | None]], list[str], int | None, str | None]:
+    tokens = tokenize_query(query_text)
+
+    # Push token matching into the database to avoid loading thousands of full
+    # rows into Python just to discard them.  We check the three most-selective
+    # text columns; inserted_code is included because it's the primary payload.
+    # FTS5 (SQLite) / tsvector+GIN (Postgres) would do this with an index; this
+    # LIKE approach avoids requiring a schema migration while still cutting the
+    # Python-side work significantly.
+    db_filters = list(filters)
+    if tokens:
+        like_conditions: list[object] = []
+        for t in tokens[:5]:
+            like_conditions.append(func.lower(ProvenanceRecord.file_path).contains(t))
+            like_conditions.append(func.lower(ProvenanceRecord.model_name).contains(t))
+            like_conditions.append(func.lower(ProvenanceRecord.inserted_code).contains(t))
+        db_filters.append(or_(*like_conditions))
+
     keyword_scan_limit = min((offset + limit) * 10, 2000)
     statement = (
         select(ProvenanceRecord)
-        .where(and_(*filters))
+        .where(and_(*db_filters))
         .order_by(desc(ProvenanceRecord.timestamp_iso))
         .limit(keyword_scan_limit)
     )
@@ -408,7 +493,6 @@ async def _keyword_search(
     result = await session.execute(statement)
     records = result.scalars().all()
 
-    tokens = tokenize_query(query_text)
     rows_with_scores: list[tuple[ProvenanceRecord, float | None]] = [
         (record, score)
         for record in records
@@ -531,6 +615,7 @@ async def search_provenance_records(
 def serialize_provenance_record(
     record: ProvenanceRecord,
     score: float | None = None,
+    model_durability: int | None = None,
 ) -> dict[str, Any]:
     payload = dict(record.provenance_payload or {})
 
@@ -570,6 +655,9 @@ def serialize_provenance_record(
 
     if score is not None:
         payload["score"] = score
+
+    if model_durability is not None:
+        payload["modelDurabilityScore"] = model_durability
 
     return payload
 
@@ -731,14 +819,14 @@ def build_workspace_record_filters(search: SearchRequest, workspace_id: str) -> 
         filters.append(ProvenanceRecord.is_redacted.is_(False))
 
     # tags filter — records that have ALL specified tags
+    # Strip dashes from both sides so the comparison works on both SQLite (hex
+    # UUID storage) and Postgres (native UUID cast-to-text with dashes).
     tags = getattr(search, "tags", None)
     if tags:
-        from sqlalchemy import Text, cast
-
         clean_tags = [t.strip().lower() for t in tags if t.strip()]
         for tag_val in clean_tags:
             tag_subq = (
-                select(ProvenanceTag.record_uuid)
+                select(func.replace(ProvenanceTag.record_uuid, "-", ""))
                 .where(
                     and_(
                         ProvenanceTag.workspace_id == workspace_id,
@@ -747,9 +835,72 @@ def build_workspace_record_filters(search: SearchRequest, workspace_id: str) -> 
                 )
                 .scalar_subquery()
             )
-            # ProvenanceTag.record_uuid is stored as String(64) (the UUID stringified),
-            # so cast ProvenanceRecord.uuid to text for the IN comparison.
-            filters.append(cast(ProvenanceRecord.uuid, Text).in_(tag_subq))
+            filters.append(
+                func.replace(cast(ProvenanceRecord.uuid, Text), "-", "").in_(tag_subq)
+            )
+
+    # reviewStatus filter — unreviewed / pending / reviewed
+    #
+    # SQLite stores Uuid columns as 32-char hex without dashes; String columns
+    # (ReviewQueue.record_uuid, ProvenanceTag.record_uuid) store standard
+    # "xxxxxxxx-xxxx-..." format.  Stripping dashes from both sides before
+    # comparing makes the IN/NOT IN work on both SQLite and Postgres.
+    review_status = getattr(search, "review_status", None)
+    if review_status:
+        _uuid_hex = func.replace(cast(ProvenanceRecord.uuid, Text), "-", "")
+        if review_status == "unreviewed":
+            queued_uuids = (
+                select(func.replace(ReviewQueue.record_uuid, "-", ""))
+                .where(ReviewQueue.workspace_id == workspace_id)
+                .scalar_subquery()
+            )
+            filters.append(_uuid_hex.not_in(queued_uuids))
+        elif review_status == "pending":
+            pending_uuids = (
+                select(func.replace(ReviewQueue.record_uuid, "-", ""))
+                .where(
+                    ReviewQueue.workspace_id == workspace_id,
+                    ReviewQueue.status == "pending",
+                )
+                .scalar_subquery()
+            )
+            filters.append(_uuid_hex.in_(pending_uuids))
+        elif review_status == "reviewed":
+            reviewed_uuids = (
+                select(func.replace(ReviewQueue.record_uuid, "-", ""))
+                .where(
+                    ReviewQueue.workspace_id == workspace_id,
+                    ReviewQueue.status.in_(["approved", "rejected", "deferred"]),
+                )
+                .scalar_subquery()
+            )
+            filters.append(_uuid_hex.in_(reviewed_uuids))
+
+    # modelFamily filter — case-insensitive prefix match on model_name
+    model_family = getattr(search, "model_family", None)
+    if model_family:
+        # Sanitize: strip LIKE wildcards and backslashes to prevent injection
+        clean_family = model_family.replace("%", "").replace("_", "").replace("\\", "")
+        if clean_family:
+            filters.append(
+                func.lower(func.coalesce(ProvenanceRecord.model_name, "")).like(
+                    clean_family.lower() + "%"
+                )
+            )
+
+    # category filter — IN scalar_subquery against ProvenanceTag with ai-category:<slug>
+    category = getattr(search, "category", None)
+    if category:
+        tag_val = f"ai-category:{category}"
+        cat_subq = (
+            select(func.replace(ProvenanceTag.record_uuid, "-", ""))
+            .where(
+                ProvenanceTag.workspace_id == workspace_id,
+                ProvenanceTag.tag == tag_val,
+            )
+            .scalar_subquery()
+        )
+        filters.append(func.replace(cast(ProvenanceRecord.uuid, Text), "-", "").in_(cat_subq))
 
     return filters
 

@@ -38,6 +38,9 @@ import {
   SearchSelection
 } from './provenanceSearchSidebar';
 import { ProvenanceReviewerService } from './reviewer';
+import { BackendIngestClient } from './backend';
+import { BackendAuthSession } from './backendAuth';
+import { HumanReviewDepthTracker, runAttestHumanReview } from './humanReviewAttestation';
 import { BackendStorageService } from './storage/BackendStorageService';
 import { LocalStorageService } from './storage/LocalStorageService';
 import {
@@ -46,6 +49,7 @@ import {
   getConfiguredMode
 } from './storage/StorageService';
 import { getStoragePathForUri } from './storagePath';
+import { DEFAULT_BACKEND_BASE_URL } from './src/constants';
 
 const CONFIG_SECTION = 'aiInsertionDetector';
 const MODE_CONFIG_SECTION = 'aiCodeProvenance';
@@ -58,12 +62,13 @@ const DEFAULT_CORRELATION_SIMILARITY_THRESHOLD = 0.7;
 const DEFAULT_CORRELATION_WINDOW_MS = 30_000;
 const DEFAULT_LOCAL_PROXY_RETENTION_MS = 5 * 60_000;
 const DEFAULT_ACTIVATION_STARTUP_MODE = 'lazy';
-const DEFAULT_BACKEND_BASE_URL = 'http://127.0.0.1:8787';
 const CONTEXT_TOKEN_WINDOW = 200;
 const LOCAL_EMBEDDING_DIMENSIONS = 128;
 const LOCAL_EMBEDDING_PROVIDER = 'local-hash';
 const LOCAL_EMBEDDING_MODEL = 'deterministic-hash-v1';
 const agentAdapterRegistry = createDefaultAgentAdapterRegistry();
+
+const humanReviewDepthTracker = new HumanReviewDepthTracker();
 
 type StartupMode = 'lazy' | 'eager';
 
@@ -512,6 +517,34 @@ export function activate(context: vscode.ExtensionContext): void {
     // lineagelens.runOnboarding — re-run the setup wizard
     vscode.commands.registerCommand('lineagelens.runOnboarding', async () => {
       await runOnboardingWizard(context);
+    }),
+    // lineagelens.attestHumanReview — attest that a human reviewed AI-generated lines.
+    // Time-on-diff is measured from the moment the command is first invoked with
+    // 'start' (or when the user opens a diff view); elapsed seconds, inline
+    // comment count, and lines shown are pre-filled from the local tracker.
+    // Telemetry stays local until the reviewer explicitly submits.
+    vscode.commands.registerCommand('lineagelens.attestHumanReview', async () => {
+      const resource = vscode.window.activeTextEditor?.document.uri;
+      try {
+        // Lazy-start the tracker on first invocation so time begins only when
+        // the reviewer intentionally enters the attest flow.
+        if (humanReviewDepthTracker.secondsOnDiff === 0) {
+          humanReviewDepthTracker.startReview();
+        }
+        const authSession = new BackendAuthSession(context, log);
+        const apiClient = new BackendIngestClient(authSession, log);
+        const result = await runAttestHumanReview(apiClient, humanReviewDepthTracker, resource);
+        if (result) {
+          const label = result.depthSignal ?? 'unknown';
+          vscode.window.showInformationMessage(
+            `LineageLens: Review attested — depth: ${label}, verdict: ${result.verdict ?? '—'}.`
+          );
+        }
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        log('Attest human review failed: ' + msg);
+        vscode.window.showErrorMessage('LineageLens attestation failed: ' + msg);
+      }
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       const activeUri = vscode.window.activeTextEditor?.document.uri;

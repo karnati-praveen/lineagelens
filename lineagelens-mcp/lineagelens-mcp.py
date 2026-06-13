@@ -5,11 +5,24 @@ Exposes AI provenance tools to any MCP-capable client (Claude Code, Cursor, Cont
 Connects to a running LineageLens backend and surfaces search, record lookup,
 governance insights, and plain-English explanations as MCP tools.
 
-Environment variables:
+Recommended authentication (Plus / Max tiers):
+    Set LINEAGELENS_API_KEY to a key created in the dashboard under API Keys.
+    The MCP server sends it as an ``X-API-Key`` header.
+
+    NOTE: The current backend routes used by this server (/search, /provenance,
+    /insights/dashboard, /explain) accept JWT Bearer tokens only — they do NOT
+    yet accept X-API-Key.  Until those endpoints are updated the API key will be
+    rejected with a 401 and you will see a clear error naming the endpoint.
+    Use LINEAGELENS_ACCESS_TOKEN (a pre-obtained JWT) or
+    LINEAGELENS_USERNAME + LINEAGELENS_PASSWORD (dedicated read-only member
+    account, NOT an admin) as the fallback auth in the meantime.
+
+Environment variables (evaluated in precedence order):
+    LINEAGELENS_API_KEY       API key from dashboard → API Keys (preferred)
+    LINEAGELENS_ACCESS_TOKEN  Pre-obtained JWT access token
+    LINEAGELENS_USERNAME      LineageLens account username  (fallback)
+    LINEAGELENS_PASSWORD      LineageLens account password  (fallback)
     LINEAGELENS_BACKEND_URL   Backend base URL (auto-discovered if not set)
-    LINEAGELENS_ACCESS_TOKEN  Pre-obtained JWT access token  -- OR --
-    LINEAGELENS_USERNAME      LineageLens account username
-    LINEAGELENS_PASSWORD      LineageLens account password
 """
 import json
 import logging
@@ -24,6 +37,7 @@ from mcp.server.fastmcp import FastMCP
 logger = logging.getLogger(__name__)
 
 _BACKEND_URL_ENV: str = os.environ.get("LINEAGELENS_BACKEND_URL", "").strip().rstrip("/")
+_API_KEY: str = os.environ.get("LINEAGELENS_API_KEY", "").strip()
 _STATIC_TOKEN: str = os.environ.get("LINEAGELENS_ACCESS_TOKEN", "").strip()
 _USERNAME: str = os.environ.get("LINEAGELENS_USERNAME", "").strip()
 _PASSWORD: str = os.environ.get("LINEAGELENS_PASSWORD", "").strip()
@@ -41,11 +55,19 @@ BACKEND_URL: str = _BACKEND_URL_ENV or _DEFAULT_BACKEND_CANDIDATES[0]
 mcp = FastMCP(
     "lineagelens-mcp",
     instructions=(
-        "LineageLens MCP Server - AI code provenance query interface.\n\n"
-        "Token lifecycle: Tokens are cached in memory and refreshed automatically on 401. "
-        "If authentication fails persistently, restart the MCP server process — it will re-login.\n\n"
-        "Setup: Set LINEAGELENS_USERNAME, LINEAGELENS_PASSWORD, LINEAGELENS_BACKEND_URL before starting. "
-        "Remote backend: If LINEAGELENS_BACKEND_URL is not set, the server will auto-discover a local backend."
+        "LineageLens MCP Server — AI code provenance query interface.\n\n"
+        "RECOMMENDED SETUP (Plus / Max):\n"
+        "  1. In the LineageLens dashboard go to Settings → API Keys and create a key.\n"
+        "  2. Set LINEAGELENS_API_KEY=<key> and LINEAGELENS_BACKEND_URL=<url>.\n"
+        "  Note: the query endpoints (/search, /provenance, /insights, /explain) currently\n"
+        "  require JWT auth. If you see a 401 error naming one of these endpoints, use\n"
+        "  LINEAGELENS_ACCESS_TOKEN (a pre-obtained JWT) or LINEAGELENS_USERNAME +\n"
+        "  LINEAGELENS_PASSWORD with a dedicated read-only member account (not admin).\n\n"
+        "AUTH PRECEDENCE: LINEAGELENS_API_KEY > LINEAGELENS_ACCESS_TOKEN > username/password.\n\n"
+        "TOKEN LIFECYCLE: JWT tokens are cached in memory and refreshed automatically on 401.\n"
+        "If authentication fails persistently, restart the MCP server — it will re-login.\n\n"
+        "BACKEND DISCOVERY: If LINEAGELENS_BACKEND_URL is not set, the server will\n"
+        "auto-discover a local backend at http://localhost:8787."
     ),
 )
 
@@ -194,37 +216,63 @@ async def _req(method: str, path: str, **kwargs: Any) -> Any:
     async with httpx.AsyncClient(timeout=20.0) as client:
         await _ensure_backend_url(client)
 
-        token = await _get_valid_token(client)
-        if token is None:
-            return _AUTH_ERROR_MSG  # return as string so tool can surface it
-
-        headers = {**kwargs.pop("headers", {}), "Authorization": f"Bearer {token}"}
-
-        try:
-            resp = await client.request(method, full_url, headers=headers, **kwargs)
-        except httpx.ConnectError:
-            raise RuntimeError(_BACKEND_UNREACHABLE_MSG.format(url=BACKEND_URL))
-        except httpx.TimeoutException:
-            raise RuntimeError(
-                f"Error: Request to LineageLens backend timed out ({full_url}). "
-                "The backend may be overloaded or unresponsive."
-            )
-
-        if resp.status_code == 401 and not _STATIC_TOKEN:
-            # Token expired — try refresh first, then fall back to password re-login.
-            _cached_token = None
-            try:
-                token = await _refresh_access_token(client) or await _login(client)
-                _cached_token = token
-            except Exception as exc:
-                logger.exception("MCP: Re-authentication failed")
-                raise RuntimeError(_AUTH_ERROR_MSG) from exc
-
-            headers["Authorization"] = f"Bearer {token}"
+        # ── Auth header — precedence: API key > static JWT > username/password ──
+        if _API_KEY:
+            # API keys are sent as X-API-Key, not as Bearer tokens.
+            # The backend's query endpoints (/search, /provenance, /insights/dashboard,
+            # /explain) currently only accept JWT Bearer auth — they do NOT accept
+            # X-API-Key.  If the backend returns 401 we surface a named-endpoint error
+            # instead of attempting a JWT re-login, since that would ignore the
+            # caller's explicit intent to use API key auth.
+            headers = {**kwargs.pop("headers", {}), "X-API-Key": _API_KEY}
             try:
                 resp = await client.request(method, full_url, headers=headers, **kwargs)
             except httpx.ConnectError:
                 raise RuntimeError(_BACKEND_UNREACHABLE_MSG.format(url=BACKEND_URL))
+            except httpx.TimeoutException:
+                raise RuntimeError(
+                    f"Error: Request to LineageLens backend timed out ({full_url}). "
+                    "The backend may be overloaded or unresponsive."
+                )
+            if resp.status_code == 401:
+                raise RuntimeError(
+                    f"API key was rejected by {path}. "
+                    "The endpoint requires a JWT Bearer token, not an API key. "
+                    "Set LINEAGELENS_ACCESS_TOKEN or LINEAGELENS_USERNAME + "
+                    "LINEAGELENS_PASSWORD to use JWT auth for this endpoint."
+                )
+        else:
+            token = await _get_valid_token(client)
+            if token is None:
+                return _AUTH_ERROR_MSG  # return as string so tool can surface it
+
+            headers = {**kwargs.pop("headers", {}), "Authorization": f"Bearer {token}"}
+
+            try:
+                resp = await client.request(method, full_url, headers=headers, **kwargs)
+            except httpx.ConnectError:
+                raise RuntimeError(_BACKEND_UNREACHABLE_MSG.format(url=BACKEND_URL))
+            except httpx.TimeoutException:
+                raise RuntimeError(
+                    f"Error: Request to LineageLens backend timed out ({full_url}). "
+                    "The backend may be overloaded or unresponsive."
+                )
+
+            if resp.status_code == 401 and not _STATIC_TOKEN:
+                # Token expired — try refresh first, then fall back to password re-login.
+                _cached_token = None
+                try:
+                    token = await _refresh_access_token(client) or await _login(client)
+                    _cached_token = token
+                except Exception as exc:
+                    logger.exception("MCP: Re-authentication failed")
+                    raise RuntimeError(_AUTH_ERROR_MSG) from exc
+
+                headers["Authorization"] = f"Bearer {token}"
+                try:
+                    resp = await client.request(method, full_url, headers=headers, **kwargs)
+                except httpx.ConnectError:
+                    raise RuntimeError(_BACKEND_UNREACHABLE_MSG.format(url=BACKEND_URL))
 
     if not resp.is_success:
         ct = resp.headers.get("content-type", "")
@@ -293,6 +341,11 @@ async def search_provenance(
     query: str,
     file_path: str = "",
     model: str = "",
+    model_family: str = "",
+    category: str = "",
+    review_status: str = "",
+    date_from: str = "",
+    date_to: str = "",
     limit: int = 10,
 ) -> str:
     """Search LineageLens for AI-generated code by natural language query.
@@ -301,10 +354,51 @@ async def search_provenance(
     snippet for each match. Use this to find where specific logic came from, which AI
     tool wrote it, and when it was inserted.
 
+    FILTER GUIDE — map natural-language phrases to parameters:
+
+      "never reviewed by a human"   → review_status="unreviewed"
+      "pending human review"        → review_status="pending"
+      "already reviewed"            → review_status="reviewed"
+
+      "Claude-generated" / "from Claude"  → model_family="claude"
+      "GPT-4 code" / "OpenAI code"        → model_family="gpt"
+      "Gemini code"                        → model_family="gemini"
+      (model_family matches a prefix/substring of the model name)
+
+      "authentication code" / "auth"   → category="auth"
+      "credential handling"            → category="secrets"
+      "database / SQL code"            → category="sql"
+      "shell or subprocess code"       → category="shell"
+      "DOM mutation code"              → category="dom"
+      "payment / billing code"         → category="payments"
+      "large generated block"          → category="large-block"
+
+      "last 90 days"  → date_from=<ISO date 90 days ago>, e.g. "2026-03-14T00:00:00Z"
+      "this month"    → date_from=<first of month>, date_to=<today>
+
+    Valid category slugs (from the risk engine):
+      auth, dom, large-block, payments, secrets, shell, sql
+
+    Valid review_status values: unreviewed, pending, reviewed
+
+    Example NL queries and how to call this tool:
+      "Show all GPT-4 code from the last 90 days never reviewed by a human"
+        → query="", model_family="gpt", review_status="unreviewed",
+          date_from="<90-days-ago-ISO>"
+
+      "Show all Claude-generated authentication code"
+        → query="authentication", model_family="claude", category="auth"
+
     Args:
         query: What to search for, e.g. "JWT authentication", "database migration helper"
         file_path: Restrict results to a specific file path (optional)
-        model: Filter by AI model name, e.g. "claude", "gpt-4o" (optional)
+        model: Filter by exact AI model name, e.g. "claude-sonnet-4-6" (optional)
+        model_family: Filter by model family prefix, e.g. "claude", "gpt", "gemini" (optional)
+        category: Filter by risk category slug — auth, dom, large-block, payments,
+                  secrets, shell, sql (optional)
+        review_status: Filter by human-review status — unreviewed, pending, reviewed (optional)
+        date_from: ISO 8601 start date, e.g. "2026-03-14T00:00:00Z" (optional)
+        date_to: ISO 8601 end date, e.g. "2026-06-14T00:00:00Z" (optional)
         limit: Number of results to return, max 50 (default 10)
     """
     try:
@@ -313,6 +407,16 @@ async def search_provenance(
             body["filePath"] = file_path
         if model:
             body["model"] = model
+        if model_family:
+            body["modelFamily"] = model_family
+        if category:
+            body["category"] = category
+        if review_status:
+            body["reviewStatus"] = review_status
+        if date_from:
+            body["dateFrom"] = date_from
+        if date_to:
+            body["dateTo"] = date_to
 
         data = await _req("POST", SEARCH_ENDPOINT, json=body)
         if isinstance(data, str):
@@ -677,6 +781,126 @@ async def list_workspaces() -> str:
         return _format_tool_error(exc)
 
 
+@mcp.tool()
+async def list_incidents(limit: int = 10) -> str:
+    """List recent production incidents tracked in LineageLens.
+
+    Returns a compact list of incidents — title, start time, resolution status,
+    number of affected files, and UUID. Use the UUID with get_incident_provenance
+    to see which AI-generated code was involved in a specific incident.
+
+    Requires Plus or Max tier. Returns a feature-unavailable message on Lite.
+
+    Args:
+        limit: Number of incidents to return, max 100 (default 10)
+    """
+    try:
+        data = await _req("GET", f"/incidents?limit={min(max(1, limit), 100)}")
+        if isinstance(data, str):
+            return data
+
+        items = data.get("items", [])
+        if not items:
+            return "No production incidents found."
+
+        lines = [f"Production incidents ({len(items)}):\n"]
+        for i, inc in enumerate(items, 1):
+            lines.extend(_format_incident(i, inc))
+
+        return "\n".join(lines)
+    except Exception as exc:
+        return _format_tool_error(exc)
+
+
+@mcp.tool()
+async def get_incident_provenance(
+    incident_uuid: str = "",
+    window_days: int = 90,
+) -> str:
+    """Show AI-generated code involved in a production incident.
+
+    This is the "show AI-generated code involved in the last production incident"
+    query. For each affected file in the incident, it returns provenance records
+    (AI code insertions) that occurred before the incident started — so you can
+    see which AI-written code was in production when the incident happened.
+
+    If incident_uuid is empty, fetches the most recent incident automatically.
+
+    Records are ordered by risk score (highest first), then by timestamp descending.
+    Each item shows: file path, insertion timestamp, model name, risk score, category
+    tags, and a code preview.
+
+    Requires Plus or Max tier. Returns a feature-unavailable message on Lite.
+
+    Args:
+        incident_uuid: UUID of the incident (leave empty for the most recent incident)
+        window_days: How many days before incident start to search for AI code (default 90)
+    """
+    try:
+        uuid_to_use = (incident_uuid or "").strip()
+
+        if not uuid_to_use:
+            # Fetch the most recent incident
+            list_data = await _req("GET", "/incidents?limit=1")
+            if isinstance(list_data, str):
+                return list_data
+            items = list_data.get("items", [])
+            if not items:
+                return "No production incidents found. Create one via POST /incidents or the webhook."
+            uuid_to_use = items[0].get("uuid", "")
+
+        normalized = _validate_uuid(uuid_to_use)
+        if normalized is None:
+            return (
+                f"Error: invalid UUID format. Expected 8-4-4-4-12 hex, got {uuid_to_use!r}.\n"
+                "Tip: leave incident_uuid empty to use the most recent incident automatically."
+            )
+
+        try:
+            data = await _req(
+                "GET",
+                f"/incidents/{normalized}/provenance?windowDays={window_days}",
+            )
+        except RuntimeError as exc:
+            msg = str(exc)
+            if "404" in msg:
+                return f"Incident {normalized!r} not found — it may have been deleted or belong to a different workspace."
+            raise
+
+        if isinstance(data, str):
+            return data
+
+        inc = data.get("incident", {})
+        items = data.get("items", [])
+        total = data.get("total", len(items))
+
+        resolved = inc.get("resolvedAt")
+        status_str = f"resolved {resolved[:19]}" if resolved else "open"
+        lines = [
+            f"Incident: {inc.get('title', '?')}",
+            f"Started:  {(inc.get('startedAt') or '')[:19]}",
+            f"Status:   {status_str}",
+            f"Files:    {len(inc.get('affectedFiles') or [])} affected",
+            f"Window:   {window_days} days before incident start",
+            f"AI provenance records: {total}\n",
+        ]
+
+        if not items:
+            lines.append(
+                "No AI provenance records found for the affected files in this window.\n"
+                "This means either no AI code was written to those files recently,\n"
+                "or the provenance data predates the capture window."
+            )
+            return "\n".join(lines)
+
+        for i, r in enumerate(items, 1):
+            lines.extend(_format_incident_provenance_item(i, r))
+
+        return "\n".join(lines)
+    except Exception as exc:
+        return _format_tool_error(exc)
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _format_search_result(index: int, r: dict) -> list[str]:
@@ -693,6 +917,47 @@ def _format_search_result(index: int, r: dict) -> list[str]:
     if snippet:
         indented = snippet[:300].replace("\n", "\n      ")
         lines.append(f"    Snippet:\n      {indented}")
+    lines.append("")
+    return lines
+
+
+def _format_incident(index: int, inc: dict) -> list[str]:
+    """Format a single incident into compact display lines."""
+    lines = []
+    title = inc.get("title") or "?"
+    ext_ref = inc.get("externalRef") or ""
+    ref_suffix = f" ({ext_ref})" if ext_ref else ""
+    lines.append(f"[{index}] {title}{ref_suffix}")
+    started = (inc.get("startedAt") or "")[:19] or "—"
+    lines.append(f"    Started:  {started}")
+    resolved = inc.get("resolvedAt")
+    status = f"resolved {resolved[:19]}" if resolved else "open"
+    lines.append(f"    Status:   {status}")
+    files = inc.get("affectedFiles") or []
+    lines.append(f"    Files:    {len(files)} affected")
+    uid = (inc.get("uuid") or "?")[:8]
+    lines.append(f"    UUID:     {uid}…")
+    lines.append("")
+    return lines
+
+
+def _format_incident_provenance_item(index: int, r: dict) -> list[str]:
+    """Format a single incident provenance record into display lines."""
+    lines = []
+    fp = r.get("filePath") or "?"
+    ts = (r.get("timestampIso") or "")[:16] or "—"
+    model = r.get("modelName") or "—"
+    risk = r.get("riskScore")
+    risk_str = str(risk) if risk is not None else "—"
+    lines.append(f"[{index}] {fp}")
+    lines.append(f"    Inserted: {ts}  model={model}  risk={risk_str}")
+    tags = r.get("tags") or []
+    if tags:
+        lines.append(f"    Tags:     {', '.join(tags)}")
+    preview = (r.get("insertedCodePreview") or "").strip()
+    if preview:
+        flat = preview[:120].replace("\n", " ")
+        lines.append(f"    Preview:  {flat}")
     lines.append("")
     return lines
 

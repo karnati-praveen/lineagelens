@@ -23,7 +23,7 @@ from app.db.session import get_db_session
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 _PBKDF2_SCHEME = "pbkdf2_sha256"
-_PBKDF2_ITERATIONS = 390000
+_PBKDF2_ITERATIONS = 600000
 _INVALID_TOKEN_SUBJECT = "Invalid token subject."
 
 
@@ -125,6 +125,12 @@ async def get_ingest_auth_context(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_db_session),
 ) -> AuthContext:
+    # SECURITY: The proxy static token path is infrastructure-privileged.
+    # A valid PROXY_STATIC_TOKEN bypasses per-user auth and grants cross-workspace
+    # ingest access (the workspace_id comes from the request body, not a JWT).
+    # This token must be treated like a root credential: rotate it if leaked,
+    # keep it out of client-side code, and prefer network-level isolation over
+    # relying solely on token secrecy.
     static = (settings.proxy_static_token or "").strip()
     tok = (token or "").strip()
     if static and tok and hmac.compare_digest(tok, static):

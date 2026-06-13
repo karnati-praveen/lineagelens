@@ -1,15 +1,14 @@
 import * as http from 'node:http';
 import * as https from 'node:https';
 import * as vscode from 'vscode';
+import { DEFAULT_BACKEND_BASE_URL, REQUEST_TIMEOUT_MS } from './src/constants';
 
 const CONFIG_SECTION = 'aiInsertionDetector';
-const DEFAULT_BACKEND_BASE_URL = 'http://127.0.0.1:8787';
 const DEFAULT_AUTH_LOGIN_PATH = '/auth/login';
 const DEFAULT_AUTH_REGISTER_PATH = '/auth/register';
 const DEFAULT_AUTH_REFRESH_PATH = '/auth/refresh';
 const DEFAULT_AUTH_REFRESH_SKEW_SECONDS = 45;
 const DEFAULT_AUTO_AUTH_ON_ACTIVATE = true;
-const REQUEST_TIMEOUT_MS = 12_000;
 
 const SECRET_BACKEND_ACCESS_TOKEN = 'aiInsertionDetector.backend.accessToken';
 const SECRET_BACKEND_REFRESH_TOKEN = 'aiInsertionDetector.backend.refreshToken';
