@@ -5,8 +5,16 @@ LineageLens Universal LLM Proxy
 Transparently forwards requests to any LLM API (Anthropic, OpenAI, or any
 compatible endpoint) and captures AI-generated code into the LineageLens backend.
 
-Works with: Claude Code, Codex CLI, Gemini CLI, Goose, Continue, any CLI or IDE
-that supports a configurable base URL.
+Works with: Claude Code (Anthropic /v1/messages), Codex CLI (OpenAI Responses
+API), Gemini CLI, and every tool that speaks OpenAI /v1/chat/completions —
+Aider, Cline, Continue, Copilot CLI, Goose, Windsurf, and OpenAI-compatible
+backends (together / groq / fireworks / mistral / Azure OpenAI). Both tool-call
+edits and text-based edits (Aider SEARCH/REPLACE, unified diffs, fenced code)
+are structurally captured. Any CLI/IDE with a configurable base URL is supported.
+
+Follow-up (not yet captured): Claude-via-Bedrock (/model/.../invoke) and
+Gemini-via-Vertex (:generateContent on *-aiplatform.googleapis.com) use
+different request paths and need their own detection + adapters.
 
 Setup:
     export ANTHROPIC_BASE_URL=http://localhost:8788   # Claude Code / Anthropic SDK
@@ -105,6 +113,26 @@ from adapters.codex import (
     _resolve_codex_pending_edits,
 )
 
+from adapters.openai_chat import (
+    _is_openai_chat_path,
+    _openai_chat_session_key,
+    _extract_openai_chat_prompt_context,
+    _parse_openai_tool_call_to_edits,
+    _parse_text_content_to_edits,
+    _parse_aider_search_replace,
+    _parse_unified_diff,
+    _parse_fenced_code_blocks,
+    _extract_openai_choices_from_body,
+    _extract_openai_choices_from_sse,
+    _extract_openai_tool_results,
+    _classify_openai_tool_result,
+    _store_openai_pending_edits,
+    _ingest_openai_text_edits,
+    _capture_openai_chat_from_body,
+    _capture_openai_chat_from_sse,
+    _resolve_openai_pending_edits,
+)
+
 from adapters.gemini import (
     _GEMINI_FILE_MUTATING_TOOLS,
     _gemini_session_key,
@@ -197,6 +225,7 @@ def detect_provider_from_inbound(path: str, headers: dict) -> str:
         or "/v1/responses" in path_lower
         or "/v1/embeddings" in path_lower
         or "/v1/completions" in path_lower
+        or ("/deployments/" in path_lower and "/chat/completions" in path_lower)  # Azure OpenAI
     ):
         return "openai"
 
@@ -352,9 +381,12 @@ async def _handle_streaming(
     codex_session_key: str = "",
     is_codex: bool = False,
     gemini_session_key: str = "",
+    is_openai_chat: bool = False,
+    openai_chat_session_key: str = "",
     anthropic_prompt_context: dict | None = None,
     codex_prompt_context: dict | None = None,
     gemini_prompt_context: dict | None = None,
+    openai_chat_prompt_context: dict | None = None,
     routing_info: dict | None = None,
     http_client: "httpx.AsyncClient | None" = None,
 ) -> Response:
@@ -424,6 +456,12 @@ async def _handle_streaming(
                     if function_calls:
                         await _store_gemini_pending_edits(gemini_session_key, function_calls, gemini_prompt_context, routing_info)
                         structured_captured = True
+                elif is_openai_chat and openai_chat_session_key:
+                    if await _capture_openai_chat_from_sse(
+                        openai_chat_session_key, collected,
+                        openai_chat_prompt_context, routing_info, provider,
+                    ):
+                        structured_captured = True
 
                 if not structured_captured:
                     text = _text_from_sse(collected, provider)
@@ -459,9 +497,12 @@ async def _handle_non_streaming(
     codex_session_key: str = "",
     is_codex: bool = False,
     gemini_session_key: str = "",
+    is_openai_chat: bool = False,
+    openai_chat_session_key: str = "",
     anthropic_prompt_context: dict | None = None,
     codex_prompt_context: dict | None = None,
     gemini_prompt_context: dict | None = None,
+    openai_chat_prompt_context: dict | None = None,
     routing_info: dict | None = None,
     http_client: "httpx.AsyncClient | None" = None,
 ) -> Response:
@@ -523,6 +564,12 @@ async def _handle_non_streaming(
                 function_calls = _extract_gemini_function_calls_from_body(upstream.content)
                 if function_calls:
                     await _store_gemini_pending_edits(gemini_session_key, function_calls, gemini_prompt_context, routing_info)
+                    structured_captured = True
+            elif is_openai_chat and openai_chat_session_key:
+                if await _capture_openai_chat_from_body(
+                    openai_chat_session_key, upstream.content,
+                    openai_chat_prompt_context, routing_info, provider,
+                ):
                     structured_captured = True
 
             if not structured_captured:
@@ -631,6 +678,20 @@ async def proxy_request(request: Request, path: str) -> Response:
         except Exception:
             logger.debug("codex adapter: request body parse failed", exc_info=True)
 
+    is_openai_chat = provider == "openai" and not is_codex and _is_openai_chat_path(url)
+    openai_chat_session_key = ""
+    openai_chat_prompt_context: dict = {}
+    if is_openai_chat and body:
+        try:
+            if isinstance(req_body_dict, dict):
+                openai_chat_session_key = _openai_chat_session_key(req_body_dict, dict(request.headers))
+                openai_chat_prompt_context = _extract_openai_chat_prompt_context(req_body_dict)
+                oai_tool_results = _extract_openai_tool_results(body)
+                if oai_tool_results:
+                    await _resolve_openai_pending_edits(openai_chat_session_key, oai_tool_results, provider)
+        except Exception:
+            logger.debug("openai chat adapter: request body parse failed", exc_info=True)
+
     gemini_session_key = ""
     gemini_prompt_context: dict = {}
     if provider == "gemini" and body:
@@ -681,9 +742,12 @@ async def proxy_request(request: Request, path: str) -> Response:
             codex_session_key=codex_session_key,
             is_codex=is_codex,
             gemini_session_key=gemini_session_key,
+            is_openai_chat=is_openai_chat,
+            openai_chat_session_key=openai_chat_session_key,
             anthropic_prompt_context=anthropic_prompt_context,
             codex_prompt_context=codex_prompt_context,
             gemini_prompt_context=gemini_prompt_context,
+            openai_chat_prompt_context=openai_chat_prompt_context,
             routing_info=routing_info,
             http_client=_shared_client,
         )
@@ -694,9 +758,12 @@ async def proxy_request(request: Request, path: str) -> Response:
         codex_session_key=codex_session_key,
         is_codex=is_codex,
         gemini_session_key=gemini_session_key,
+        is_openai_chat=is_openai_chat,
+        openai_chat_session_key=openai_chat_session_key,
         anthropic_prompt_context=anthropic_prompt_context,
         codex_prompt_context=codex_prompt_context,
         gemini_prompt_context=gemini_prompt_context,
+        openai_chat_prompt_context=openai_chat_prompt_context,
         routing_info=routing_info,
         http_client=_shared_client,
     )

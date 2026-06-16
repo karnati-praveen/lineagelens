@@ -140,3 +140,108 @@ def test_wrong_length_signing_key_raises():
             from app.core.attestation import _load_private_key
             _load_private_key()
     _clear_key_cache()
+
+
+# ── Route-level tests (security: I1 finding) ─────────────────────────────────
+# These require the full HTTP stack. The `client`, `make_user`, and `db_query`
+# fixtures are provided by conftest.py.
+
+def _insert_attestation(db_query, workspace_id: str) -> str:
+    """Seed one Attestation row and return its public_ref UUID string."""
+    import asyncio, json as _json
+
+    async def _run(session):
+        from app.core.attestation import build_attestation, sign_attestation
+        from app.db.models import Attestation as _Att
+
+        stmt = build_attestation("record", "sub-1", {"test": True}, workspace_id=workspace_id)
+        signed = sign_attestation(stmt)
+        att = _Att(
+            workspace_id=workspace_id,
+            subject_type="record",
+            subject_id="sub-1",
+            statement_json=_json.dumps(signed.statement),
+            signature=signed.signature,
+            public_key_id=signed.public_key_id,
+        )
+        session.add(att)
+        await session.commit()
+        await session.refresh(att)
+        return str(att.public_ref)
+
+    return db_query(_run)
+
+
+def test_public_verify_returns_safe_fields_only(client, make_user, db_query):
+    """Public verify must not leak workspace_id, subject_id, prev_hash, or subject_type."""
+    user = make_user(role="member")
+    public_ref = _insert_attestation(db_query, user.workspace_id)
+
+    resp = client.get(f"/attestations/{public_ref}/verify")
+    assert resp.status_code == 200, resp.text
+
+    data = resp.json()
+    assert data["id"] == public_ref
+    assert data["valid"] is True
+    assert "public_key_id" in data
+    assert "public_key_hex" in data
+
+    for leaked_field in ("workspace_id", "subject_id", "prev_hash", "subject_type", "created_at"):
+        assert leaked_field not in data, f"field '{leaked_field}' must not appear in public verify"
+
+
+def test_public_verify_requires_uuid_not_integer(client, make_user, db_query):
+    """Verify endpoint rejects bare integer paths — ids are non-enumerable UUIDs."""
+    make_user(role="member")  # ensures setup guard is satisfied
+
+    # Integer path must not resolve (404 or 422 depending on UUID parse failure)
+    resp = client.get("/attestations/1/verify")
+    assert resp.status_code in (404, 422)
+
+    resp2 = client.get("/attestations/42/verify")
+    assert resp2.status_code in (404, 422)
+
+
+def test_public_verify_unknown_uuid_returns_404(client, make_user, db_query):
+    """A well-formed UUID that does not exist returns 404."""
+    import uuid as _uuid
+    make_user(role="member")
+
+    resp = client.get(f"/attestations/{_uuid.uuid4()}/verify")
+    assert resp.status_code == 404
+
+
+def test_authed_get_own_workspace_succeeds(client, make_user, db_query):
+    """Authenticated GET within same workspace returns full detail."""
+    user = make_user(role="member")
+    public_ref = _insert_attestation(db_query, user.workspace_id)
+
+    resp = client.get(f"/attestations/{public_ref}", headers=user.auth_headers)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["workspace_id"] == user.workspace_id
+    assert "subject_id" in data
+    assert "prev_hash" in data
+    assert data["id"] == public_ref
+
+
+def test_authed_cross_workspace_fetch_returns_404(client, make_user, db_query):
+    """Authenticated caller from a different workspace must get 404, not the attestation."""
+    owner = make_user(role="member")
+    attacker = make_user(role="member")  # different workspace, random by default
+
+    assert owner.workspace_id != attacker.workspace_id
+
+    public_ref = _insert_attestation(db_query, owner.workspace_id)
+
+    resp = client.get(f"/attestations/{public_ref}", headers=attacker.auth_headers)
+    assert resp.status_code == 404
+
+
+def test_authed_get_requires_bearer_token(client, make_user, db_query):
+    """Authenticated endpoint returns 401 with no token."""
+    user = make_user(role="member")
+    public_ref = _insert_attestation(db_query, user.workspace_id)
+
+    resp = client.get(f"/attestations/{public_ref}")
+    assert resp.status_code == 401

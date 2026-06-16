@@ -149,6 +149,13 @@ class Settings(BaseSettings):
     # If unset, all scans return "clean" (safe default — no false positives without corpus).
     license_fingerprint_path: str | None = Field(default=None, alias="LICENSE_FINGERPRINT_PATH")
 
+    # Paid-tier license (offline, Ed25519-signed). The reader of record is
+    # app.core.license, which reads these from the environment directly; declared here
+    # so they are documented and not flagged as unknown env vars. Set the key itself in
+    # LINEAGELENS_LICENSE, or point LINEAGELENS_LICENSE_FILE at a file containing it.
+    license_key: str | None = Field(default=None, alias="LINEAGELENS_LICENSE")
+    license_file: str | None = Field(default=None, alias="LINEAGELENS_LICENSE_FILE")
+
     # When true, records with unknown human-review status pass the F1 eligibility check.
     # When false (default), unknown review status causes ineligibility for indemnity.
     indemnity_unknown_review_pass: bool = Field(default=False, alias="INDEMNITY_UNKNOWN_REVIEW_PASS")
@@ -195,6 +202,26 @@ class Settings(BaseSettings):
     @property
     def product_mode(self) -> str:
         return {"solo": "lite", "enterprise": "max"}.get(self.backend_mode, "plus")
+
+    @property
+    def entitlement(self):  # -> app.core.license.Entitlement
+        """The verified paid-tier entitlement from the offline license (free tier if none)."""
+        from app.core.license import load_entitlement
+
+        return load_entitlement()
+
+    @property
+    def licensed_plan(self) -> str:
+        """Plan granted by the signed license alone (lite|plus|max), ignoring topology."""
+        return self.entitlement.plan
+
+    @property
+    def effective_plan(self) -> str:
+        """Plan actually in force: the lesser of the licensed plan and what BACKEND_MODE
+        can physically run. This is what feature gates should check."""
+        from app.core.license import effective_plan
+
+        return effective_plan(self.entitlement, self.backend_mode)
 
     @field_validator("proxy_static_token")
     @classmethod

@@ -501,11 +501,23 @@ class Attestation(Base):
     """Cryptographically signed attestation statement anchored to the hash chain.
 
     subject_type: record | certificate | review | recall
+
+    public_ref is the externally-visible identifier used by the public verify
+    endpoint.  Using a UUID makes ids non-enumerable so an unauthenticated
+    caller cannot iterate over every attestation across all workspaces.
     """
 
     __tablename__ = "attestations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Non-enumerable public identifier — used by the unauthenticated verify endpoint.
+    public_ref: Mapped[uuid_pkg.UUID] = mapped_column(
+        Uuid(),
+        unique=True,
+        index=True,
+        nullable=False,
+        default=uuid_pkg.uuid4,
+    )
     workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     subject_type: Mapped[str] = mapped_column(String(32), nullable=False)
     subject_id: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -633,4 +645,26 @@ class IndemnityCertificate(Base):
 
     __table_args__ = (
         Index("ix_indemnity_cert_workspace_scope", "workspace_id", "scope", "scope_ref"),
+    )
+
+
+class Lead(Base):
+    """User-provided email captured from the VS Code extension for product updates.
+
+    PII: email is user-provided and optional. Purpose: product update emails only.
+    """
+
+    __tablename__ = "leads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Normalized (lowercased) email; unique so upsert on re-submission is safe.
+    email: Mapped[str] = mapped_column(String(254), unique=True, index=True, nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown", server_default="unknown")
+    extension_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ip: Mapped[str | None] = mapped_column(String(64), nullable=True)  # abuse tracking only; not surfaced in API
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )

@@ -59,6 +59,7 @@ from app.api.routes.attestation import router as attestation_router
 from app.api.routes.indemnity import router as indemnity_router
 from app.api.routes.license_scan import router as license_scan_router
 from app.api.routes.human_review import router as human_review_router
+from app.api.routes.leads import router as leads_router
 from app.core.config import Settings, get_settings
 from app.core.rate_limit import InMemoryRateLimiter
 from app.db.session import create_engine_from_settings, create_session_factory, initialize_database
@@ -148,7 +149,7 @@ class SecurityHeadersMiddleware:
         await self.app(scope, receive, send_with_headers)
 
 
-_SETUP_BYPASS_PREFIXES = {"/setup", "/health", "/auth/login", "/auth/register", "/auth/sso/callback", "/invite-accept"}
+_SETUP_BYPASS_PREFIXES = {"/setup", "/health", "/auth/login", "/auth/register", "/auth/sso/callback", "/invite-accept", "/leads"}
 
 
 class SetupGuardMiddleware:
@@ -553,6 +554,7 @@ app.include_router(attestation_router)
 app.include_router(indemnity_router)
 app.include_router(license_scan_router)
 app.include_router(human_review_router)
+app.include_router(leads_router)
 
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 

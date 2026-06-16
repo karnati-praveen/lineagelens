@@ -1,719 +1,562 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LineageLens Governance Dashboard</title>
-<style>
-:root {
-  /* ── Base palette ── */
-  --bg:#0a0f1a; --bg2:#101827; --bg3:#1a2438; --bg4:#1f2d45;
-  --text:#e4eaf4; --text2:#7a90b0; --border:#1e3352;
-  --r:10px;
-
-  /* ── Accent rainbow ── */
-  --accent:#4f8ef7;   --accent2:#7ab3ff;
-  --violet:#8b5cf6;   --violet2:#a78bfa;
-  --cyan:#06b6d4;     --cyan2:#67e8f9;
-  --emerald:#10b981;  --emerald2:#34d399;
-  --amber:#f59e0b;    --amber2:#fbbf24;
-  --rose:#f43f5e;     --rose2:#fb7185;
-  --pink:#ec4899;     --pink2:#f472b6;
-
-  /* ── Semantic ── */
-  --danger:#f43f5e; --warn:#f59e0b; --ok:#10b981;
-
-  /* ── Glow helpers ── */
-  --glow-blue:0 0 18px rgba(79,142,247,.35);
-  --glow-violet:0 0 18px rgba(139,92,246,.35);
-  --glow-emerald:0 0 18px rgba(16,185,129,.35);
-  --glow-rose:0 0 18px rgba(244,63,94,.35);
-  --glow-amber:0 0 18px rgba(245,158,11,.35);
-  --glow-cyan:0 0 18px rgba(6,182,212,.35);
-}
-
-/* ── Reset ── */
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;min-height:100vh}
-
-/* ── Login ── */
-.login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;background:radial-gradient(ellipse 80% 60% at 50% 0%,rgba(79,142,247,.12) 0%,transparent 70%)}
-.login-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:44px;width:100%;max-width:390px;box-shadow:0 24px 48px rgba(0,0,0,.5),var(--glow-blue)}
-.login-logo{text-align:center;margin-bottom:30px}
-.login-logo h1{font-size:24px;font-weight:800;background:linear-gradient(135deg,var(--accent2),var(--violet2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.login-logo p{color:var(--text2);font-size:13px;margin-top:5px}
-
-/* ── Form ── */
-label{display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:.06em}
-input,select{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:9px 12px;color:var(--text);font-size:14px;outline:none;transition:border-color .2s,box-shadow .2s}
-input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,142,247,.18)}
-.field{margin-bottom:15px}
-
-/* ── Buttons ── */
-button{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:7px;border:none;cursor:pointer;font-size:13px;font-weight:600;transition:all .18s}
-button.p{background:linear-gradient(135deg,var(--accent),var(--violet));color:#fff;box-shadow:0 2px 10px rgba(79,142,247,.4)}
-button.p:hover{box-shadow:0 4px 16px rgba(79,142,247,.55);transform:translateY(-1px)}
-button.s{background:var(--bg3);color:var(--text);border:1px solid var(--border)}
-button.d{background:linear-gradient(135deg,var(--rose),#c0392b);color:#fff}
-button:hover{opacity:.88}
-button:disabled{opacity:.4;cursor:not-allowed;transform:none}
-button.full{width:100%;justify-content:center;padding:11px}
-
-/* ── App shell ── */
-.app{display:flex;flex-direction:column;min-height:100vh}
-.topbar{background:linear-gradient(90deg,#0d1b2e 0%,#111d32 60%,#0f1d30 100%);border-bottom:1px solid rgba(79,142,247,.2);padding:0 24px;display:flex;align-items:center;gap:20px;height:54px;flex-shrink:0;box-shadow:0 2px 16px rgba(0,0,0,.4)}
-.brand{font-weight:800;font-size:16px;white-space:nowrap;background:linear-gradient(90deg,var(--accent2),var(--violet2),var(--cyan2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;letter-spacing:-.3px}
-.topbar-nav{display:flex;gap:2px;flex:1;overflow-x:auto}
-.tab{padding:6px 14px;border-radius:6px 6px 0 0;border:none;background:transparent;color:var(--text2);cursor:pointer;font-size:13px;font-weight:500;white-space:nowrap;border-bottom:2px solid transparent;transition:all .18s}
-.tab:hover{background:rgba(255,255,255,.05);color:var(--text)}
-.tab.on{background:rgba(79,142,247,.12);color:var(--accent2);border-bottom-color:var(--accent)}
-.topbar-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
-.bdg{background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:2px 9px;font-size:11px;font-weight:700;letter-spacing:.03em}
-.bdg.adm{border-color:var(--accent);color:var(--accent2);background:rgba(79,142,247,.12)}
-.bdg.plus{border-color:var(--violet);color:var(--violet2);background:rgba(139,92,246,.12)}
-.bdg.max{border-color:var(--amber);color:var(--amber2);background:rgba(245,158,11,.12)}
-.bdg.base{border-color:var(--border);color:var(--text2)}
-
-/* ── Content ── */
-.content{padding:28px 32px;flex:1;max-width:1320px;width:100%;margin:0 auto}
-.view{display:none}
-.view.on{display:block}
-
-/* ── Metrics grid ── */
-.mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px;margin-bottom:26px}
-.mcard{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;position:relative;overflow:hidden;transition:transform .2s,box-shadow .2s}
-.mcard::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;background:var(--accent);border-radius:var(--r) 0 0 var(--r)}
-.mcard:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.35)}
-.mlabel{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;font-weight:600}
-.mval{font-size:26px;font-weight:800;line-height:1}
-.mval.danger{color:var(--rose);text-shadow:var(--glow-rose)}
-.mval.warn{color:var(--amber);text-shadow:var(--glow-amber)}
-.mval.ok{color:var(--emerald);text-shadow:var(--glow-emerald)}
-.mval.accent{color:var(--cyan2);text-shadow:var(--glow-cyan)}
-.msublabel{font-size:11px;color:var(--text2);margin-top:5px}
-
-/* ── Compliance grid ── */
-.cgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;margin-bottom:26px}
-.ccard{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:16px;transition:transform .2s}
-.ccard:hover{transform:translateY(-1px)}
-.cname{font-weight:700;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:7px}
-.cval{font-size:22px;font-weight:800;margin-bottom:4px}
-.csub{font-size:12px;color:var(--text2)}
-.dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex-shrink:0}
-.dot.ok{background:var(--emerald);box-shadow:0 0 6px var(--emerald)}
-.dot.fail{background:var(--rose);box-shadow:0 0 6px var(--rose)}
-.dot.warn{background:var(--amber);box-shadow:0 0 6px var(--amber)}
-
-/* ── Tables ── */
-.twrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:22px}
-.thead-row{padding:13px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:linear-gradient(90deg,var(--bg3),var(--bg2))}
-.ttitle{font-weight:700;font-size:13px;color:var(--text)}
-table{width:100%;border-collapse:collapse}
-th{padding:9px 14px;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);border-bottom:1px solid var(--border);background:var(--bg3)}
-td{padding:9px 14px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:top}
-tr:last-child td{border-bottom:none}
-tr:hover td{background:rgba(79,142,247,.04)}
-
-/* ── Risk ── */
-.rsk{padding:2px 9px;border-radius:5px;font-size:11px;font-weight:700;letter-spacing:.03em}
-.rsk.critical{background:rgba(244,63,94,.25);color:#fb7185;border:1px solid rgba(244,63,94,.4)}
-.rsk.high{background:rgba(244,63,94,.18);color:#fb7185;border:1px solid rgba(244,63,94,.3)}
-.rsk.medium{background:rgba(245,158,11,.18);color:#fbbf24;border:1px solid rgba(245,158,11,.3)}
-.rsk.low{background:rgba(16,185,129,.18);color:#34d399;border:1px solid rgba(16,185,129,.3)}
-
-/* ── Filters ── */
-.filters{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;margin-bottom:18px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
-.ff{display:flex;flex-direction:column;gap:5px;min-width:150px}
-.ff label{margin-bottom:0}
-.ff input,.ff select{padding:7px 10px;font-size:13px}
-
-/* ── Advanced filter panel ── */
-.adv-filter-panel{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;margin-bottom:18px}
-.adv-filter-panel h4{font-size:13px;font-weight:600;margin-bottom:12px;color:var(--text)}
-.adv-filter-row{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
-.adv-filter-check{display:flex;align-items:center;gap:6px;padding-bottom:2px}
-.adv-filter-check input{width:auto}
-.adv-filter-actions{display:flex;gap:8px;margin-top:12px}
-
-/* ── Search results ── */
-.ritem{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:10px;cursor:pointer;transition:border-color .18s,box-shadow .18s}
-.ritem:hover{border-color:var(--accent);box-shadow:0 0 0 1px rgba(79,142,247,.2)}
-.rmeta{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;font-size:12px;color:var(--text2)}
-.code-snip{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);padding:4px 8px;border-radius:5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;margin-top:6px}
-
-/* ── Tags ── */
-.tag-pill{background:rgba(79,142,247,.18);color:var(--accent2);border:1px solid rgba(79,142,247,.3);border-radius:12px;padding:2px 9px;font-size:11px;font-weight:600;margin-right:4px;display:inline-block}
-.tags-row{margin-top:6px}
-
-/* ── Pagination ── */
-.pagination{display:flex;align-items:center;gap:12px;padding:12px 0;margin-top:8px;flex-wrap:wrap}
-.pagination #pageInfo{font-size:12px;color:var(--text2)}
-.pagination select{width:auto;padding:5px 8px;font-size:12px}
-
-/* ── Record ── */
-.rsec{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);margin-bottom:14px;overflow:hidden}
-.rsec-h{padding:11px 16px;border-bottom:1px solid var(--border);font-weight:700;font-size:13px;background:var(--bg3);color:var(--accent2)}
-.rsec-b{padding:16px}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:7px 20px;align-items:baseline}
-.kk{color:var(--text2);font-size:12px;white-space:nowrap}
-.kv-v{font-size:13px;word-break:break-all}
-pre{background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:12px;overflow-x:auto;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto}
-
-/* ── Team invite ── */
-.invite-box{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:18px;margin-bottom:20px}
-.invite-box h3{margin-bottom:14px;font-size:14px;color:var(--violet2)}
-.form-row{display:flex;gap:10px;flex-wrap:wrap}
-.form-row .field{flex:1;min-width:150px;margin-bottom:0}
-
-/* ── Alerts ── */
-.al{padding:12px 16px;border-radius:var(--r);margin-bottom:14px;font-size:13px;font-weight:500}
-.al.err{background:rgba(244,63,94,.12);border:1px solid rgba(244,63,94,.4);color:var(--rose2)}
-.al.ok{background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.4);color:var(--emerald2)}
-.al.info{background:rgba(79,142,247,.12);border:1px solid rgba(79,142,247,.4);color:var(--accent2)}
-
-/* ── Loading / empty ── */
-.spin{display:inline-block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite}
-@keyframes sp{to{transform:rotate(360deg)}}
-.loading{display:flex;align-items:center;gap:10px;color:var(--text2);padding:32px;justify-content:center}
-.empty{text-align:center;padding:48px 24px;color:var(--text2);font-size:13px}
-
-/* ── Section title ── */
-.stitle{font-size:17px;font-weight:800;margin-bottom:18px;display:flex;align-items:center;gap:10px;background:linear-gradient(90deg,var(--text),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.stitle .sub{font-size:13px;font-weight:400;color:var(--text2);-webkit-text-fill-color:var(--text2)}
-
-code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);padding:2px 7px;border-radius:4px;color:var(--cyan2)}
-::-webkit-scrollbar{width:5px;height:5px}
-::-webkit-scrollbar-track{background:var(--bg)}
-::-webkit-scrollbar-thumb{background:rgba(79,142,247,.3);border-radius:3px}
-.link-btn{background:none;border:none;padding:0;cursor:pointer;color:var(--accent2);font-size:12px;font-family:inherit;font-weight:600}
-.link-btn:hover{color:var(--violet2)}
-
-/* ── Theme toggle ── */
-.theme-btn{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:4px 9px;font-size:14px;cursor:pointer;line-height:1}
-
-/* ── MCP status dot ── */
-.mcp-wrap{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2)}
-.mcp-dot{width:8px;height:8px;border-radius:50%;background:var(--border);flex-shrink:0;transition:background .4s}
-
-/* ── Alert badge on tab ── */
-.tab-badge{display:none;background:var(--rose);color:#fff;border-radius:10px;padding:1px 5px;font-size:10px;font-weight:700;margin-left:4px;vertical-align:middle;box-shadow:0 0 6px rgba(244,63,94,.5)}
-
-/* ── Modal overlay ── */
-.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:200;align-items:flex-start;justify-content:center;padding:32px 16px;overflow-y:auto;backdrop-filter:blur(3px)}
-.modal-bg.open{display:flex}
-.modal{background:var(--bg2);border:1px solid rgba(79,142,247,.25);border-radius:14px;width:100%;max-width:860px;position:relative;box-shadow:0 24px 64px rgba(0,0,0,.6),var(--glow-blue)}
-.modal-hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border);background:linear-gradient(90deg,var(--bg3),var(--bg2));border-radius:14px 14px 0 0}
-.modal-hdr h3{font-size:14px;font-weight:700;color:var(--accent2)}
-.modal-close{background:none;border:none;font-size:20px;cursor:pointer;color:var(--text2);line-height:1;padding:0}
-.modal-body{padding:20px;max-height:78vh;overflow-y:auto}
-
-/* ── Timeline chart ── */
-.tl-chart-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:20px;margin-bottom:22px}
-.tl-chart-wrap canvas{max-height:300px}
-
-/* ── Heatmap ── */
-.hm-cell{display:flex;align-items:center;justify-content:space-between;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;transition:opacity .15s;min-width:60px}
-.hm-cell:hover{opacity:.8}
-.hm-name{color:#fff;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.hm-cnt{color:rgba(255,255,255,.75);font-size:11px;margin-left:8px;white-space:nowrap}
-
-/* ── Graph canvas ── */
-.graph-info{font-size:12px;color:var(--text2);margin-bottom:10px}
-#graph-canvas{width:100%;height:500px;border-radius:var(--r);border:1px solid var(--border);background:var(--bg2);cursor:default;display:block}
-
-/* ── Alert feed ── */
-.feed-item{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:11px 14px;margin-bottom:8px;display:grid;grid-template-columns:auto 1fr auto;grid-template-rows:auto auto;gap:4px 12px;align-items:start;transition:border-color .18s}
-.feed-item.feed-new{border-color:var(--accent);animation:pulse-in .5s ease}
-@keyframes pulse-in{from{box-shadow:var(--glow-blue)}to{box-shadow:none}}
-.feed-time{font-size:11px;color:var(--text2);white-space:nowrap;grid-row:1}
-.feed-main{display:flex;flex-wrap:wrap;gap:6px;align-items:center;grid-column:2;grid-row:1}
-.feed-model{font-size:11px;color:var(--cyan2)}
-.feed-snip{font-family:'Courier New',monospace;font-size:11px;color:var(--text2);grid-column:2;grid-row:2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.feed-view{padding:3px 10px;font-size:11px;grid-column:3;grid-row:1}
-.feed-controls{display:flex;gap:8px;align-items:center;margin-bottom:14px}
-
-/* ── Data source badge ── */
-.data-source-bar{display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap}
-.ds-badge{padding:3px 11px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.04em}
-.ds-badge.backend{background:rgba(16,185,129,.18);border:1px solid rgba(16,185,129,.5);color:var(--emerald2)}
-.ds-badge.cached{background:rgba(245,158,11,.18);border:1px solid rgba(245,158,11,.5);color:var(--amber2)}
-.ds-badge.unavailable{background:rgba(244,63,94,.18);border:1px solid rgba(244,63,94,.5);color:var(--rose2)}
-.ds-updated{font-size:11px;color:var(--text2)}
-
-/* ── Trend / model-usage sections ── */
-.trend-section{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:22px;margin-bottom:22px}
-.trend-section h2{font-size:14px;font-weight:700;margin-bottom:14px;color:var(--accent2)}
-
-/* ── Card (generic) ── */
-.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:18px 20px}
-
-/* ── Policy cards ── */
-.policy-card{display:flex;align-items:center;gap:12px;padding:9px 13px;border-radius:6px;background:var(--bg3);margin-bottom:6px;flex-wrap:wrap;border-left:3px solid var(--accent)}
-.policy-name{font-weight:700;flex:1;font-size:13px}
-
-/* ── Badges ── */
-.badge{background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700}
-.badge-block{background:rgba(244,63,94,.18);border-color:rgba(244,63,94,.5);color:var(--rose2)}
-.badge-flag{background:rgba(245,158,11,.18);border-color:rgba(245,158,11,.5);color:var(--amber2)}
-.badge-alert{background:rgba(79,142,247,.18);border-color:rgba(79,142,247,.5);color:var(--accent2)}
-.badge-pending{background:rgba(245,158,11,.18);border-color:rgba(245,158,11,.5);color:var(--amber2)}
-.badge-approved{background:rgba(16,185,129,.18);border-color:rgba(16,185,129,.5);color:var(--emerald2)}
-.badge-rejected{background:rgba(244,63,94,.18);border-color:rgba(244,63,94,.5);color:var(--rose2)}
-.badge-deferred{background:rgba(148,163,184,.12);border-color:var(--border);color:var(--text2)}
-
-/* ── Misc ── */
-.new-form-row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px}
-.new-form-row label{display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:500;text-transform:none;letter-spacing:0}
-.hint-text{font-size:12px;color:var(--text2);margin-bottom:8px}
-.btn-sm{padding:3px 9px;font-size:11px;border-radius:4px;cursor:pointer;background:var(--bg3);border:1px solid var(--border);color:var(--text);display:inline-flex;align-items:center;gap:4px;font-weight:600}
-.btn-sm:hover{opacity:.82}
-.btn-danger{background:rgba(244,63,94,.15);color:var(--rose2);border-color:rgba(244,63,94,.4)}
-.text-success{color:var(--emerald2)}
-.text-muted{color:var(--text2)}
-.data-table{width:100%;border-collapse:collapse;font-size:13px}
-.data-table th,.data-table td{padding:8px 13px;text-align:left;border-bottom:1px solid var(--border)}
-.data-table th{background:var(--bg3);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text2)}
-.data-table tr:hover td{background:rgba(79,142,247,.04)}
-.export-async-section{margin-top:20px;padding:16px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r)}
-.mgrid-section{margin-top:20px;padding:16px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r)}
-.mgrid-section h3{font-size:14px;font-weight:700;margin-bottom:14px;color:var(--violet2)}
-.placeholder{color:var(--text2);font-size:13px;padding:16px 0}
-</style>
+<title>LineageLens — Governance Dashboard</title>
+<link rel="stylesheet" href="/static/dashboard.css">
 </head>
-<script src="/static/chart.umd.min.js"></script>
 <body>
 
-<!-- LOGIN -->
-<div id="v-login" class="login-wrap">
-  <div class="login-card">
-    <div class="login-logo"><h1>Lineage<span>Lens</span></h1><p>AI Code Provenance Dashboard</p></div>
+<!-- ════ LOGIN ════ -->
+<div id="v-login" class="auth-view">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <h1>Lineage<span style="color:var(--accent2)">Lens</span></h1>
+      <p>AI Code Provenance Dashboard</p>
+    </div>
     <div id="al-login" role="status" aria-live="polite"></div>
-    <div class="field"><label for="l-ws">Workspace <span style="text-transform:none;font-weight:normal;color:var(--text2)">(optional)</span></label><input id="l-ws" type="text" placeholder="leave blank if unsure" autocomplete="off"></div>
-    <div class="field"><label for="l-user">Username</label><input id="l-user" type="text" placeholder="username" autocomplete="username"></div>
-    <div class="field"><label for="l-pass">Password</label><input id="l-pass" type="password" placeholder="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
-    <button class="p full" onclick="doLogin()">Sign In</button>
-    <div style="margin-top:12px;text-align:center;font-size:12px;color:var(--text2)">No account? <button class="link-btn" onclick="showReg(event)">Register</button></div>
+    <div class="field">
+      <label for="l-ws">Workspace <span style="text-transform:none;font-weight:normal;color:var(--text2)">(optional)</span></label>
+      <input id="l-ws" type="text" placeholder="leave blank if unsure" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="l-user">Username</label>
+      <input id="l-user" type="text" placeholder="username" autocomplete="username">
+    </div>
+    <div class="field">
+      <label for="l-pass">Password</label>
+      <input id="l-pass" type="password" placeholder="password" autocomplete="current-password">
+    </div>
+    <button id="btn-login" class="btn-full p">Sign In</button>
+    <div class="auth-footer">No account? <button class="link-btn" id="btn-show-reg">Register</button></div>
   </div>
 </div>
 
-<!-- REGISTER -->
-<div id="v-reg" class="login-wrap" style="display:none">
-  <div class="login-card">
-    <div class="login-logo"><h1>Lineage<span>Lens</span></h1><p>Create Account</p></div>
+<!-- ════ REGISTER ════ -->
+<div id="v-reg" class="auth-view" style="display:none">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <h1>Lineage<span style="color:var(--accent2)">Lens</span></h1>
+      <p>Create Account</p>
+    </div>
     <div id="al-reg" role="status" aria-live="polite"></div>
     <div class="field"><label for="r-ws">Workspace ID</label><input id="r-ws" type="text" placeholder="your-workspace"></div>
     <div class="field"><label for="r-user">Username</label><input id="r-user" type="text" placeholder="username"></div>
-    <div class="field"><label for="r-pass">Password</label><input id="r-pass" type="password" placeholder="min 8 characters" onkeydown="if(event.key==='Enter')doRegister()"></div>
-    <button class="p full" onclick="doRegister()">Create Account</button>
-    <div style="margin-top:12px;text-align:center;font-size:12px;color:var(--text2)"><button class="link-btn" onclick="showLogin(event)">← Back to Sign In</button></div>
+    <div class="field"><label for="r-pass">Password</label><input id="r-pass" type="password" placeholder="min 8 characters"></div>
+    <button id="btn-register" class="btn-full p">Create Account</button>
+    <div class="auth-footer"><button class="link-btn" id="btn-show-login">← Back to Sign In</button></div>
   </div>
 </div>
 
-<!-- APP -->
+<!-- ════ APP SHELL ════ -->
 <div id="v-app" class="app" style="display:none">
-  <div class="topbar">
-    <div class="brand">Lineage<span>Lens</span></div>
-    <nav class="topbar-nav" aria-label="Main navigation">
-      <button class="tab on" data-t="dashboard" onclick="go('dashboard')">Dashboard</button>
-      <button class="tab" data-t="timeline" onclick="go('timeline')">Timeline</button>
-      <button class="tab" data-t="graph" onclick="go('graph')">Graph</button>
-      <button class="tab" data-t="alerts" onclick="go('alerts')">Live Feed<span id="alert-badge" class="tab-badge" aria-label="New alerts"></span></button>
-      <button class="tab" data-t="search" onclick="go('search')">Search</button>
-      <button class="tab" data-t="record" onclick="go('record')">Record Viewer</button>
-      <button class="tab adm-tab" data-t="export" onclick="go('export')" style="display:none">Export</button>
-      <button class="tab adm-tab" data-t="team" onclick="go('team')" style="display:none">Team</button>
-      <button class="tab adm-tab" data-t="developers" onclick="go('developers')" style="display:none">Developers</button>
-      <button class="tab adm-tab" data-t="reviews" onclick="go('reviews')" style="display:none">Reviews</button>
-      <button class="tab adm-tab" data-t="github" onclick="go('github')" style="display:none">GitHub CI</button>
-      <button class="tab" data-t="mcp" onclick="go('mcp')">MCP Server</button>
-      <button class="tab" data-t="quality" onclick="go('quality')">Quality</button>
-      <button class="tab adm-tab" data-t="scheduled-reports" onclick="go('scheduled-reports')" style="display:none">Digests</button>
-      <button class="tab adm-tab" data-t="sso" onclick="go('sso')" style="display:none">SSO</button>
-      <button class="tab adm-tab" data-t="routing" onclick="go('routing')" style="display:none">Model Routing</button>
-      <button class="tab" data-t="workspace" onclick="go('workspace')">Workspace</button>
+
+  <!-- Mobile drawer overlay -->
+  <div id="drawer-overlay" class="drawer-overlay" aria-hidden="true"></div>
+
+  <!-- ── SIDEBAR ── -->
+  <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+    <div class="sidebar-brand">
+      <span class="sidebar-brand-text">Lineage<b>Lens</b></span>
+      <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle sidebar" title="Collapse sidebar">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+      </button>
+    </div>
+
+    <nav class="sidebar-nav" aria-label="Dashboard sections">
+
+      <!-- Overview -->
+      <button class="nav-item on" data-t="dashboard" aria-current="page">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+        <span class="nav-label">Overview</span>
+      </button>
+
+      <!-- Provenance -->
+      <div class="nav-section-title">Provenance</div>
+
+      <button class="nav-item" data-t="timeline">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        <span class="nav-label">Timeline</span>
+      </button>
+
+      <button class="nav-item" data-t="graph">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
+        <span class="nav-label">Graph</span>
+      </button>
+
+      <button class="nav-item" data-t="alerts">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+        <span class="nav-label">Live Feed</span>
+        <span id="alert-badge" class="nav-badge" aria-label="New alerts"></span>
+      </button>
+
+      <button class="nav-item" data-t="search">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        <span class="nav-label">Search</span>
+      </button>
+
+      <button class="nav-item" data-t="record">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+        <span class="nav-label">Record Viewer</span>
+      </button>
+
+      <!-- Governance -->
+      <div class="nav-section-title">Governance</div>
+
+      <button class="nav-item" data-t="reviews" data-requires="plus">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 11 12 14 22 4"></polyline><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+        <span class="nav-label">Reviews</span>
+        <span class="tier-pill plus">Plus</span>
+      </button>
+
+      <button class="nav-item" data-t="quality">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+        <span class="nav-label">Quality</span>
+      </button>
+
+      <!-- Analytics -->
+      <div class="nav-section-title">Analytics</div>
+
+      <button class="nav-item" data-t="developers" data-requires="plus">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+        <span class="nav-label">Developer Activity</span>
+        <span class="tier-pill plus">Plus</span>
+      </button>
+
+      <!-- Admin -->
+      <div class="nav-section-title">Admin</div>
+
+      <button class="nav-item adm-nav" data-t="team" style="display:none">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+        <span class="nav-label">Team</span>
+      </button>
+
+      <button class="nav-item" data-t="workspace">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"></path></svg>
+        <span class="nav-label">Workspace</span>
+      </button>
+
+      <!-- Integrations -->
+      <div class="nav-section-title">Integrations</div>
+
+      <button class="nav-item adm-nav" data-t="github" data-requires="plus" style="display:none">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" y1="9" x2="6" y2="21"></line></svg>
+        <span class="nav-label">GitHub CI</span>
+        <span class="tier-pill plus">Plus</span>
+      </button>
+
+      <button class="nav-item" data-t="mcp" data-requires="plus">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+        <span class="nav-label">MCP Server</span>
+        <span class="tier-pill plus">Plus</span>
+      </button>
+
+      <button class="nav-item adm-nav" data-t="export" style="display:none">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        <span class="nav-label">Export</span>
+      </button>
+
+      <button class="nav-item adm-nav" data-t="scheduled-reports" data-requires="plus" style="display:none">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+        <span class="nav-label">Digests</span>
+        <span class="tier-pill plus">Plus</span>
+      </button>
+
+      <button class="nav-item adm-nav" data-t="sso" data-requires="max" style="display:none">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+        <span class="nav-label">SSO / OIDC</span>
+        <span class="tier-pill max">Max</span>
+      </button>
+
+      <button class="nav-item adm-nav" data-t="routing" data-requires="plus" style="display:none">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 3 21 3 21 8"></polyline><line x1="4" y1="20" x2="21" y2="3"></line><polyline points="21 16 21 21 16 21"></polyline><line x1="15" y1="15" x2="21" y2="21"></line></svg>
+        <span class="nav-label">Model Routing</span>
+        <span class="tier-pill plus">Plus</span>
+      </button>
+
     </nav>
-    <div class="topbar-right">
-      <div class="mcp-wrap" title="Backend connection status"><div id="mcp-dot" class="mcp-dot" aria-label="MCP connection status"></div><span>MCP</span></div>
-      <span id="mode-bdg" class="bdg plus">plus</span>
-      <span id="role-bdg" class="bdg"></span>
-      <span id="uname" style="color:var(--text)"></span>
-      <button id="theme-btn" class="theme-btn" onclick="toggleTheme()" aria-label="Toggle light/dark theme">☀️</button>
-      <button class="s" style="padding:5px 12px;font-size:12px" onclick="doLogout()" aria-label="Sign out">Sign Out</button>
-    </div>
-  </div>
+  </aside>
 
-  <div class="content" role="main">
+  <!-- ── MAIN AREA ── -->
+  <div class="main-area">
 
-    <!-- DASHBOARD -->
-    <div id="t-dashboard" class="view on">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <div class="stitle">Governance Overview</div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <label for="d-from" style="display:inline;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text2)">From</label>
-          <input id="d-from" type="date" style="padding:6px 10px;font-size:12px;width:145px" aria-label="Dashboard date from">
-          <label for="d-to" style="display:inline;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text2)">To</label>
-          <input id="d-to" type="date" style="padding:6px 10px;font-size:12px;width:145px" aria-label="Dashboard date to">
-          <button class="s" style="padding:6px 14px;font-size:12px" onclick="loadDash()" aria-label="Refresh dashboard">Refresh</button>
+    <!-- TOP BAR -->
+    <header class="topbar" role="banner">
+      <button class="menu-btn" id="menu-btn" aria-label="Open navigation menu" aria-expanded="false">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+      </button>
+      <div class="topbar-breadcrumb" id="topbar-breadcrumb" aria-live="polite">Overview</div>
+      <div class="topbar-right">
+        <div class="mcp-status" title="Backend connection status">
+          <div id="mcp-dot" class="mcp-dot" aria-label="Backend connection"></div>
+          <span class="mcp-label" aria-hidden="true">Backend</span>
+        </div>
+        <span id="mode-bdg" class="tier-badge plus" title="Current tier">Plus</span>
+        <span id="role-bdg" class="role-badge"></span>
+        <span id="uname" class="username-text"></span>
+        <button id="theme-btn" class="icon-btn" aria-label="Toggle light/dark theme" title="Toggle theme">
+          <svg id="theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+          <svg id="theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        </button>
+        <button id="logout-btn" class="s" style="padding:5px 12px;font-size:12px" aria-label="Sign out">Sign Out</button>
+      </div>
+    </header>
+
+    <!-- ── CONTENT ── -->
+    <main class="content" role="main" id="main-content">
+
+      <!-- UPGRADE / LOCK PANEL -->
+      <div id="upgrade-panel" class="view upgrade-panel">
+        <div class="upgrade-card">
+          <div class="upgrade-icon">🔒</div>
+          <h2 id="upgrade-title">Feature Locked</h2>
+          <p id="upgrade-body">This feature requires a higher tier.</p>
+          <span id="upgrade-tier-needed" class="tier-badge" style="margin:0 auto 16px"></span>
+          <p style="font-size:12px;color:var(--text2)">Contact your admin or upgrade your LineageLens plan to unlock this section.</p>
         </div>
       </div>
-      <!-- Data source badge -->
-      <div class="data-source-bar">
-        <span id="data-source-badge"><span class="ds-badge unavailable">Unavailable</span></span>
-        <span id="ds-last-updated" class="ds-updated"></span>
-      </div>
-      <div id="dash-body" role="status" aria-live="polite"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
 
-      <!-- Risk Trend Chart -->
-      <section class="trend-section" id="risk-trend-section" style="display:none">
-        <h2>Risk Trend (Last 30 Days)</h2>
-        <div style="position:relative;height:280px;">
-          <canvas id="riskTrendChart" aria-label="Risk trend line chart"></canvas>
-        </div>
-        <div id="risk-trend-placeholder" class="empty" style="display:none">Trend data coming soon</div>
-      </section>
-
-      <!-- Model Usage Chart -->
-      <section class="trend-section" id="model-usage-section" style="display:none">
-        <h2>Model Usage (Last 30 Days)</h2>
-        <div style="position:relative;height:260px;">
-          <canvas id="modelUsageChart" aria-label="Model usage horizontal bar chart"></canvas>
-        </div>
-        <div id="model-usage-placeholder" class="empty" style="display:none">Model usage data coming soon</div>
-      </section>
-    </div>
-
-    <!-- SEARCH -->
-    <div id="t-search" class="view">
-      <div class="stitle">Provenance Search</div>
-      <!-- Basic filters -->
-      <div class="filters">
-        <div class="ff"><label for="s-kw">Keywords</label><input id="s-kw" type="text" placeholder="function name, snippet…" onkeydown="if(event.key==='Enter')doSearch()"></div>
-        <div class="ff"><label for="s-model">Model</label><input id="s-model" type="text" placeholder="gpt-4o, claude…" list="model-datalist"><datalist id="model-datalist"></datalist></div>
-        <div class="ff"><label for="s-file">File path</label><input id="s-file" type="text" placeholder="src/auth.py"></div>
-        <div class="ff"><label for="s-from">Date from</label><input id="s-from" type="date"></div>
-        <div class="ff"><label for="s-to">Date to</label><input id="s-to" type="date"></div>
-        <button class="p" onclick="doSearch()" aria-label="Run search">Search</button>
-      </div>
-      <!-- Advanced filter panel -->
-      <div class="adv-filter-panel">
-        <h4>Advanced Filters</h4>
-        <div class="adv-filter-row">
-          <div class="ff" style="min-width:130px">
-            <label for="af-risk">Risk Level</label>
-            <select id="af-risk">
-              <option value="">All</option>
-              <option value="critical">Critical</option>
-              <option value="high">High</option>
-              <option value="medium">Medium</option>
-              <option value="low">Low</option>
-            </select>
-          </div>
-          <div class="ff" style="min-width:160px">
-            <label for="af-model">Model filter</label>
-            <input id="af-model" type="text" placeholder="gpt-4o, claude…" list="model-datalist">
-          </div>
-          <div class="ff">
-            <label for="af-from">Date from</label>
-            <input id="af-from" type="date">
-          </div>
-          <div class="ff">
-            <label for="af-to">Date to</label>
-            <input id="af-to" type="date">
-          </div>
-          <div class="ff" style="min-width:150px">
-            <label for="af-capture">Capture Status</label>
-            <select id="af-capture">
-              <option value="">All</option>
-              <option value="full">Full</option>
-              <option value="partial">Partial</option>
-              <option value="unavailable">Unavailable</option>
-            </select>
-          </div>
-          <div class="adv-filter-check">
-            <input type="checkbox" id="af-has-prompt">
-            <label for="af-has-prompt" style="text-transform:none;letter-spacing:0;font-size:13px;font-weight:400;margin-bottom:0">Has prompt</label>
+      <!-- ════ OVERVIEW / DASHBOARD ════ -->
+      <div id="t-dashboard" class="view on">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div class="stitle">Governance Overview</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <label for="d-from" style="display:inline;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text2)">From</label>
+            <input id="d-from" type="date" style="padding:6px 10px;font-size:12px;width:145px" aria-label="Dashboard date from">
+            <label for="d-to" style="display:inline;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text2)">To</label>
+            <input id="d-to" type="date" style="padding:6px 10px;font-size:12px;width:145px" aria-label="Dashboard date to">
+            <button id="btn-dash-refresh" class="s" style="padding:6px 14px;font-size:12px" aria-label="Refresh dashboard">Refresh</button>
           </div>
         </div>
-        <div class="adv-filter-actions">
-          <button class="p" onclick="applyAdvancedFilters()" aria-label="Apply advanced filters">Apply Filters</button>
-          <button class="s" onclick="clearAdvancedFilters()" aria-label="Clear advanced filters">Clear Filters</button>
+        <div class="data-source-bar">
+          <span id="data-source-badge"><span class="ds-badge unavailable">Unavailable</span></span>
+          <span id="ds-last-updated" class="ds-updated"></span>
         </div>
-      </div>
-      <div id="search-body" role="status" aria-live="polite"></div>
-      <!-- Pagination -->
-      <div class="pagination" id="search-pagination" style="display:none">
-        <button class="s" id="prevPage" onclick="changePage(-1)" aria-label="Previous page">← Previous</button>
-        <span id="pageInfo">Page 1 of 1 (0 records)</span>
-        <button class="s" id="nextPage" onclick="changePage(1)" aria-label="Next page">Next →</button>
-        <label for="pageSize" style="display:inline;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text2)">Per page</label>
-        <select id="pageSize" onchange="changePageSize()" aria-label="Records per page">
-          <option value="10">10 per page</option>
-          <option value="20" selected>20 per page</option>
-          <option value="50">50 per page</option>
-        </select>
-      </div>
-    </div>
-
-    <!-- RECORD VIEWER -->
-    <div id="t-record" class="view">
-      <div class="stitle">Record Viewer</div>
-      <div style="display:flex;gap:10px;margin-bottom:20px">
-        <label for="rec-uuid" style="display:none">Record UUID</label>
-        <input id="rec-uuid" type="text" placeholder="Paste record UUID…" style="flex:1;max-width:440px" aria-label="Record UUID">
-        <button class="p" onclick="loadRec()" aria-label="Load record">Load</button>
-      </div>
-      <div id="rec-body"></div>
-    </div>
-
-    <!-- TIMELINE -->
-    <div id="t-timeline" class="view">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
-        <div class="stitle">Timeline &amp; Risk Heatmap</div>
-        <button class="s" style="padding:6px 14px;font-size:12px" onclick="loadTimeline()" aria-label="Refresh timeline">Refresh</button>
-      </div>
-      <div id="tl-body" role="status" aria-live="polite"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
-    </div>
-
-    <!-- GRAPH -->
-    <div id="t-graph" class="view">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <div class="stitle">File Lineage Graph <span class="sub">node size = insertions · color = risk · click to search</span></div>
-        <button class="s" style="padding:6px 14px;font-size:12px" onclick="loadGraph()" aria-label="Refresh graph">Refresh</button>
-      </div>
-      <div id="graph-body" role="status" aria-live="polite"><div class="loading"><div class="spin" aria-hidden="true"></div> Building graph…</div></div>
-    </div>
-
-    <!-- ALERTS / LIVE FEED -->
-    <div id="t-alerts" class="view">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <div class="stitle">Live Capture Feed</div>
-        <div class="feed-controls">
-          <span id="feed-status" style="font-size:12px;color:var(--text2)" role="status" aria-live="polite">Polling every 30s</span>
-          <button class="s" style="padding:6px 14px;font-size:12px" onclick="pollAlerts()" aria-label="Refresh live feed now">Refresh Now</button>
+        <div id="dash-body" role="status" aria-live="polite">
+          <div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>
         </div>
-      </div>
-      <div id="alert-feed" role="status" aria-live="polite"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
-    </div>
-
-    <!-- EXPORT -->
-    <div id="t-export" class="view">
-      <div class="stitle">Audit Export <span class="sub">Admin only · up to 10,000 rows</span></div>
-      <div class="filters">
-        <div class="ff"><label for="e-from">Date from</label><input id="e-from" type="date"></div>
-        <div class="ff"><label for="e-to">Date to</label><input id="e-to" type="date"></div>
-        <div class="ff"><label for="e-dev">Developer</label><input id="e-dev" type="text" placeholder="git username"></div>
-        <div class="ff"><label for="e-file">File path</label><input id="e-file" type="text" placeholder="src/auth.py"></div>
-        <button class="p" onclick="doExport()" aria-label="Download audit CSV">Download CSV</button>
-      </div>
-      <div id="al-export" role="status" aria-live="polite"></div>
-
-      <!-- Async export -->
-      <div class="export-async-section" id="async-export-section">
-        <h4 style="margin-bottom:12px">Large Export (Async)</h4>
-        <div class="new-form-row">
-          <label>Format
-            <select id="async-export-format" style="margin-top:4px">
-              <option value="json">JSON</option>
-              <option value="csv">CSV</option>
-              <option value="parquet">Parquet</option>
-            </select>
-          </label>
-          <label>Limit <input type="number" id="async-export-limit" value="1000" min="1" max="10000" style="width:90px;margin-top:4px"></label>
-          <button class="p" onclick="startAsyncExport()" style="align-self:flex-end">Start Export</button>
-        </div>
-        <div id="async-export-status" hidden style="margin-top:10px">
-          <p style="font-size:13px">Job: <code id="async-job-id">—</code> | Status: <strong id="async-job-status">—</strong></p>
-          <button id="async-download-btn" class="p" hidden onclick="downloadAsyncExport()" style="margin-top:8px">Download</button>
-        </div>
-      </div>
-
-      <!-- Agent Trace export -->
-      <div class="export-async-section" id="agent-trace-export-section" style="margin-top:20px">
-        <h4 style="margin-bottom:4px">Agent Trace Export <span style="font-size:11px;color:var(--text2);font-weight:400;margin-left:6px">Portable · lineagelens-agent-trace/1</span></h4>
-        <p style="font-size:12px;color:var(--text2);margin-bottom:12px">Self-hosted record of <em>which AI tool wrote which code</em>. Import into any LineageLens instance or parse with any JSONL tool.</p>
-        <div class="new-form-row">
-          <label>Format
-            <select id="at-format" style="margin-top:4px">
-              <option value="jsonl">JSONL (recommended)</option>
-              <option value="json">JSON</option>
-              <option value="csv">CSV</option>
-            </select>
-          </label>
-          <label>Tool filter <input id="at-tool" type="text" placeholder="e.g. Claude Code" style="margin-top:4px;width:130px"></label>
-          <label>Min confidence <input id="at-conf" type="number" min="0" max="1" step="0.05" placeholder="0.0–1.0" style="margin-top:4px;width:80px"></label>
-          <button class="p" onclick="doAgentTraceExport()" style="align-self:flex-end">Export Agent Trace</button>
-        </div>
-        <div id="al-at-export" role="status" aria-live="polite" style="margin-top:8px"></div>
-      </div>
-
-      <!-- Agent Trace import -->
-      <div class="export-async-section" id="agent-trace-import-section" style="margin-top:20px">
-        <h4 style="margin-bottom:4px">Agent Trace Import</h4>
-        <p style="font-size:12px;color:var(--text2);margin-bottom:12px">Upload a JSONL file exported from any LineageLens instance. Duplicate UUIDs are skipped automatically.</p>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <label style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px 14px;cursor:pointer;font-size:13px;color:var(--text);display:inline-flex;align-items:center;gap:6px">
-            Choose JSONL file
-            <input id="at-import-file" type="file" accept=".jsonl,.ndjson,.json" style="display:none" onchange="onImportFileChange(this)">
-          </label>
-          <span id="at-import-filename" style="font-size:13px;color:var(--text2)">No file chosen</span>
-          <button class="p" id="at-import-btn" onclick="doAgentTraceImport()" disabled>Import</button>
-        </div>
-        <div id="al-at-import" role="status" aria-live="polite" style="margin-top:8px"></div>
-      </div>
-    </div>
-
-    <!-- TEAM -->
-    <div id="t-team" class="view">
-      <div class="stitle">Team</div>
-      <div id="invite-box" class="invite-box" style="display:none">
-        <h3>Generate Invite Link</h3>
-        <p style="font-size:12px;color:var(--text2);margin-bottom:12px">Send this link to the engineer — they set their own username and password when they open it.</p>
-        <div id="al-invite" role="status" aria-live="polite"></div>
-        <div class="form-row">
-          <div class="field"><label for="inv-r">Role</label><select id="inv-r"><option value="member">Member</option><option value="admin">Admin</option></select></div>
-          <div class="field"><label for="inv-ttl">Expires in</label><select id="inv-ttl"><option value="1440">24 hours</option><option value="10080">7 days</option><option value="43200">30 days</option></select></div>
-          <div class="field"><label for="inv-uses">Max uses</label><input id="inv-uses" type="number" min="1" max="100" value="1" style="width:70px"></div>
-        </div>
-        <div style="margin-top:12px"><button class="p" onclick="doInvite()" aria-label="Generate invite link">Generate Link</button></div>
-        <div id="invite-link-result" hidden style="margin-top:14px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:12px">
-          <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Invite link — share with your engineer</div>
-          <div style="display:flex;align-items:center;gap:8px">
-            <input id="invite-link-url" type="text" readonly style="flex:1;font-family:'SF Mono',Consolas,monospace;font-size:12px;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;min-width:0">
-            <button class="s" onclick="copyInviteLink()" style="white-space:nowrap;width:auto;padding:8px 12px">Copy</button>
+        <section class="trend-section" id="risk-trend-section" style="display:none">
+          <h2>Risk Trend (Last 30 Days)</h2>
+          <div style="position:relative;height:280px;">
+            <canvas id="riskTrendChart" aria-label="Risk trend line chart"></canvas>
           </div>
-        </div>
+          <div id="risk-trend-placeholder" class="empty" style="display:none">Trend data coming soon</div>
+        </section>
+        <section class="trend-section" id="model-usage-section" style="display:none">
+          <h2>Model Usage (Last 30 Days)</h2>
+          <div style="position:relative;height:260px;">
+            <canvas id="modelUsageChart" aria-label="Model usage chart"></canvas>
+          </div>
+          <div id="model-usage-placeholder" class="empty" style="display:none">Model usage data coming soon</div>
+        </section>
       </div>
-      <div id="team-body" role="status" aria-live="polite"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
 
-      <!-- Policy Configuration (admin) -->
-      <div class="mgrid-section" id="policy-config-section" style="display:none">
-        <h3>Policies</h3>
-        <div id="policy-list-body" role="status" aria-live="polite">
-          <p class="placeholder">Loading policies…</p>
+      <!-- ════ SEARCH ════ -->
+      <div id="t-search" class="view">
+        <div class="stitle">Provenance Search</div>
+        <div class="filters">
+          <div class="ff"><label for="s-kw">Keywords</label><input id="s-kw" type="text" placeholder="function name, snippet…"></div>
+          <div class="ff"><label for="s-model">Model</label><input id="s-model" type="text" placeholder="gpt-4o, claude…" list="model-datalist"><datalist id="model-datalist"></datalist></div>
+          <div class="ff"><label for="s-file">File path</label><input id="s-file" type="text" placeholder="src/auth.py"></div>
+          <div class="ff"><label for="s-from">Date from</label><input id="s-from" type="date"></div>
+          <div class="ff"><label for="s-to">Date to</label><input id="s-to" type="date"></div>
+          <button id="btn-search" class="p" aria-label="Run search">Search</button>
         </div>
-        <button class="p" onclick="showCreatePolicyForm()" style="margin-top:8px">+ New Policy</button>
-        <div id="create-policy-form" hidden>
-          <h4 style="margin:12px 0 8px">New Policy</h4>
-          <div class="new-form-row">
-            <label>Name <input type="text" id="new-policy-name" placeholder="My Policy"></label>
-            <label>Type
-              <select id="new-policy-type">
-                <option value="risk_rule">Risk Rule</option>
-                <option value="allowlist">Allowlist</option>
-                <option value="blocklist">Blocklist</option>
-                <option value="prompt_pattern">Prompt Pattern</option>
+        <div class="adv-filter-panel">
+          <h4>Advanced Filters</h4>
+          <div class="adv-filter-row">
+            <div class="ff" style="min-width:130px">
+              <label for="af-risk">Risk Level</label>
+              <select id="af-risk">
+                <option value="">All</option><option value="critical">Critical</option>
+                <option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
               </select>
-            </label>
-            <label>Action
-              <select id="new-policy-action">
-                <option value="log">Log</option>
-                <option value="flag">Flag</option>
-                <option value="alert">Alert</option>
-                <option value="block">Block</option>
+            </div>
+            <div class="ff" style="min-width:160px">
+              <label for="af-model">Model filter</label>
+              <input id="af-model" type="text" placeholder="gpt-4o, claude…" list="model-datalist">
+            </div>
+            <div class="ff"><label for="af-from">Date from</label><input id="af-from" type="date"></div>
+            <div class="ff"><label for="af-to">Date to</label><input id="af-to" type="date"></div>
+            <div class="ff" style="min-width:150px">
+              <label for="af-capture">Capture Status</label>
+              <select id="af-capture">
+                <option value="">All</option><option value="full">Full</option>
+                <option value="partial">Partial</option><option value="unavailable">Unavailable</option>
               </select>
-            </label>
+            </div>
+            <div class="adv-filter-check">
+              <input type="checkbox" id="af-has-prompt">
+              <label for="af-has-prompt" style="text-transform:none;letter-spacing:0;font-size:13px;font-weight:400;margin-bottom:0">Has prompt</label>
+            </div>
           </div>
-          <label style="display:block;margin-top:8px">Config (JSON) <textarea id="new-policy-config" rows="3" placeholder='{"threshold": 80, "operator": "gte"}' style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:13px;margin-top:4px"></textarea></label>
-          <div class="new-form-row" style="margin-top:10px">
-            <button class="p" onclick="createPolicy()">Create</button>
-            <button class="s" onclick="document.getElementById('create-policy-form').hidden=true">Cancel</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Alert Channel Configuration (admin) -->
-      <div class="mgrid-section" id="alert-config-section" style="display:none">
-        <h3>Alert Channels</h3>
-        <div id="alert-config-list" role="status" aria-live="polite">
-          <p class="placeholder">Loading alert configs…</p>
-        </div>
-        <button class="p" onclick="showCreateAlertForm()" style="margin-top:8px">+ New Alert Channel</button>
-        <div id="create-alert-form" hidden>
-          <h4 style="margin:12px 0 8px">New Alert Channel</h4>
-          <div class="new-form-row">
-            <label>Name <input type="text" id="new-alert-name" placeholder="Slack #ai-alerts"></label>
-            <label>Channel
-              <select id="new-alert-channel" onchange="updateAlertChannelHint()">
-                <option value="slack">Slack</option>
-                <option value="teams">Teams</option>
-                <option value="email">Email</option>
-                <option value="webhook">Webhook</option>
-              </select>
-            </label>
-          </div>
-          <div id="alert-channel-hint" class="hint-text" style="margin-top:6px">Paste your Slack incoming webhook URL in the config below.</div>
-          <label style="display:block;margin-top:8px">Config (JSON) <textarea id="new-alert-config" rows="3" placeholder='{"webhook_url": "https://hooks.slack.com/..."}' style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:13px;margin-top:4px"></textarea></label>
-          <label style="display:block;margin-top:8px">Trigger on (comma-separated) <input type="text" id="new-alert-triggers" placeholder="high_risk, critical, policy_violation" style="margin-top:4px"></label>
-          <div class="new-form-row" style="margin-top:10px">
-            <button class="p" onclick="createAlertConfig()">Create</button>
-            <button class="s" onclick="document.getElementById('create-alert-form').hidden=true">Cancel</button>
+          <div class="adv-filter-actions">
+            <button id="btn-adv-apply" class="p" aria-label="Apply advanced filters">Apply Filters</button>
+            <button id="btn-adv-clear" class="s" aria-label="Clear advanced filters">Clear</button>
           </div>
         </div>
-      </div>
-    </div>
-
-    <!-- DEVELOPERS -->
-    <div id="t-developers" class="view">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
-        <div class="stitle">Developer Activity</div>
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-          <label for="dev-date-from" style="display:inline;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text2)">From</label>
-          <input type="date" id="dev-date-from" style="padding:6px 10px;font-size:12px;width:145px" aria-label="Developer activity date from">
-          <label for="dev-date-to" style="display:inline;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text2)">To</label>
-          <input type="date" id="dev-date-to" style="padding:6px 10px;font-size:12px;width:145px" aria-label="Developer activity date to">
-          <button class="p" style="padding:6px 14px;font-size:12px" onclick="loadDeveloperActivity()" aria-label="Refresh developer activity">Refresh</button>
-        </div>
-      </div>
-      <div id="dev-table-body" role="status" aria-live="polite">
-        <div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>
-      </div>
-      <div class="tl-chart-wrap" style="margin-top:20px">
-        <canvas id="devActivityChart" height="180" aria-label="Developer activity chart" role="graphics-document"></canvas>
-      </div>
-    </div>
-
-    <!-- REVIEWS -->
-    <div id="t-reviews" class="view">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
-        <div class="stitle">Reviewer Queue</div>
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-          <select id="review-status-filter" onchange="loadReviews()" aria-label="Filter by status" style="padding:6px 10px;font-size:12px;width:auto">
-            <option value="">All statuses</option>
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-            <option value="deferred">Deferred</option>
+        <div id="search-body" role="status" aria-live="polite"></div>
+        <div class="pagination" id="search-pagination" style="display:none">
+          <button class="s" id="prevPage" aria-label="Previous page">← Previous</button>
+          <span id="pageInfo" style="font-size:12px;color:var(--text2)">Page 1 of 1 (0 records)</span>
+          <button class="s" id="nextPage" aria-label="Next page">Next →</button>
+          <label for="pageSize" style="display:inline;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text2)">Per page</label>
+          <select id="pageSize" aria-label="Records per page">
+            <option value="10">10 per page</option>
+            <option value="20" selected>20 per page</option>
+            <option value="50">50 per page</option>
           </select>
-          <button class="p" style="padding:6px 14px;font-size:12px" onclick="loadReviews()" aria-label="Refresh review queue">Refresh</button>
         </div>
       </div>
-      <div id="reviews-body" role="status" aria-live="polite">
-        <div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>
-      </div>
-    </div>
 
-    <!-- GITHUB CI -->
-    <div id="t-github" class="view">
-      <div class="stitle" style="margin-bottom:18px">GitHub CI Integration</div>
-      <div class="card" style="max-width:560px">
-        <h4 style="margin:0 0 14px">Risk Gate Configuration</h4>
-        <label style="display:block;margin-bottom:8px;font-size:13px">Risk Score Threshold (0–100)
-          <input id="gh-threshold" type="number" min="0" max="100" value="70" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
-        </label>
-        <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:13px;cursor:pointer">
-          <input id="gh-block" type="checkbox" checked>
-          Block PR when risk score exceeds threshold
-        </label>
-        <label style="display:block;margin-bottom:14px;font-size:13px">Allowed Repositories (one per line, leave blank for all)
-          <textarea id="gh-repos" rows="3" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box;resize:vertical"></textarea>
-        </label>
-        <button class="p" onclick="saveGithubConfig()">Save Configuration</button>
-        <div id="gh-msg" style="margin-top:10px;font-size:13px"></div>
+      <!-- ════ RECORD VIEWER ════ -->
+      <div id="t-record" class="view">
+        <div class="stitle">Record Viewer</div>
+        <div style="display:flex;gap:10px;margin-bottom:20px">
+          <label for="rec-uuid" style="display:none">Record UUID</label>
+          <input id="rec-uuid" type="text" placeholder="Paste record UUID…" style="flex:1;max-width:440px" aria-label="Record UUID">
+          <button id="btn-load-rec" class="p" aria-label="Load record">Load</button>
+        </div>
+        <div id="rec-body"></div>
       </div>
-      <div class="card" style="max-width:560px;margin-top:18px">
-        <h4 style="margin:0 0 10px">GitHub Actions Workflow Snippet</h4>
-        <p style="font-size:12px;color:var(--muted);margin:0 0 10px">Add this step to your workflow file and set <code>LINEAGELENS_API_KEY</code> in repository secrets.</p>
-        <pre style="background:var(--bg);padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre-wrap">- name: LineageLens Risk Check
+
+      <!-- ════ TIMELINE ════ -->
+      <div id="t-timeline" class="view">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+          <div class="stitle">Timeline &amp; Risk Heatmap</div>
+          <button id="btn-tl-refresh" class="s" style="padding:6px 14px;font-size:12px" aria-label="Refresh timeline">Refresh</button>
+        </div>
+        <div id="tl-body" role="status" aria-live="polite">
+          <div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>
+        </div>
+      </div>
+
+      <!-- ════ GRAPH ════ -->
+      <div id="t-graph" class="view">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <div class="stitle">File Lineage Graph <span class="sub">node size = insertions · color = risk · click to search</span></div>
+          <button id="btn-graph-refresh" class="s" style="padding:6px 14px;font-size:12px" aria-label="Refresh graph">Refresh</button>
+        </div>
+        <div id="graph-body" role="status" aria-live="polite">
+          <div class="loading"><div class="spin" aria-hidden="true"></div> Building graph…</div>
+        </div>
+      </div>
+
+      <!-- ════ LIVE FEED ════ -->
+      <div id="t-alerts" class="view">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <div class="stitle">Live Capture Feed</div>
+          <div class="feed-controls">
+            <span id="feed-status" style="font-size:12px;color:var(--text2)" role="status" aria-live="polite">Polling every 30s</span>
+            <button id="btn-alerts-refresh" class="s" style="padding:6px 14px;font-size:12px" aria-label="Refresh live feed now">Refresh Now</button>
+          </div>
+        </div>
+        <div id="alert-feed" role="status" aria-live="polite">
+          <div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>
+        </div>
+      </div>
+
+      <!-- ════ EXPORT ════ -->
+      <div id="t-export" class="view">
+        <div class="stitle">Audit Export <span class="sub">Admin only · up to 10,000 rows</span></div>
+        <div class="filters">
+          <div class="ff"><label for="e-from">Date from</label><input id="e-from" type="date"></div>
+          <div class="ff"><label for="e-to">Date to</label><input id="e-to" type="date"></div>
+          <div class="ff"><label for="e-dev">Developer</label><input id="e-dev" type="text" placeholder="git username"></div>
+          <div class="ff"><label for="e-file">File path</label><input id="e-file" type="text" placeholder="src/auth.py"></div>
+          <button id="btn-export-csv" class="p" aria-label="Download audit CSV">Download CSV</button>
+        </div>
+        <div id="al-export" role="status" aria-live="polite"></div>
+
+        <div class="export-async-section" id="async-export-section">
+          <h4 style="margin-bottom:12px">Large Export (Async)</h4>
+          <div class="new-form-row">
+            <label>Format
+              <select id="async-export-format" style="margin-top:4px">
+                <option value="json">JSON</option><option value="csv">CSV</option><option value="parquet">Parquet</option>
+              </select>
+            </label>
+            <label>Limit <input type="number" id="async-export-limit" value="1000" min="1" max="10000" style="width:90px;margin-top:4px"></label>
+            <button id="btn-start-async-export" class="p" style="align-self:flex-end">Start Export</button>
+          </div>
+          <div id="async-export-status" hidden style="margin-top:10px">
+            <p style="font-size:13px">Job: <code id="async-job-id">—</code> | Status: <strong id="async-job-status">—</strong></p>
+            <button id="async-download-btn" class="p" hidden style="margin-top:8px">Download</button>
+          </div>
+        </div>
+
+        <div class="export-async-section" id="agent-trace-export-section" style="margin-top:20px">
+          <h4 style="margin-bottom:4px">Agent Trace Export <span style="font-size:11px;color:var(--text2);font-weight:400;margin-left:6px">Portable · lineagelens-agent-trace/1</span></h4>
+          <p style="font-size:12px;color:var(--text2);margin-bottom:12px">Self-hosted record of <em>which AI tool wrote which code</em>. Import into any LineageLens instance or parse with any JSONL tool.</p>
+          <div class="new-form-row">
+            <label>Format
+              <select id="at-format" style="margin-top:4px">
+                <option value="jsonl">JSONL (recommended)</option><option value="json">JSON</option><option value="csv">CSV</option>
+              </select>
+            </label>
+            <label>Tool filter <input id="at-tool" type="text" placeholder="e.g. Claude Code" style="margin-top:4px;width:130px"></label>
+            <label>Min confidence <input id="at-conf" type="number" min="0" max="1" step="0.05" placeholder="0.0–1.0" style="margin-top:4px;width:80px"></label>
+            <button id="btn-at-export" class="p" style="align-self:flex-end">Export Agent Trace</button>
+          </div>
+          <div id="al-at-export" role="status" aria-live="polite" style="margin-top:8px"></div>
+        </div>
+
+        <div class="export-async-section" id="agent-trace-import-section" style="margin-top:20px">
+          <h4 style="margin-bottom:4px">Agent Trace Import</h4>
+          <p style="font-size:12px;color:var(--text2);margin-bottom:12px">Upload a JSONL file exported from any LineageLens instance. Duplicate UUIDs are skipped automatically.</p>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <label style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px 14px;cursor:pointer;font-size:13px;color:var(--text);display:inline-flex;align-items:center;gap:6px">
+              Choose JSONL file
+              <input id="at-import-file" type="file" accept=".jsonl,.ndjson,.json" style="display:none">
+            </label>
+            <span id="at-import-filename" style="font-size:13px;color:var(--text2)">No file chosen</span>
+            <button id="at-import-btn" class="p" disabled>Import</button>
+          </div>
+          <div id="al-at-import" role="status" aria-live="polite" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <!-- ════ TEAM ════ -->
+      <div id="t-team" class="view">
+        <div class="stitle">Team</div>
+        <div id="invite-box" class="invite-box" style="display:none">
+          <h3>Generate Invite Link</h3>
+          <p style="font-size:12px;color:var(--text2);margin-bottom:12px">Send this link to the engineer — they set their own username and password when they open it.</p>
+          <div id="al-invite" role="status" aria-live="polite"></div>
+          <div class="form-row">
+            <div class="field"><label for="inv-r">Role</label><select id="inv-r"><option value="member">Member</option><option value="admin">Admin</option></select></div>
+            <div class="field"><label for="inv-ttl">Expires in</label><select id="inv-ttl"><option value="1440">24 hours</option><option value="10080">7 days</option><option value="43200">30 days</option></select></div>
+            <div class="field"><label for="inv-uses">Max uses</label><input id="inv-uses" type="number" min="1" max="100" value="1" style="width:70px"></div>
+          </div>
+          <div style="margin-top:12px"><button id="btn-invite" class="p" aria-label="Generate invite link">Generate Link</button></div>
+          <div id="invite-link-result" hidden style="margin-top:14px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:12px">
+            <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Invite link — share with your engineer</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <input id="invite-link-url" type="text" readonly style="flex:1;font-family:var(--mono);font-size:12px;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;min-width:0">
+              <button id="btn-copy-invite" class="s" style="white-space:nowrap;width:auto;padding:8px 12px">Copy</button>
+            </div>
+          </div>
+        </div>
+        <div id="team-body" role="status" aria-live="polite"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
+
+        <div class="mgrid-section" id="policy-config-section" style="display:none">
+          <h3>Policies</h3>
+          <div id="policy-list-body" role="status" aria-live="polite"><p class="placeholder">Loading policies…</p></div>
+          <button id="btn-new-policy" class="p" style="margin-top:8px">+ New Policy</button>
+          <div id="create-policy-form" hidden>
+            <h4 style="margin:12px 0 8px">New Policy</h4>
+            <div class="new-form-row">
+              <label>Name <input type="text" id="new-policy-name" placeholder="My Policy"></label>
+              <label>Type
+                <select id="new-policy-type">
+                  <option value="risk_rule">Risk Rule</option><option value="allowlist">Allowlist</option>
+                  <option value="blocklist">Blocklist</option><option value="prompt_pattern">Prompt Pattern</option>
+                </select>
+              </label>
+              <label>Action
+                <select id="new-policy-action">
+                  <option value="log">Log</option><option value="flag">Flag</option>
+                  <option value="alert">Alert</option><option value="block">Block</option>
+                </select>
+              </label>
+            </div>
+            <label style="display:block;margin-top:8px">Config (JSON)
+              <textarea id="new-policy-config" rows="3" placeholder='{"threshold": 80, "operator": "gte"}' style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:13px;margin-top:4px"></textarea>
+            </label>
+            <div class="new-form-row" style="margin-top:10px">
+              <button id="btn-create-policy" class="p">Create</button>
+              <button id="btn-cancel-policy" class="s">Cancel</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="mgrid-section" id="alert-config-section" style="display:none">
+          <h3>Alert Channels</h3>
+          <div id="alert-config-list" role="status" aria-live="polite"><p class="placeholder">Loading alert configs…</p></div>
+          <button id="btn-new-alert-channel" class="p" style="margin-top:8px">+ New Alert Channel</button>
+          <div id="create-alert-form" hidden>
+            <h4 style="margin:12px 0 8px">New Alert Channel</h4>
+            <div class="new-form-row">
+              <label>Name <input type="text" id="new-alert-name" placeholder="Slack #ai-alerts"></label>
+              <label>Channel
+                <select id="new-alert-channel">
+                  <option value="slack">Slack</option><option value="teams">Teams</option>
+                  <option value="email">Email</option><option value="webhook">Webhook</option>
+                </select>
+              </label>
+            </div>
+            <div id="alert-channel-hint" class="hint-text" style="margin-top:6px">Paste your Slack incoming webhook URL in the config below.</div>
+            <label style="display:block;margin-top:8px">Config (JSON)
+              <textarea id="new-alert-config" rows="3" placeholder='{"webhook_url": "https://hooks.slack.com/..."}' style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:13px;margin-top:4px"></textarea>
+            </label>
+            <label style="display:block;margin-top:8px">Trigger on (comma-separated)
+              <input type="text" id="new-alert-triggers" placeholder="high_risk, critical, policy_violation" style="margin-top:4px">
+            </label>
+            <div class="new-form-row" style="margin-top:10px">
+              <button id="btn-create-alert" class="p">Create</button>
+              <button id="btn-cancel-alert" class="s">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ════ DEVELOPERS ════ -->
+      <div id="t-developers" class="view">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+          <div class="stitle">Developer Activity</div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <label for="dev-date-from" style="display:inline;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text2)">From</label>
+            <input type="date" id="dev-date-from" style="padding:6px 10px;font-size:12px;width:145px" aria-label="Developer activity date from">
+            <label for="dev-date-to" style="display:inline;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text2)">To</label>
+            <input type="date" id="dev-date-to" style="padding:6px 10px;font-size:12px;width:145px" aria-label="Developer activity date to">
+            <button id="btn-dev-refresh" class="p" style="padding:6px 14px;font-size:12px" aria-label="Refresh developer activity">Refresh</button>
+          </div>
+        </div>
+        <div id="dev-table-body" role="status" aria-live="polite"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
+        <div class="tl-chart-wrap" style="margin-top:20px">
+          <canvas id="devActivityChart" height="180" aria-label="Developer activity chart" role="graphics-document"></canvas>
+        </div>
+      </div>
+
+      <!-- ════ REVIEWS ════ -->
+      <div id="t-reviews" class="view">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+          <div class="stitle">Reviewer Queue</div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <select id="review-status-filter" aria-label="Filter by status" style="padding:6px 10px;font-size:12px;width:auto">
+              <option value="">All statuses</option><option value="pending">Pending</option>
+              <option value="approved">Approved</option><option value="rejected">Rejected</option><option value="deferred">Deferred</option>
+            </select>
+            <button id="btn-reviews-refresh" class="p" style="padding:6px 14px;font-size:12px" aria-label="Refresh review queue">Refresh</button>
+          </div>
+        </div>
+        <div id="reviews-body" role="status" aria-live="polite"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
+      </div>
+
+      <!-- ════ GITHUB CI ════ -->
+      <div id="t-github" class="view">
+        <div class="stitle" style="margin-bottom:18px">GitHub CI Integration</div>
+        <div class="card" style="max-width:560px">
+          <h4 style="margin:0 0 14px">Risk Gate Configuration</h4>
+          <label style="display:block;margin-bottom:8px;font-size:13px">Risk Score Threshold (0–100)
+            <input id="gh-threshold" type="number" min="0" max="100" value="70" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px">
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:13px;cursor:pointer">
+            <input id="gh-block" type="checkbox" checked>Block PR when risk score exceeds threshold
+          </label>
+          <label style="display:block;margin-bottom:14px;font-size:13px">Allowed Repositories (one per line, leave blank for all)
+            <textarea id="gh-repos" rows="3" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;resize:vertical"></textarea>
+          </label>
+          <button id="btn-save-github" class="p">Save Configuration</button>
+          <div id="gh-msg" style="margin-top:10px;font-size:13px"></div>
+        </div>
+        <div class="card" style="max-width:560px;margin-top:18px">
+          <h4 style="margin:0 0 10px">GitHub Actions Workflow Snippet</h4>
+          <p style="font-size:12px;color:var(--text2);margin:0 0 10px">Add this step to your workflow file and set <code>LINEAGELENS_API_KEY</code> in repository secrets.</p>
+          <pre style="background:var(--bg);padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre-wrap">- name: LineageLens Risk Check
   uses: actions/github-script@v7
   with:
     script: |
@@ -735,261 +578,212 @@ code{font-family:'Courier New',monospace;font-size:12px;background:var(--bg3);pa
   env:
     LINEAGELENS_API_KEY: ${{ secrets.LINEAGELENS_API_KEY }}
     LINEAGELENS_URL: ${{ secrets.LINEAGELENS_URL }}</pre>
-      </div>
-    </div>
-
-    <!-- MCP SERVER -->
-    <div id="t-mcp" class="view">
-      <div class="stitle" style="margin-bottom:18px">MCP Server — Connect AI Assistants</div>
-
-      <div class="card" style="max-width:760px;margin-bottom:18px">
-        <h4 style="margin:0 0 10px">What this is</h4>
-        <p style="font-size:13px;color:var(--text);margin:0 0 8px">The Model Context Protocol (MCP) server lets your AI assistants — Claude Code, Cursor, Continue, and any other MCP-capable client — query LineageLens's provenance history directly. Once configured, you can ask your assistant questions like:</p>
-        <ul style="font-size:13px;color:var(--text);margin:0 0 8px 18px;padding:0">
-          <li>"What AI-generated code touched <code>auth/</code> this week?"</li>
-          <li>"Show me every Claude Sonnet 4.6 insertion in <code>payments.py</code>."</li>
-          <li>"Which model produced the highest-risk edits in the last 7 days?"</li>
-          <li>"Explain provenance record <code>7a3e9b2c-...</code> in plain English."</li>
-        </ul>
-        <p style="font-size:13px;color:var(--muted);margin:0">All queries are scoped to your current workspace. Nothing leaves your network.</p>
-      </div>
-
-      <div class="card" style="max-width:760px;margin-bottom:18px">
-        <h4 style="margin:0 0 10px">Step 1 — Your backend URL</h4>
-        <p style="font-size:12px;color:var(--muted);margin:0 0 8px">The MCP server connects to this LineageLens backend. Make sure it's reachable from wherever the MCP client runs (usually your local machine).</p>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input id="mcp-backend-url" readonly style="flex:1;padding:8px 10px;font-size:13px;font-family:var(--mono,monospace)">
-          <button class="s" onclick="mcpCopyBackendUrl()" style="padding:7px 14px;font-size:12px">Copy</button>
         </div>
       </div>
 
-      <div class="card" style="max-width:760px;margin-bottom:18px">
-        <h4 style="margin:0 0 10px">Step 2 — Generate an API key</h4>
-        <p style="font-size:13px;margin:0 0 8px">The MCP server authenticates to the backend using an API key. Generate one with the scopes <code>provenance:read</code> at minimum.</p>
-        <p style="font-size:13px;margin:0 0 8px">Admins: open the <strong>Team</strong> tab → <em>API Keys</em> section → <em>Generate API Key</em>. Copy the key once shown — it cannot be retrieved later.</p>
-        <p style="font-size:12px;color:var(--muted);margin:0">Non-admins can also use their personal access token (set <code>LINEAGELENS_USERNAME</code> + <code>LINEAGELENS_PASSWORD</code> in the MCP env instead).</p>
-      </div>
-
-      <div class="card" style="max-width:760px;margin-bottom:18px">
-        <h4 style="margin:0 0 10px">Step 3 — Paste this into your AI client's config</h4>
-        <p style="font-size:12px;color:var(--muted);margin:0 0 12px">Replace <code>YOUR_API_KEY_HERE</code> with the key you generated. Replace the script path with where you cloned LineageLens.</p>
-
-        <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
-          <button class="s mcp-config-tab on" data-mcp="claude" onclick="mcpShowConfig('claude')" style="padding:6px 14px;font-size:12px">Claude Code</button>
-          <button class="s mcp-config-tab" data-mcp="cursor" onclick="mcpShowConfig('cursor')" style="padding:6px 14px;font-size:12px">Cursor</button>
-          <button class="s mcp-config-tab" data-mcp="continue" onclick="mcpShowConfig('continue')" style="padding:6px 14px;font-size:12px">Continue</button>
-          <button class="s mcp-config-tab" data-mcp="windsurf" onclick="mcpShowConfig('windsurf')" style="padding:6px 14px;font-size:12px">Windsurf</button>
+      <!-- ════ MCP SERVER ════ -->
+      <div id="t-mcp" class="view">
+        <div class="stitle" style="margin-bottom:18px">MCP Server — Connect AI Assistants</div>
+        <div class="card" style="max-width:760px;margin-bottom:18px">
+          <h4 style="margin:0 0 10px">What this is</h4>
+          <p style="font-size:13px;margin:0 0 8px">The Model Context Protocol (MCP) server lets your AI assistants — Claude Code, Cursor, Continue, and any other MCP-capable client — query LineageLens's provenance history directly.</p>
+          <ul style="font-size:13px;color:var(--text);margin:0 0 8px 18px;padding:0">
+            <li>"What AI-generated code touched <code>auth/</code> this week?"</li>
+            <li>"Show me every Claude Sonnet insertion in <code>payments.py</code>."</li>
+            <li>"Which model produced the highest-risk edits in the last 7 days?"</li>
+          </ul>
+          <p style="font-size:13px;color:var(--text2);margin:0">All queries are scoped to your current workspace. Nothing leaves your network.</p>
         </div>
-
-        <div id="mcp-config-claude" class="mcp-config-block">
-          <p style="font-size:12px;color:var(--muted);margin:0 0 4px">File: <code>~/.claude/settings.json</code> (or <code>.claude/settings.json</code> in a project)</p>
-          <pre id="mcp-snippet-claude" style="background:var(--bg);padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre;margin:0"></pre>
-        </div>
-
-        <div id="mcp-config-cursor" class="mcp-config-block" style="display:none">
-          <p style="font-size:12px;color:var(--muted);margin:0 0 4px">File: <code>~/.cursor/mcp.json</code> (or <code>.cursor/mcp.json</code> in a project)</p>
-          <pre id="mcp-snippet-cursor" style="background:var(--bg);padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre;margin:0"></pre>
-        </div>
-
-        <div id="mcp-config-continue" class="mcp-config-block" style="display:none">
-          <p style="font-size:12px;color:var(--muted);margin:0 0 4px">File: <code>~/.continue/config.json</code> (under <code>experimental.modelContextProtocolServers</code>)</p>
-          <pre id="mcp-snippet-continue" style="background:var(--bg);padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre;margin:0"></pre>
-        </div>
-
-        <div id="mcp-config-windsurf" class="mcp-config-block" style="display:none">
-          <p style="font-size:12px;color:var(--muted);margin:0 0 4px">File: <code>~/.codeium/windsurf/mcp_config.json</code></p>
-          <pre id="mcp-snippet-windsurf" style="background:var(--bg);padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre;margin:0"></pre>
-        </div>
-
-        <button class="p" onclick="mcpCopyActiveSnippet()" style="margin-top:10px;padding:8px 16px;font-size:13px">Copy Config</button>
-        <span id="mcp-copy-msg" style="margin-left:10px;font-size:12px;color:var(--ok)"></span>
-      </div>
-
-      <div class="card" style="max-width:760px;margin-bottom:18px">
-        <h4 style="margin:0 0 10px">Available tools</h4>
-        <p style="font-size:12px;color:var(--muted);margin:0 0 10px">Your AI client can call any of these once connected:</p>
-        <table class="tbl" style="font-size:12px">
-          <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
-          <tbody>
-            <tr><td><code>search_provenance</code></td><td>Find AI-generated code by keyword, model, file path, or date range. Returns up to 50 records per call.</td></tr>
-            <tr><td><code>get_record</code></td><td>Fetch the full provenance record for a UUID — prompt, model, file, edit, status, risk score, and metadata.</td></tr>
-            <tr><td><code>list_recent</code></td><td>Recent AI insertions (newest first). Useful for "what did AI do today" queries.</td></tr>
-            <tr><td><code>check_file_risk</code></td><td>Risk profile for a specific file — distribution of critical / high / medium / low insertions.</td></tr>
-            <tr><td><code>get_insights</code></td><td>Workspace governance summary — total records, prompt-capture rate, top models, top files.</td></tr>
-            <tr><td><code>explain_record</code></td><td>Plain-English explanation of a record. Uses the backend's configured explainer LLM.</td></tr>
-            <tr><td><code>list_workspaces</code></td><td>Lists workspaces your token can access. Useful when one user belongs to multiple teams.</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="card" style="max-width:760px;margin-bottom:18px">
-        <h4 style="margin:0 0 10px">Step 4 — Verify it works</h4>
-        <p style="font-size:13px;margin:0 0 8px">Restart your AI client after pasting the config. Then ask it:</p>
-        <pre style="background:var(--bg);padding:12px;border-radius:6px;font-size:12px;margin:0 0 8px"><code>Using LineageLens, list my 5 most recent AI-generated code insertions.</code></pre>
-        <p style="font-size:13px;margin:0 0 8px">If it works, you'll see real captures pulled from this dashboard. If you see "MCP server not found" or "tool not available", check that:</p>
-        <ul style="font-size:12px;color:var(--muted);margin:0 0 0 18px;padding:0">
-          <li>The script path in the config is correct (it must be the absolute path to <code>lineagelens-mcp/lineagelens-mcp.py</code>)</li>
-          <li>Your client was fully restarted, not just reloaded</li>
-          <li>The API key has at least <code>provenance:read</code> scope</li>
-          <li>The backend at the URL above is reachable from the client's machine</li>
-        </ul>
-      </div>
-
-      <div class="card" style="max-width:760px">
-        <h4 style="margin:0 0 10px">Privacy &amp; data flow</h4>
-        <ul style="font-size:13px;margin:0 0 0 18px;padding:0">
-          <li>The MCP server is a local subprocess spawned by your AI client. It does not open a network listener.</li>
-          <li>All queries are scoped to your workspace via the API key.</li>
-          <li>The MCP server connects to <em>your</em> LineageLens backend. Nothing is sent to Anthropic, OpenAI, Google, or any third party.</li>
-          <li>If you remove an API key (Team → API Keys → Revoke), the MCP server returns 401 within its next request and your AI client loses access.</li>
-        </ul>
-      </div>
-    </div>
-
-    <!-- QUALITY METRICS -->
-    <div id="t-quality" class="view">
-      <div class="stitle" style="margin-bottom:18px">Code Quality Metrics</div>
-      <div id="llm-banner" style="display:none;background:rgba(245,158,11,.12);border:1px solid var(--amber);border-radius:var(--r);padding:12px 16px;margin-bottom:18px;max-width:520px">
-        <b style="color:var(--amber)">AI explanations in fallback mode</b>
-        <span style="color:var(--text2);font-size:13px;margin-left:8px">No LLM API key configured — explanations use static heuristics.</span>
-        <button class="s" style="margin-left:12px;padding:4px 10px;font-size:12px" onclick="document.getElementById('llm-setup-card').style.display='block';this.style.display='none'">Configure</button>
-      </div>
-      <div id="llm-setup-card" class="card" style="display:none;max-width:520px;margin-bottom:18px;border-color:var(--amber)">
-        <h4 style="margin:0 0 12px;color:var(--amber)">Configure LLM for AI Explanations</h4>
-        <label style="display:block;margin-bottom:8px;font-size:13px">API Key (OpenAI-compatible)
-          <input id="llm-key-input" type="password" placeholder="sk-..." style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
-        </label>
-        <label style="display:block;margin-bottom:12px;font-size:13px">Model
-          <input id="llm-model-input" type="text" value="gpt-4o-mini" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
-        </label>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button class="p" onclick="saveLlmKey()">Save</button>
-          <button onclick="document.getElementById('llm-setup-card').style.display='none'" style="font-size:13px">Cancel</button>
-          <span id="llm-key-msg" style="font-size:13px"></span>
-        </div>
-        <p style="color:var(--text2);font-size:12px;margin-top:10px">This saves to the running server session only. Set <code>EXPLAIN_LLM_API_KEY</code> env var for persistence across restarts.</p>
-      </div>
-      <div class="card" style="max-width:520px;margin-bottom:18px">
-        <h4 style="margin:0 0 12px">Analyze a Record</h4>
-        <div style="display:flex;gap:8px">
-          <input id="q-uuid" type="text" placeholder="Provenance record UUID" style="flex:1;padding:7px 10px;font-size:13px">
-          <button class="p" onclick="loadQuality()">Analyze</button>
-        </div>
-        <div id="q-result" style="margin-top:14px"></div>
-      </div>
-      <div class="card" style="max-width:520px">
-        <h4 style="margin:0 0 12px">Batch Analysis</h4>
-        <textarea id="q-batch" rows="4" placeholder="One UUID per line (max 100)" style="width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box;resize:vertical;margin-bottom:8px"></textarea>
-        <button class="p" onclick="loadQualityBatch()">Run Batch</button>
-        <div id="q-batch-result" style="margin-top:14px"></div>
-      </div>
-    </div>
-
-    <!-- SCHEDULED DIGESTS -->
-    <div id="t-scheduled-reports" class="view">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
-        <div class="stitle">Scheduled Digests</div>
-        <button class="p" style="padding:6px 14px;font-size:12px" onclick="showCreateDigest()">+ New Digest</button>
-      </div>
-      <div id="digests-create" style="display:none;margin-bottom:18px">
-        <div class="card" style="max-width:480px">
-          <h4 style="margin:0 0 14px">Create Digest</h4>
-          <label style="display:block;margin-bottom:8px;font-size:13px">Name
-            <input id="dig-name" type="text" placeholder="Weekly risk summary" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
-          </label>
-          <label style="display:block;margin-bottom:8px;font-size:13px">Type
-            <select id="dig-type" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px">
-              <option value="usage">Usage</option>
-              <option value="risk_summary">Risk Summary</option>
-              <option value="team_activity">Team Activity</option>
-            </select>
-          </label>
-          <label style="display:block;margin-bottom:8px;font-size:13px">Frequency
-            <select id="dig-freq" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px">
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
-          </label>
-          <label style="display:block;margin-bottom:14px;font-size:13px">Recipients (comma-separated emails)
-            <input id="dig-recipients" type="text" placeholder="alice@example.com, bob@example.com" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
-          </label>
-          <div style="display:flex;gap:8px">
-            <button class="p" onclick="createDigest()">Create</button>
-            <button onclick="document.getElementById('digests-create').style.display='none'">Cancel</button>
+        <div class="card" style="max-width:760px;margin-bottom:18px">
+          <h4 style="margin:0 0 10px">Step 1 — Your backend URL</h4>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="mcp-backend-url" readonly style="flex:1;padding:8px 10px;font-size:13px;font-family:var(--mono)">
+            <button id="btn-mcp-copy-url" class="s" style="padding:7px 14px;font-size:12px">Copy</button>
           </div>
-          <div id="dig-msg" style="margin-top:10px;font-size:13px"></div>
         </div>
-      </div>
-      <div id="digests-body" role="status" aria-live="polite">
-        <div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>
-      </div>
-    </div>
-
-    <!-- SSO PROVIDERS -->
-    <div id="t-sso" class="view">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
-        <div class="stitle">SSO / OIDC Providers</div>
-        <button class="p" style="padding:6px 14px;font-size:12px" onclick="showCreateSso()">+ Add Provider</button>
-      </div>
-      <div id="sso-create" style="display:none;margin-bottom:18px">
-        <div class="card" style="max-width:480px">
-          <h4 style="margin:0 0 14px">Add OIDC Provider</h4>
-          <label style="display:block;margin-bottom:8px;font-size:13px">Display Name
-            <input id="sso-name" type="text" placeholder="Okta" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
-          </label>
-          <label style="display:block;margin-bottom:8px;font-size:13px">Issuer URL
-            <input id="sso-issuer" type="url" placeholder="https://your-domain.okta.com" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
-          </label>
-          <label style="display:block;margin-bottom:8px;font-size:13px">Client ID
-            <input id="sso-client-id" type="text" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
-          </label>
-          <label style="display:block;margin-bottom:14px;font-size:13px">Client Secret
-            <input id="sso-client-secret" type="password" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
-          </label>
-          <div style="display:flex;gap:8px">
-            <button class="p" onclick="createSsoProvider()">Add Provider</button>
-            <button onclick="document.getElementById('sso-create').style.display='none'">Cancel</button>
+        <div class="card" style="max-width:760px;margin-bottom:18px">
+          <h4 style="margin:0 0 10px">Step 2 — Generate an API key</h4>
+          <p style="font-size:13px;margin:0 0 8px">The MCP server authenticates to the backend using an API key. Generate one with the scopes <code>provenance:read</code> at minimum.</p>
+          <p style="font-size:13px;margin:0 0 8px">Admins: open the <strong>Team</strong> tab → <em>API Keys</em> section → <em>Generate API Key</em>.</p>
+          <p style="font-size:12px;color:var(--text2);margin:0">Non-admins can also use their personal access token (set <code>LINEAGELENS_USERNAME</code> + <code>LINEAGELENS_PASSWORD</code> in the MCP env instead).</p>
+        </div>
+        <div class="card" style="max-width:760px;margin-bottom:18px">
+          <h4 style="margin:0 0 10px">Step 3 — Paste this into your AI client's config</h4>
+          <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+            <button class="s mcp-config-tab on" data-mcp="claude" id="mcp-tab-claude" style="padding:6px 14px;font-size:12px">Claude Code</button>
+            <button class="s mcp-config-tab" data-mcp="cursor" id="mcp-tab-cursor" style="padding:6px 14px;font-size:12px">Cursor</button>
+            <button class="s mcp-config-tab" data-mcp="continue" id="mcp-tab-continue" style="padding:6px 14px;font-size:12px">Continue</button>
+            <button class="s mcp-config-tab" data-mcp="windsurf" id="mcp-tab-windsurf" style="padding:6px 14px;font-size:12px">Windsurf</button>
           </div>
-          <div id="sso-msg" style="margin-top:10px;font-size:13px"></div>
+          <div id="mcp-config-claude" class="mcp-config-block">
+            <p style="font-size:12px;color:var(--text2);margin:0 0 4px">File: <code>~/.claude/settings.json</code></p>
+            <pre id="mcp-snippet-claude" style="background:var(--bg);padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre;margin:0"></pre>
+          </div>
+          <div id="mcp-config-cursor" class="mcp-config-block" style="display:none">
+            <p style="font-size:12px;color:var(--text2);margin:0 0 4px">File: <code>~/.cursor/mcp.json</code></p>
+            <pre id="mcp-snippet-cursor" style="background:var(--bg);padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre;margin:0"></pre>
+          </div>
+          <div id="mcp-config-continue" class="mcp-config-block" style="display:none">
+            <p style="font-size:12px;color:var(--text2);margin:0 0 4px">File: <code>~/.continue/config.json</code></p>
+            <pre id="mcp-snippet-continue" style="background:var(--bg);padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre;margin:0"></pre>
+          </div>
+          <div id="mcp-config-windsurf" class="mcp-config-block" style="display:none">
+            <p style="font-size:12px;color:var(--text2);margin:0 0 4px">File: <code>~/.codeium/windsurf/mcp_config.json</code></p>
+            <pre id="mcp-snippet-windsurf" style="background:var(--bg);padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre;margin:0"></pre>
+          </div>
+          <button id="btn-mcp-copy-snippet" class="p" style="margin-top:10px;padding:8px 16px;font-size:13px">Copy Config</button>
+          <span id="mcp-copy-msg" style="margin-left:10px;font-size:12px;color:var(--ok)"></span>
+        </div>
+        <div class="card" style="max-width:760px;margin-bottom:18px">
+          <h4 style="margin:0 0 10px">Available tools</h4>
+          <table style="font-size:12px;width:100%;border-collapse:collapse">
+            <thead><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);background:var(--bg3)">Tool</th><th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);background:var(--bg3)">What it does</th></tr></thead>
+            <tbody>
+              <tr><td style="padding:6px 10px;border-bottom:1px solid var(--border)"><code>search_provenance</code></td><td style="padding:6px 10px;border-bottom:1px solid var(--border)">Find AI-generated code by keyword, model, file path, or date range.</td></tr>
+              <tr><td style="padding:6px 10px;border-bottom:1px solid var(--border)"><code>get_record</code></td><td style="padding:6px 10px;border-bottom:1px solid var(--border)">Fetch the full provenance record for a UUID.</td></tr>
+              <tr><td style="padding:6px 10px;border-bottom:1px solid var(--border)"><code>list_recent</code></td><td style="padding:6px 10px;border-bottom:1px solid var(--border)">Recent AI insertions (newest first).</td></tr>
+              <tr><td style="padding:6px 10px;border-bottom:1px solid var(--border)"><code>check_file_risk</code></td><td style="padding:6px 10px;border-bottom:1px solid var(--border)">Risk profile for a specific file.</td></tr>
+              <tr><td style="padding:6px 10px;border-bottom:1px solid var(--border)"><code>get_insights</code></td><td style="padding:6px 10px;border-bottom:1px solid var(--border)">Workspace governance summary.</td></tr>
+              <tr><td style="padding:6px 10px"><code>explain_record</code></td><td style="padding:6px 10px">Plain-English explanation of a record.</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
-      <div id="sso-body" role="status" aria-live="polite">
-        <div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>
+
+      <!-- ════ QUALITY METRICS ════ -->
+      <div id="t-quality" class="view">
+        <div class="stitle" style="margin-bottom:18px">Code Quality Metrics</div>
+        <div id="llm-banner" style="display:none;background:var(--warn-bg);border:1px solid var(--amber);border-radius:var(--r);padding:12px 16px;margin-bottom:18px;max-width:520px">
+          <b style="color:var(--amber)">AI explanations in fallback mode</b>
+          <span style="color:var(--text2);font-size:13px;margin-left:8px">No LLM API key configured — explanations use static heuristics.</span>
+          <button id="btn-show-llm-setup" class="s" style="margin-left:12px;padding:4px 10px;font-size:12px">Configure</button>
+        </div>
+        <div id="llm-setup-card" class="card" style="display:none;max-width:520px;margin-bottom:18px;border-color:var(--amber)">
+          <h4 style="margin:0 0 12px;color:var(--amber)">Configure LLM for AI Explanations</h4>
+          <label style="display:block;margin-bottom:8px;font-size:13px">API Key (OpenAI-compatible)
+            <input id="llm-key-input" type="password" placeholder="sk-..." style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px">
+          </label>
+          <label style="display:block;margin-bottom:12px;font-size:13px">Model
+            <input id="llm-model-input" type="text" value="gpt-4o-mini" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px">
+          </label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button id="btn-save-llm" class="p">Save</button>
+            <button id="btn-cancel-llm" class="s">Cancel</button>
+            <span id="llm-key-msg" style="font-size:13px"></span>
+          </div>
+          <p style="color:var(--text2);font-size:12px;margin-top:10px">Set <code>EXPLAIN_LLM_API_KEY</code> env var for persistence across restarts.</p>
+        </div>
+        <div class="card" style="max-width:520px;margin-bottom:18px">
+          <h4 style="margin:0 0 12px">Analyze a Record</h4>
+          <div style="display:flex;gap:8px">
+            <input id="q-uuid" type="text" placeholder="Provenance record UUID" style="flex:1;padding:7px 10px;font-size:13px">
+            <button id="btn-quality-analyze" class="p">Analyze</button>
+          </div>
+          <div id="q-result" style="margin-top:14px"></div>
+        </div>
+        <div class="card" style="max-width:520px">
+          <h4 style="margin:0 0 12px">Batch Analysis</h4>
+          <textarea id="q-batch" rows="4" placeholder="One UUID per line (max 100)" style="width:100%;padding:7px 10px;font-size:13px;resize:vertical;margin-bottom:8px"></textarea>
+          <button id="btn-quality-batch" class="p">Run Batch</button>
+          <div id="q-batch-result" style="margin-top:14px"></div>
+        </div>
       </div>
-    </div>
 
-    <!-- MODEL ROUTING -->
-    <div id="t-routing" class="view">
-      <div class="stitle" style="margin-bottom:4px">Model Routing</div>
-      <p style="color:var(--text2);font-size:13px;margin:0 0 20px">Automatically downgrade simple requests to cheaper models. Each provider keeps its own policy — changes take up to 60 seconds to reach the proxy.</p>
-      <div id="routing-body">
-        <div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>
+      <!-- ════ SCHEDULED DIGESTS ════ -->
+      <div id="t-scheduled-reports" class="view">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+          <div class="stitle">Scheduled Digests</div>
+          <button id="btn-new-digest" class="p" style="padding:6px 14px;font-size:12px">+ New Digest</button>
+        </div>
+        <div id="digests-create" style="display:none;margin-bottom:18px">
+          <div class="card" style="max-width:480px">
+            <h4 style="margin:0 0 14px">Create Digest</h4>
+            <label style="display:block;margin-bottom:8px;font-size:13px">Name
+              <input id="dig-name" type="text" placeholder="Weekly risk summary" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px">
+            </label>
+            <label style="display:block;margin-bottom:8px;font-size:13px">Type
+              <select id="dig-type" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px">
+                <option value="usage">Usage</option><option value="risk_summary">Risk Summary</option><option value="team_activity">Team Activity</option>
+              </select>
+            </label>
+            <label style="display:block;margin-bottom:8px;font-size:13px">Frequency
+              <select id="dig-freq" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px">
+                <option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option>
+              </select>
+            </label>
+            <label style="display:block;margin-bottom:14px;font-size:13px">Recipients (comma-separated emails)
+              <input id="dig-recipients" type="text" placeholder="alice@example.com, bob@example.com" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px">
+            </label>
+            <div style="display:flex;gap:8px">
+              <button id="btn-create-digest" class="p">Create</button>
+              <button id="btn-cancel-digest" class="s">Cancel</button>
+            </div>
+            <div id="dig-msg" style="margin-top:10px;font-size:13px"></div>
+          </div>
+        </div>
+        <div id="digests-body" role="status" aria-live="polite"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
       </div>
-    </div>
 
-    <!-- WORKSPACE -->
-    <div id="t-workspace" class="view">
-      <div class="stitle" style="margin-bottom:18px">Workspace</div>
-      <div id="workspace-body">
-        <div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div>
+      <!-- ════ SSO ════ -->
+      <div id="t-sso" class="view">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+          <div class="stitle">SSO / OIDC Providers</div>
+          <button id="btn-add-sso" class="p" style="padding:6px 14px;font-size:12px">+ Add Provider</button>
+        </div>
+        <div id="sso-create" style="display:none;margin-bottom:18px">
+          <div class="card" style="max-width:480px">
+            <h4 style="margin:0 0 14px">Add OIDC Provider</h4>
+            <label style="display:block;margin-bottom:8px;font-size:13px">Display Name
+              <input id="sso-name" type="text" placeholder="Okta" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px">
+            </label>
+            <label style="display:block;margin-bottom:8px;font-size:13px">Issuer URL
+              <input id="sso-issuer" type="url" placeholder="https://your-domain.okta.com" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px">
+            </label>
+            <label style="display:block;margin-bottom:8px;font-size:13px">Client ID
+              <input id="sso-client-id" type="text" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px">
+            </label>
+            <label style="display:block;margin-bottom:14px;font-size:13px">Client Secret
+              <input id="sso-client-secret" type="password" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px">
+            </label>
+            <div style="display:flex;gap:8px">
+              <button id="btn-create-sso" class="p">Add Provider</button>
+              <button id="btn-cancel-sso" class="s">Cancel</button>
+            </div>
+            <div id="sso-msg" style="margin-top:10px;font-size:13px"></div>
+          </div>
+        </div>
+        <div id="sso-body" role="status" aria-live="polite"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
       </div>
-    </div>
 
-  </div>
-</div>
+      <!-- ════ MODEL ROUTING ════ -->
+      <div id="t-routing" class="view">
+        <div class="stitle" style="margin-bottom:4px">Model Routing</div>
+        <p style="color:var(--text2);font-size:13px;margin:0 0 20px">Automatically downgrade simple requests to cheaper models. Each provider keeps its own policy — changes take up to 60 seconds to reach the proxy.</p>
+        <div id="routing-body"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
+      </div>
 
-<!-- RECORD DETAIL MODAL -->
-<div id="rec-modal" class="modal-bg" onclick="if(event.target===this)closeModal()">
-  <div class="modal" role="dialog" aria-modal="true" aria-label="Provenance record detail" tabindex="-1" onkeydown="if(event.key==='Escape')closeModal()">
+      <!-- ════ WORKSPACE ════ -->
+      <div id="t-workspace" class="view">
+        <div class="stitle" style="margin-bottom:18px">Workspace</div>
+        <div id="workspace-body"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
+      </div>
+
+    </main><!-- /content -->
+  </div><!-- /main-area -->
+</div><!-- /app -->
+
+<!-- ════ RECORD DETAIL MODAL ════ -->
+<div id="rec-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Provenance record detail">
+  <div class="modal" tabindex="-1">
     <div class="modal-hdr">
       <h3>Provenance Record</h3>
-      <button class="modal-close" onclick="closeModal()" aria-label="Close record detail">×</button>
+      <button class="modal-close" id="btn-modal-close" aria-label="Close record detail">×</button>
     </div>
     <div class="modal-body" id="modal-body"></div>
   </div>
 </div>
 
+<script src="/static/chart.umd.min.js"></script>
 <script src="/static/dashboard.js"></script>
 </body>
 </html>

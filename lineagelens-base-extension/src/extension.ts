@@ -7,6 +7,7 @@ import { buildDetailPanel } from './sidebar';
 import { CaptureWebviewProvider } from './webviewSidebar';
 import { captureStoreTojsonl } from './agentTrace';
 import { redactRecords } from './secrets';
+import { runWelcomeFlow, promptAndSaveEmail, removeEmail } from './welcomeFlow';
 
 /** Whether secrets should be scrubbed from data leaving the machine (default on). */
 function shouldRedactOnEgress(): boolean {
@@ -364,19 +365,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
   );
 
-  // Welcome message on first install
-  const hasSeenWelcome = context.globalState.get<boolean>('lineagelens.welcomeShown', false);
-  if (!hasSeenWelcome) {
-    context.globalState.update('lineagelens.welcomeShown', true);
-    vscode.window.showInformationMessage(
-      'LineageLens Base is active — AI code insertions will be captured automatically.',
-      'Open Sidebar',
-    ).then(action => {
-      if (action === 'Open Sidebar') {
-        vscode.commands.executeCommand('lineagelens.captures.focus');
+  // First-run welcome + optional email capture (once per install, non-blocking)
+  void runWelcomeFlow(context);
+
+  // Email management commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand('lineagelens.openWelcome', async () => {
+      if (!context.globalState.get('lineagelens.hasSeenWelcomeV2')) {
+        await runWelcomeFlow(context);
+      } else {
+        const action = await vscode.window.showInformationMessage(
+          'LineageLens tracks AI-generated code — model, prompt, and timestamp. All features work locally with no account required.',
+          'Show my AI code',
+        );
+        if (action === 'Show my AI code') {
+          void vscode.commands.executeCommand('lineagelens.captures.focus');
+        }
       }
-    }).catch(() => {});
-  }
+    }),
+    vscode.commands.registerCommand('lineagelens.saveEmail', async () => {
+      await promptAndSaveEmail(context, true);
+    }),
+    vscode.commands.registerCommand('lineagelens.removeEmail', async () => {
+      await removeEmail(context);
+    }),
+  );
 }
 
 export function deactivate(): void {

@@ -139,6 +139,21 @@
         "command": "lineagelens.runOnboarding",
         "title": "LineageLens: Run Setup Wizard",
         "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.openWelcome",
+        "title": "LineageLens: Open Welcome",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.saveEmail",
+        "title": "LineageLens: Save / Update My Email",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.removeEmail",
+        "title": "LineageLens: Remove My Email",
+        "category": "LineageLens"
       }
     ],
     "keybindings": [

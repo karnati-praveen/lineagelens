@@ -32,6 +32,7 @@ import { ProvenanceHoverProvider } from './provenanceHover';
 import { CaptureStatusToastManager } from './captureStatusToast';
 import { DiffViewPanel } from './diffView';
 import { runOnboardingWizard } from './onboardingWizard';
+import { runWelcomeFlow, promptAndSaveEmail, removeEmail } from './welcomeFlow';
 import { FileTimelineProvider } from './fileTimeline';
 import {
   ProvenanceSearchSidebarViewProvider,
@@ -546,6 +547,27 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.window.showErrorMessage('LineageLens attestation failed: ' + msg);
       }
     }),
+    vscode.commands.registerCommand('lineagelens.openWelcome', async () => {
+      const seenWelcome = context.globalState.get('lineagelens.hasSeenWelcome');
+      if (!seenWelcome) {
+        await runWelcomeFlow(context);
+      } else {
+        void vscode.window.showInformationMessage(
+          'LineageLens tracks AI-generated code — model, prompt, and timestamp. All features work locally with no account required.',
+          'Show my AI code'
+        ).then(action => {
+          if (action === 'Show my AI code') {
+            void vscode.commands.executeCommand('aiInsertionDetector.openInsightsDashboard');
+          }
+        });
+      }
+    }),
+    vscode.commands.registerCommand('lineagelens.saveEmail', async () => {
+      await promptAndSaveEmail(context, true);
+    }),
+    vscode.commands.registerCommand('lineagelens.removeEmail', async () => {
+      await removeEmail(context);
+    }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       const activeUri = vscode.window.activeTextEditor?.document.uri;
 
@@ -598,18 +620,8 @@ export function activate(context: vscode.ExtensionContext): void {
     void ensureRuntimeInitialized(activeUri);
   }
 
-  // First-run welcome notification
-  if (!context.globalState.get('lineagelens.hasRunBefore')) {
-    void context.globalState.update('lineagelens.hasRunBefore', true);
-    void vscode.window.showInformationMessage(
-      'Welcome to LineageLens! Run the configuration health check to verify your setup.',
-      'Check Configuration'
-    ).then(action => {
-      if (action === 'Check Configuration') {
-        void vscode.commands.executeCommand('lineagelens.checkConfiguration');
-      }
-    });
-  }
+  // First-run welcome + optional email capture (once per install, non-blocking)
+  void runWelcomeFlow(context);
 
   log('AI Insertion Detector activated in ' + startupMode + ' startup mode.');
 }

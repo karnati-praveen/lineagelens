@@ -14,6 +14,7 @@ __pycache__/
 .coverage
 coverage.xml
 lineagelens-backend/data/
+/data/
 
 # VS Code local data
 .vscode/ai-provenance/

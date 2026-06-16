@@ -33,19 +33,19 @@ class AgentActionResponse(BaseModel):
     """One agent action as returned by GET /agent-actions."""
 
     id: int
-    workspaceId: str
-    sessionKey: str
-    promptContextId: str | None
-    actionType: str
-    toolName: str
-    argumentsJson: dict | None
-    riskFlagsJson: dict | None
-    recordHash: str | None
-    prevHash: str | None
-    occurredAt: datetime
-    createdAt: datetime
+    workspaceId: str = Field(validation_alias="workspace_id")
+    sessionKey: str = Field(validation_alias="session_key")
+    promptContextId: str | None = Field(validation_alias="prompt_context_id")
+    actionType: str = Field(validation_alias="action_type")
+    toolName: str = Field(validation_alias="tool_name")
+    argumentsJson: dict | None = Field(validation_alias="arguments_json")
+    riskFlagsJson: dict | None = Field(validation_alias="risk_flags_json")
+    recordHash: str | None = Field(validation_alias="record_hash")
+    prevHash: str | None = Field(validation_alias="prev_hash")
+    occurredAt: datetime = Field(validation_alias="occurred_at")
+    createdAt: datetime = Field(validation_alias="created_at")
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 class SessionReconstructionResponse(BaseModel):

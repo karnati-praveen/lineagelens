@@ -122,16 +122,26 @@ async function initApp() {
 
   document.getElementById('uname').textContent = _user.username;
   const rb = document.getElementById('role-bdg');
-  rb.textContent = _user.role; rb.className = `bdg${_user.role==='admin'?' adm':''}`;
+  rb.textContent = _user.role; rb.className = `role-badge${_user.role==='admin'?' adm':''}`;
   const mb = document.getElementById('mode-bdg');
-  mb.textContent = _mode; mb.className = `bdg ${_mode}`;
+  mb.textContent = _mode; mb.className = `tier-badge ${_mode}`;
 
+  // Admin-only nav items
   if (_user.role === 'admin') {
-    document.querySelectorAll('.adm-tab').forEach(t => t.style.display='inline-flex');
+    document.querySelectorAll('.adm-nav').forEach(t => t.style.display = 'flex');
     document.getElementById('invite-box').style.display = 'block';
     document.getElementById('policy-config-section').style.display = 'block';
     document.getElementById('alert-config-section').style.display = 'block';
   }
+
+  // Tier-lock nav items that require plus or max
+  document.querySelectorAll('.nav-item[data-requires="plus"]').forEach(t => {
+    if (!hasTierAccess('plus')) t.classList.add('nav-locked');
+  });
+  document.querySelectorAll('.nav-item[data-requires="max"]').forEach(t => {
+    if (!hasTierAccess('max')) t.classList.add('nav-locked');
+  });
+
   showApp();
   go('dashboard');
   loadPolicies();
@@ -143,10 +153,51 @@ async function initApp() {
   _lastUpdatedTimer = setInterval(updateLastUpdatedText, 30000);
 }
 
-// ── TABS ─────────────────────────────────────────────────────────────────────
+// ── TIER ACCESS ───────────────────────────────────────────────────────────────
+function hasTierAccess(required) {
+  if (!required) return true;
+  if (required === 'admin') return _user?.role === 'admin';
+  if (required === 'plus') return _mode === 'plus' || _mode === 'max';
+  if (required === 'max') return _mode === 'max';
+  return true;
+}
+
+const _VIEW_LABELS = {
+  dashboard: 'Overview', timeline: 'Timeline', graph: 'Graph', alerts: 'Live Feed',
+  search: 'Search', record: 'Record Viewer', reviews: 'Reviews', quality: 'Quality',
+  developers: 'Developer Activity', team: 'Team', workspace: 'Workspace',
+  github: 'GitHub CI', mcp: 'MCP Server', export: 'Export', 'scheduled-reports': 'Digests',
+  sso: 'SSO / OIDC', routing: 'Model Routing'
+};
+
+function _setTopbarBreadcrumb(name) {
+  const el = document.getElementById('topbar-breadcrumb');
+  if (el) el.textContent = _VIEW_LABELS[name] || name;
+}
+
+function showUpgradePanel(name, required) {
+  document.querySelectorAll('.nav-item').forEach(t => t.classList.toggle('on', t.dataset.t === name));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'upgrade-panel'));
+  const tierNames = { plus: 'Plus', max: 'Max', admin: 'Admin' };
+  const viewLabel = _VIEW_LABELS[name] || name;
+  const tierName = tierNames[required] || required;
+  const titleEl = document.getElementById('upgrade-title');
+  const bodyEl  = document.getElementById('upgrade-body');
+  const badgeEl = document.getElementById('upgrade-tier-needed');
+  if (titleEl) titleEl.textContent = viewLabel;
+  if (bodyEl)  bodyEl.textContent  = `${viewLabel} requires LineageLens ${tierName} or higher. Contact your admin to upgrade.`;
+  if (badgeEl) {
+    badgeEl.textContent  = tierName;
+    badgeEl.className    = `tier-badge ${required}`;
+  }
+  _setTopbarBreadcrumb(name);
+}
+
+// ── TABS / NAV ────────────────────────────────────────────────────────────────
 function go(name) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.t===name));
-  document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id===`t-${name}`));
+  document.querySelectorAll('.nav-item').forEach(t => t.classList.toggle('on', t.dataset.t === name));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === `t-${name}`));
+  _setTopbarBreadcrumb(name);
   if (name==='dashboard') loadDash();
   if (name==='timeline') loadTimeline();
   if (name==='graph') loadGraph();
@@ -438,7 +489,7 @@ function buildDash(d) {
           <td>${lvl?`<span class="rsk ${lvl}">${esc(lvl)}</span>`:''}</td>
           <td>${esc(model)}</td><td>${fd(r.timestampIso)}</td>
           <td>${esc(tool)}</td>
-          <td><button class="s" style="padding:3px 10px;font-size:11px" onclick="openRec('${esc(r.uuid||'')}')">View</button></td></tr>`;
+          <td><button class="s btn-sm" data-action="open-rec" data-uuid="${esc(r.uuid||'')}">View</button></td></tr>`;
       }).join('') + '</tbody></table>');
   }
 
@@ -501,7 +552,7 @@ async function loadIntegrityCard() {
       ? `Chain intact · ${checked} record${checked === 1 ? '' : 's'} verified`
       : `Chain break at ${breakUuid}`;
     const exportBtn = _featureAiBom
-      ? `<button class="s" style="margin-left:auto;font-size:12px;padding:3px 10px" onclick="exportAiBom()">Export AI‑BOM</button>`
+      ? `<button class="s btn-sm" style="margin-left:auto" data-action="export-aibom">Export AI‑BOM</button>`
       : '';
     sec.innerHTML =
       `<div class="thead-row"><span class="ttitle">Provenance Integrity</span>${exportBtn}</div>` +
@@ -625,7 +676,7 @@ async function doSearch() {
       const score = r.similarityScore==null ? '' : ` · ${Number(r.similarityScore).toFixed(3)}`;
       const tags = r.tags || [];
       const tagHtml = tags.length ? `<div class="tags-row">${tags.map(t => `<span class="tag-pill">${esc(t)}</span>`).join('')}</div>` : '';
-      return `<div class="ritem" role="button" tabindex="0" onclick="openRec('${esc(r.uuid||'')}')" onkeydown="if(event.key==='Enter'||event.key===' ')this.click()">
+      return `<div class="ritem" role="button" tabindex="0" data-action="open-rec" data-uuid="${esc(r.uuid||'')}">
         <div class="rmeta">
           <span>📄 ${esc(r.filePath||'—')}</span>
           <span>🤖 ${esc(r.modelName||src.adapterName||'—')}</span>
@@ -756,8 +807,8 @@ function buildRec(r) {
   if (Object.keys(snap).length) h += rs('Context Snapshot', `<pre>${esc(JSON.stringify(snap,null,2))}</pre>`);
 
   h += `<div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-    <button class="p" onclick="doExplain('${esc(r.uuid||'')}')">✨ Explain with AI</button>
-    <button class="s" onclick="openRecTab('${esc(r.uuid||'')}')">Open in Record Viewer</button>
+    <button class="p" data-action="explain-rec" data-uuid="${esc(r.uuid||'')}">✨ Explain with AI</button>
+    <button class="s" data-action="open-rec-tab" data-uuid="${esc(r.uuid||'')}">Open in Record Viewer</button>
     <span id="exp-status" style="font-size:12px;color:var(--text2)" role="status" aria-live="polite"></span>
   </div><div id="exp-result" style="margin-top:12px"></div>`;
   return h;
@@ -774,7 +825,7 @@ async function doExplain(uuid) {
     if (d.source === 'fallback') {
       html += `<div style="margin-top:10px;padding:10px 14px;background:rgba(245,158,11,.1);border:1px solid var(--amber);border-radius:8px;font-size:13px">
         <b style="color:var(--amber)">Fallback mode</b> — No LLM API key configured.
-        <button class="s" style="margin-left:10px;padding:3px 10px;font-size:12px" onclick="go('quality');setTimeout(()=>{document.getElementById('llm-banner').style.display='block';document.getElementById('llm-setup-card').style.display='block'},100)">Configure LLM key</button>
+        <button class="s btn-sm" style="margin-left:10px" data-action="go-quality-llm">Configure LLM key</button>
       </div>`;
     }
     document.getElementById('exp-result').innerHTML = html;
@@ -949,25 +1000,22 @@ function fd(iso) { if (!iso) { return '—'; } try{return new Date(iso).toLocale
 
 // ── THEME ─────────────────────────────────────────────────────────────────────
 let _dark = true;
-function toggleTheme() {
-  _dark = !_dark;
-  const r = document.documentElement;
-  if (_dark) {
-    r.style.setProperty('--bg','#0f1923'); r.style.setProperty('--bg2','#162232');
-    r.style.setProperty('--bg3','#1e3048'); r.style.setProperty('--text','#e2e8f0');
-    r.style.setProperty('--text2','#94a3b8'); r.style.setProperty('--border','#2d4a6a');
-    document.getElementById('theme-btn').textContent = '☀️';
-  } else {
-    r.style.setProperty('--bg','#f0f4f8'); r.style.setProperty('--bg2','#ffffff');
-    r.style.setProperty('--bg3','#e8edf3'); r.style.setProperty('--text','#1a202c');
-    r.style.setProperty('--text2','#595959'); r.style.setProperty('--border','#cbd5e0');
-    document.getElementById('theme-btn').textContent = '🌙';
-  }
-  if (_tlChart) { _tlChart.destroy(); _tlChart = null; buildTimeline(_lastDashData || {}); }
-  // Redraw analytics charts with updated colors
-  if (_riskTrendChart) { _riskTrendChart.destroy(); _riskTrendChart = null; loadRiskTrend(); }
+
+function _applyTheme(dark) {
+  _dark = dark;
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  const sunIcon  = document.getElementById('theme-icon-sun');
+  const moonIcon = document.getElementById('theme-icon-moon');
+  if (sunIcon)  sunIcon.style.display  = dark ? 'block' : 'none';
+  if (moonIcon) moonIcon.style.display = dark ? 'none'  : 'block';
+  try { localStorage.setItem('ll_theme', dark ? 'dark' : 'light'); } catch(_) {}
+  if (_tlChart) { _tlChart.destroy(); _tlChart = null; if (_lastDashData) buildTimeline(_lastDashData); }
+  if (_riskTrendChart)  { _riskTrendChart.destroy();  _riskTrendChart = null;  loadRiskTrend(); }
   if (_modelUsageChart) { _modelUsageChart.destroy(); _modelUsageChart = null; loadModelUsage(); }
+  if (_devChart) { _devChart.destroy(); _devChart = null; }
 }
+
+function toggleTheme() { _applyTheme(!_dark); }
 
 // ── MCP / BACKEND STATUS ──────────────────────────────────────────────────────
 async function checkMcp() {
@@ -1192,8 +1240,7 @@ function buildRiskHeatmap(hotspots) {
       title="${esc(fp)} · ${f.recordCount} insertions · avg risk ${(rn*100).toFixed(1)}%"
       role="button" tabindex="0"
       aria-label="File ${esc(fp)} with ${f.recordCount} insertions and avg risk ${(rn*100).toFixed(1)}%"
-      onclick="filterByFile('${esc(fp)}')"
-      onkeydown="if(event.key==='Enter'||event.key===' ')filterByFile('${esc(fp)}')">
+      data-action="filter-file" data-file="${esc(fp)}">
       <span class="hm-name">${esc(name)}</span><span class="hm-cnt">${f.recordCount}</span>
     </div>`;
   }).join('');
@@ -1385,7 +1432,7 @@ async function pollAlerts() {
         </div>
         ${snip ? `<div class="feed-snip">${esc(snip)}</div>` : ''}
         ${tagHtml}
-        <button class="s feed-view" onclick="openRec('${esc(r.uuid||'')}')">View</button>
+        <button class="s feed-view" data-action="open-rec" data-uuid="${esc(r.uuid||'')}">View</button>
       </div>`;
     }).join('');
 
@@ -1492,8 +1539,8 @@ function renderReviews(items) {
       <td>${esc(item.notes || '—')}</td>
       <td>${item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '—'}</td>
       <td style="white-space:nowrap">
-        <button class="btn-sm" onclick="updateReview('${esc(item.id || '')}','approved')">✓ Approve</button>
-        <button class="btn-sm btn-danger" onclick="updateReview('${esc(item.id || '')}','rejected')">✗ Reject</button>
+        <button class="btn-sm" data-action="review-approve" data-id="${esc(item.id || '')}">✓ Approve</button>
+        <button class="btn-sm btn-danger" data-action="review-reject" data-id="${esc(item.id || '')}">✗ Reject</button>
       </td>
     </tr>
   `).join('');
@@ -1535,7 +1582,7 @@ function renderPolicies(policies) {
       <span class="badge">${esc(p.policyType || '')}</span>
       <span class="badge badge-${esc(p.action || '')}">${esc(p.action || '')}</span>
       <span class="${p.enabled ? 'text-success' : 'text-muted'}">${p.enabled ? 'enabled' : 'disabled'}</span>
-      <button class="btn-sm btn-danger" onclick="deletePolicy('${esc(p.id || '')}')">Delete</button>
+      <button class="btn-sm btn-danger" data-action="delete-policy" data-id="${esc(p.id || '')}">Delete</button>
     </div>
   `).join('');
 }
@@ -1590,7 +1637,7 @@ function renderAlertConfigs(configs) {
       <span class="badge">${esc(c.channel || '')}</span>
       <span class="text-muted">${(c.triggerOn || []).map(t => esc(t)).join(', ')}</span>
       <span class="${c.enabled ? 'text-success' : 'text-muted'}">${c.enabled ? 'enabled' : 'disabled'}</span>
-      <button class="btn-sm btn-danger" onclick="deleteAlertConfig('${esc(c.id || '')}')">Delete</button>
+      <button class="btn-sm btn-danger" data-action="delete-alert-config" data-id="${esc(c.id || '')}">Delete</button>
     </div>
   `).join('');
 }
@@ -1783,7 +1830,7 @@ async function loadDigests() {
       <td>${esc(r.frequency)}</td>
       <td>${(r.recipients||[]).map(e=>esc(e)).join(', ')}</td>
       <td>${r.enabled?'Yes':'No'}</td>
-      <td><button style="font-size:11px;padding:3px 8px" onclick="runDigest('${esc(r.id)}')">Run now</button></td>
+      <td><button class="btn-sm" data-action="run-digest" data-id="${esc(r.id)}">Run now</button></td>
     </tr>`).join('')}</tbody></table>`;
   } catch(e) { out.innerHTML = `<span style="color:var(--err)">${esc(e.message||'Error')}</span>`; }
 }
@@ -1824,7 +1871,7 @@ async function loadSsoProviders() {
       <td>${esc(p.issuer)}</td>
       <td><code style="font-size:11px">${esc(p.client_id)}</code></td>
       <td>${p.enabled?'Yes':'No'}</td>
-      <td><button style="font-size:11px;padding:3px 8px;color:var(--err)" onclick="deleteSsoProvider('${esc(p.id)}')">Delete</button></td>
+      <td><button class="btn-sm btn-danger" data-action="delete-sso" data-id="${esc(p.id)}">Delete</button></td>
     </tr>`).join('')}</tbody></table>`;
   } catch(e) { out.innerHTML = `<span style="color:var(--err)">${esc(e.message||'Error')}</span>`; }
 }
@@ -1900,8 +1947,8 @@ async function loadRouting() {
           <input id="rm-complex-${prov}" type="text" value="${esc(complex)}" placeholder="${esc(def.complex||'')}" style="padding:5px 8px;font-size:13px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text)">
         </div>
         <div style="display:flex;gap:8px;align-items:center">
-          <button class="p" onclick="saveRoutingPolicy('${prov}','${workspaceId}',true)">Enable</button>
-          <button onclick="saveRoutingPolicy('${prov}','${workspaceId}',false)" style="background:var(--bg3)">Disable</button>
+          <button class="p" data-action="routing-enable" data-provider="${prov}" data-workspace="${esc(workspaceId)}">Enable</button>
+          <button class="s" data-action="routing-disable" data-provider="${prov}" data-workspace="${esc(workspaceId)}">Disable</button>
           <span id="rs-msg-${prov}" style="font-size:12px;margin-left:4px"></span>
         </div>
       </div>`;
@@ -1953,7 +2000,7 @@ async function loadWorkspace() {
       <label style="display:block;margin-bottom:8px;font-size:13px">Workspace Name
         <input id="ws-name" type="text" value="${esc(d.name || '')}" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
       </label>
-      <button class="p" onclick="saveWorkspaceName('${esc(d.id || '')}')">Update Name</button>
+      <button class="p" data-action="save-workspace-name" data-ws-id="${esc(d.id || '')}">Update Name</button>
       <div id="ws-msg" style="margin-top:10px;font-size:13px"></div>
     </div>`;
   } catch(e) {
@@ -1967,7 +2014,7 @@ async function loadWorkspace() {
         <label style="display:block;margin-bottom:14px;font-size:13px">Display Name
           <input id="ws-new-name" type="text" placeholder="My Organisation" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
         </label>
-        <button class="p" onclick="createWorkspace()">Create Workspace</button>
+        <button class="p" data-action="create-workspace">Create Workspace</button>
         <div id="ws-msg" style="margin-top:10px;font-size:13px"></div>
       </div>`;
     } else {
@@ -1994,6 +2041,256 @@ async function createWorkspace() {
     loadWorkspace();
   } catch(e) { msg.textContent = e.message || 'Create failed.'; msg.style.color = 'var(--err)'; }
 }
+
+// ── EVENT DELEGATION — dynamic content ──────────────────────────────────────
+// All onclick/onkeydown that live in JS-generated innerHTML are routed here.
+// Static button wiring is in _wireStaticHandlers() at the bottom.
+document.addEventListener('click', function(e) {
+  // Handle [role="button"] keyboard-activated elements (click fires from Enter/Space via keydown)
+  const target = e.target.closest('[data-action]');
+  if (!target) return;
+  const action = target.dataset.action;
+  switch (action) {
+    case 'open-rec':
+      openRec(target.dataset.uuid);
+      break;
+    case 'open-rec-tab':
+      openRecTab(target.dataset.uuid);
+      break;
+    case 'explain-rec':
+      doExplain(target.dataset.uuid);
+      break;
+    case 'export-aibom':
+      exportAiBom();
+      break;
+    case 'filter-file':
+      filterByFile(target.dataset.file);
+      break;
+    case 'review-approve':
+      updateReview(target.dataset.id, 'approved');
+      break;
+    case 'review-reject':
+      updateReview(target.dataset.id, 'rejected');
+      break;
+    case 'delete-policy':
+      deletePolicy(target.dataset.id);
+      break;
+    case 'delete-alert-config':
+      deleteAlertConfig(target.dataset.id);
+      break;
+    case 'run-digest':
+      runDigest(target.dataset.id);
+      break;
+    case 'delete-sso':
+      deleteSsoProvider(target.dataset.id);
+      break;
+    case 'routing-enable':
+      saveRoutingPolicy(target.dataset.provider, target.dataset.workspace, true);
+      break;
+    case 'routing-disable':
+      saveRoutingPolicy(target.dataset.provider, target.dataset.workspace, false);
+      break;
+    case 'save-workspace-name':
+      saveWorkspaceName(target.dataset.wsId);
+      break;
+    case 'create-workspace':
+      createWorkspace();
+      break;
+    case 'go-quality-llm':
+      go('quality');
+      setTimeout(() => {
+        const b = document.getElementById('llm-banner');
+        const c = document.getElementById('llm-setup-card');
+        if (b) b.style.display = 'block';
+        if (c) c.style.display = 'block';
+      }, 100);
+      break;
+  }
+});
+
+// Keyboard activation for [role="button"] elements with data-action
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const target = e.target.closest('[data-action]');
+  if (!target) return;
+  // Only trigger for non-button elements (buttons fire click on Enter natively)
+  if (target.tagName === 'BUTTON') return;
+  e.preventDefault();
+  target.click();
+});
+
+// Close modal when clicking the overlay background
+document.addEventListener('click', function(e) {
+  const overlay = document.getElementById('rec-modal');
+  if (e.target === overlay) closeModal();
+});
+
+// ── STATIC HANDLER WIRING ────────────────────────────────────────────────────
+function _wireStaticHandlers() {
+  // ── Auth ──
+  const _on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
+
+  _on('btn-login',     'click', () => doLogin());
+  _on('l-pass',        'keydown', e => { if (e.key === 'Enter') doLogin(); });
+  _on('btn-register',  'click', () => doRegister());
+  _on('r-pass',        'keydown', e => { if (e.key === 'Enter') doRegister(); });
+  _on('btn-show-reg',  'click', e => showReg(e));
+  _on('btn-show-login','click', e => showLogin(e));
+  _on('logout-btn',    'click', () => doLogout());
+
+  // ── Theme ──
+  _on('theme-btn', 'click', () => toggleTheme());
+
+  // ── Modal ──
+  _on('btn-modal-close', 'click', () => closeModal());
+  const modal = document.querySelector('#rec-modal .modal');
+  if (modal) modal.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+  // ── Sidebar toggle (desktop collapse) ──
+  _on('sidebar-toggle', 'click', () => {
+    document.getElementById('v-app').classList.toggle('sidebar-collapsed');
+  });
+
+  // ── Mobile menu button ──
+  _on('menu-btn', 'click', () => {
+    const sidebar  = document.getElementById('sidebar');
+    const overlay  = document.getElementById('drawer-overlay');
+    const menuBtn  = document.getElementById('menu-btn');
+    const isOpen   = sidebar.classList.toggle('drawer-open');
+    if (overlay) overlay.classList.toggle('visible', isOpen);
+    menuBtn.setAttribute('aria-expanded', String(isOpen));
+  });
+  _on('drawer-overlay', 'click', () => {
+    const sidebar  = document.getElementById('sidebar');
+    const overlay  = document.getElementById('drawer-overlay');
+    const menuBtn  = document.getElementById('menu-btn');
+    sidebar.classList.remove('drawer-open');
+    if (overlay) overlay.classList.remove('visible');
+    menuBtn.setAttribute('aria-expanded', 'false');
+  });
+
+  // ── Sidebar nav items ──
+  document.querySelectorAll('.nav-item[data-t]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const name = btn.dataset.t;
+      // Check tier / admin gate
+      const required = btn.dataset.requires;
+      if (required && !hasTierAccess(required)) {
+        showUpgradePanel(name, required);
+        return;
+      }
+      go(name);
+      // Close mobile drawer if open
+      const sidebar = document.getElementById('sidebar');
+      const overlay = document.getElementById('drawer-overlay');
+      if (sidebar && sidebar.classList.contains('drawer-open')) {
+        sidebar.classList.remove('drawer-open');
+        if (overlay) overlay.classList.remove('visible');
+        const menuBtn = document.getElementById('menu-btn');
+        if (menuBtn) menuBtn.setAttribute('aria-expanded', 'false');
+      }
+    });
+  });
+
+  // ── Dashboard ──
+  _on('btn-dash-refresh', 'click', () => loadDash());
+
+  // ── Search ──
+  _on('btn-search',   'click', () => doSearch());
+  _on('s-kw',         'keydown', e => { if (e.key === 'Enter') doSearch(); });
+  _on('btn-adv-apply','click', () => applyAdvancedFilters());
+  _on('btn-adv-clear','click', () => clearAdvancedFilters());
+  _on('prevPage',     'click', () => changePage(-1));
+  _on('nextPage',     'click', () => changePage(1));
+  _on('pageSize',     'change', () => changePageSize());
+
+  // ── Record viewer ──
+  _on('btn-load-rec', 'click', () => loadRec());
+  _on('rec-uuid',     'keydown', e => { if (e.key === 'Enter') loadRec(); });
+
+  // ── Timeline ──
+  _on('btn-tl-refresh', 'click', () => loadTimeline());
+
+  // ── Graph ──
+  _on('btn-graph-refresh', 'click', () => loadGraph());
+
+  // ── Live feed ──
+  _on('btn-alerts-refresh', 'click', () => pollAlerts());
+
+  // ── Export ──
+  _on('btn-export-csv',          'click', () => doExport());
+  _on('btn-start-async-export',  'click', () => startAsyncExport());
+  _on('async-download-btn',      'click', () => downloadAsyncExport());
+  _on('btn-at-export',           'click', () => doAgentTraceExport());
+  _on('at-import-file',          'change', function() { onImportFileChange(this); });
+  _on('at-import-btn',           'click', () => doAgentTraceImport());
+
+  // ── Team / invite ──
+  _on('btn-invite',          'click', () => doInvite());
+  _on('btn-copy-invite',     'click', () => copyInviteLink());
+  _on('btn-new-policy',      'click', () => showCreatePolicyForm());
+  _on('btn-create-policy',   'click', () => createPolicy());
+  _on('btn-cancel-policy',   'click', () => { document.getElementById('create-policy-form').hidden = true; });
+  _on('btn-new-alert-channel','click', () => showCreateAlertForm());
+  _on('btn-create-alert',    'click', () => createAlertConfig());
+  _on('btn-cancel-alert',    'click', () => { document.getElementById('create-alert-form').hidden = true; });
+  _on('new-alert-channel',   'change', () => updateAlertChannelHint());
+
+  // ── Developer activity ──
+  _on('btn-dev-refresh', 'click', () => loadDeveloperActivity());
+
+  // ── Reviews ──
+  _on('review-status-filter', 'change', () => loadReviews());
+  _on('btn-reviews-refresh',  'click',  () => loadReviews());
+
+  // ── GitHub CI ──
+  _on('btn-save-github', 'click', () => saveGithubConfig());
+
+  // ── MCP ──
+  _on('btn-mcp-copy-url',     'click', () => mcpCopyBackendUrl());
+  _on('btn-mcp-copy-snippet', 'click', () => mcpCopyActiveSnippet());
+  document.querySelectorAll('.mcp-config-tab').forEach(btn => {
+    btn.addEventListener('click', () => mcpShowConfig(btn.dataset.mcp));
+  });
+
+  // ── Quality ──
+  _on('btn-show-llm-setup', 'click', () => {
+    const card = document.getElementById('llm-setup-card');
+    const banner = document.getElementById('llm-banner');
+    if (card) card.style.display = 'block';
+    if (banner) banner.style.display = 'none';
+  });
+  _on('btn-save-llm',    'click', () => saveLlmKey());
+  _on('btn-cancel-llm',  'click', () => { document.getElementById('llm-setup-card').style.display = 'none'; });
+  _on('btn-quality-analyze', 'click', () => loadQuality());
+  _on('btn-quality-batch',   'click', () => loadQualityBatch());
+
+  // ── Digests ──
+  _on('btn-new-digest',    'click', () => showCreateDigest());
+  _on('btn-create-digest', 'click', () => createDigest());
+  _on('btn-cancel-digest', 'click', () => { document.getElementById('digests-create').style.display = 'none'; });
+
+  // ── SSO ──
+  _on('btn-add-sso',    'click', () => showCreateSso());
+  _on('btn-create-sso', 'click', () => createSsoProvider());
+  _on('btn-cancel-sso', 'click', () => { document.getElementById('sso-create').style.display = 'none'; });
+}
+
+// ── DOM READY — wire handlers + apply saved theme ────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  // Restore theme from localStorage; fall back to prefers-color-scheme
+  try {
+    const saved = localStorage.getItem('ll_theme');
+    if (saved) {
+      _applyTheme(saved === 'dark');
+    } else {
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      _applyTheme(prefersDark);
+    }
+  } catch(_) { _applyTheme(true); }
+
+  _wireStaticHandlers();
+});
 
 // ── BOOT ─────────────────────────────────────────────────────────────────────
 // Auto-login when arriving from the /setup wizard
@@ -2031,15 +2328,21 @@ async function createWorkspace() {
         _featureAiBom = _feat2.aiBomExport ?? (_mode === 'plus' || _mode === 'max');
         document.getElementById('uname').textContent = _user.username;
         const rb = document.getElementById('role-bdg');
-        rb.textContent = _user.role; rb.className = `bdg${_user.role === 'admin' ? ' adm' : ''}`;
+        rb.textContent = _user.role; rb.className = `role-badge${_user.role === 'admin' ? ' adm' : ''}`;
         const mb = document.getElementById('mode-bdg');
-        mb.textContent = _mode; mb.className = `bdg ${_mode}`;
+        mb.textContent = _mode; mb.className = `tier-badge ${_mode}`;
         if (_user.role === 'admin') {
-          document.querySelectorAll('.adm-tab').forEach(t => t.style.display = 'inline-flex');
+          document.querySelectorAll('.adm-nav').forEach(t => t.style.display = 'flex');
           document.getElementById('invite-box').style.display = 'block';
           document.getElementById('policy-config-section').style.display = 'block';
           document.getElementById('alert-config-section').style.display = 'block';
         }
+        document.querySelectorAll('.nav-item[data-requires="plus"]').forEach(t => {
+          if (!hasTierAccess('plus')) t.classList.add('nav-locked');
+        });
+        document.querySelectorAll('.nav-item[data-requires="max"]').forEach(t => {
+          if (!hasTierAccess('max')) t.classList.add('nav-locked');
+        });
         showApp();
         go('dashboard');
         loadPolicies(); loadAlertConfigs(); checkMcp();

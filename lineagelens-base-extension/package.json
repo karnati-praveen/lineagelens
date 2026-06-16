@@ -1,8 +1,8 @@
 {
   "name": "lineagelens-base",
   "displayName": "LineageLens Base",
-  "description": "Lightweight AI code provenance — capture and review every AI-generated insertion locally, no server required.",
-  "_extensionRole": "BASE — zero-server standalone edition. Install for local-only capture with no backend, no proxy, and no account required. The full server-connected edition (Lite/Plus/Max) lives in the repo root package.json.",
+  "description": "Lightweight AI code provenance \u2014 capture and review every AI-generated insertion locally, no server required.",
+  "_extensionRole": "BASE \u2014 zero-server standalone edition. Install for local-only capture with no backend, no proxy, and no account required. The full server-connected edition (Lite/Plus/Max) lives in the repo root package.json.",
   "version": "1.3.0",
   "publisher": "karnatipraveen",
   "license": "MIT",
@@ -93,6 +93,21 @@
       {
         "command": "lineagelens.exportAgentTrace",
         "title": "LineageLens: Export Agent Trace"
+      },
+      {
+        "command": "lineagelens.openWelcome",
+        "title": "LineageLens: Open Welcome",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.saveEmail",
+        "title": "LineageLens: Save / Update My Email",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.removeEmail",
+        "title": "LineageLens: Remove My Email",
+        "category": "LineageLens"
       }
     ],
     "menus": {
@@ -183,7 +198,7 @@
         "lineagelensBase.redactSecretsOnEgress": {
           "type": "boolean",
           "default": true,
-          "description": "Scrub detected secrets (API keys, tokens, private keys) from captures before they leave this machine — i.e. on JSON/Agent Trace export and backend ingest. The locally stored copy is unaffected."
+          "description": "Scrub detected secrets (API keys, tokens, private keys) from captures before they leave this machine \u2014 i.e. on JSON/Agent Trace export and backend ingest. The locally stored copy is unaffected."
         },
         "lineagelensBase.clipboardPasteDetection": {
           "type": "boolean",

@@ -249,7 +249,7 @@ async def verify_certificate(
         "eligibility": cert.eligibility,
         "scope": cert.scope,
         "scopeRef": cert.scope_ref,
-        "attestationId": att.id,
+        "attestationId": str(att.public_ref),
         "publicKeyId": att.public_key_id,
         "publicKeyHex": get_public_key_hex(),
         "expiresAt": cert.expires_at.isoformat() if cert.expires_at else None,

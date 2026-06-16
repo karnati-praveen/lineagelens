@@ -1,10 +1,15 @@
 # Core — required for all modes
-fastapi==0.115.6
+# FastAPI bumped from 0.115.6: 0.115.x pins starlette<0.42.0 which is vulnerable
+# to CVE-2025-54121, CVE-2025-62727, PYSEC-2026-161. FastAPI 0.116.0+ unlocks
+# starlette 0.42.x which contains the fixes.
+fastapi>=0.116.0
+starlette>=0.42.0
 uvicorn[standard]==0.32.1
 sqlalchemy[asyncio]==2.0.36
 PyJWT[crypto]>=2.9.0
 pydantic-settings==2.7.0
-python-dotenv==1.0.1
+# Bumped from 1.0.1: CVE-2026-28684 (path traversal in dotenv parsing).
+python-dotenv>=1.2.2
 httpx>=0.27.0
 pyarrow>=14.0.0
 
