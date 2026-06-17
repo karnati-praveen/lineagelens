@@ -510,7 +510,7 @@
     "pretest": "npm run typecheck",
     "ci": "npm run typecheck && npm run lint && npm run bundle",
     "compile": "npm run typecheck && npm run bundle",
-    "test": "tsx --test lineagelens-src/test/*.test.ts",
+    "test": "tsx --tsconfig tsconfig.test.json --test lineagelens-src/test/*.test.ts",
     "watch": "tsc -watch -p ./ --noEmit",
     "vscode:prepublish": "npm run lint && npm run test && npm run bundle",
     "package:vsix": "npm run compile && npx @vscode/vsce package",

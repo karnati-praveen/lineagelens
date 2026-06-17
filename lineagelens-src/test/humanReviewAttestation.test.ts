@@ -8,8 +8,17 @@
  * - fetchReviewStatus: maps the snake_case server response to camelCase.
  */
 
+import assert from 'node:assert/strict';
+import { describe, it, beforeEach, afterEach } from 'node:test';
+
 import { HumanReviewDepthTracker, runAttestHumanReview, fetchReviewStatus } from '../humanReviewAttestation';
-import type { DepthSignal } from '../humanReviewAttestation';
+import * as vscodeMock from 'vscode';
+
+// Helper: returns an async function that yields successive values from the queue.
+function asyncQueue<T>(...values: Array<T | undefined>): () => Promise<T | undefined> {
+  const q = [...values];
+  return async () => q.shift();
+}
 
 // ─── Depth tracker: local formula mirrors backend ─────────────────────────────
 
@@ -17,23 +26,22 @@ describe('HumanReviewDepthTracker', () => {
   it('returns shallow before startReview() is called', () => {
     const t = new HumanReviewDepthTracker();
     t.setLinesShown(100);
-    expect(t.secondsOnDiff).toBe(0);
-    expect(t.computeLocalDepth()).toBe('shallow');
+    assert.strictEqual(t.secondsOnDiff, 0);
+    assert.strictEqual(t.computeLocalDepth(), 'shallow');
   });
 
   it('returns shallow for implausibly-fast approval (time_per_line < 1)', () => {
     const t = new HumanReviewDepthTracker();
     t.setLinesShown(400);
-    // Inject a very recent startMs so secondsOnDiff ≈ 0
     (t as unknown as { startMs: number }).startMs = Date.now() - 100; // 0.1 s
-    expect(t.computeLocalDepth()).toBe('shallow');
+    assert.strictEqual(t.computeLocalDepth(), 'shallow');
   });
 
   it('returns adequate for a normal review pace', () => {
     const t = new HumanReviewDepthTracker();
     t.setLinesShown(40);
     (t as unknown as { startMs: number }).startMs = Date.now() - 200_000; // 200 s
-    expect(t.computeLocalDepth()).toBe('adequate');
+    assert.strictEqual(t.computeLocalDepth(), 'adequate');
   });
 
   it('returns deep for thorough review (≥5 s/line, ≥3 comments, ≥50 lines)', () => {
@@ -41,7 +49,7 @@ describe('HumanReviewDepthTracker', () => {
     t.setLinesShown(60);
     t.incrementComments(3);
     (t as unknown as { startMs: number }).startMs = Date.now() - 360_000; // 360 s → 6 s/line
-    expect(t.computeLocalDepth()).toBe('deep');
+    assert.strictEqual(t.computeLocalDepth(), 'deep');
   });
 
   it('reset() clears state and makes secondsOnDiff 0', () => {
@@ -50,22 +58,35 @@ describe('HumanReviewDepthTracker', () => {
     t.setLinesShown(50);
     t.incrementComments(2);
     t.reset();
-    expect(t.secondsOnDiff).toBe(0);
-    expect(t.commentCount).toBe(0);
-    expect(t.linesShown).toBe(0);
+    assert.strictEqual(t.secondsOnDiff, 0);
+    assert.strictEqual(t.commentCount, 0);
+    assert.strictEqual(t.linesShown, 0);
   });
 
   it('incrementComments accumulates', () => {
     const t = new HumanReviewDepthTracker();
     t.incrementComments(2);
     t.incrementComments(1);
-    expect(t.commentCount).toBe(3);
+    assert.strictEqual(t.commentCount, 3);
   });
 });
 
 // ─── runAttestHumanReview: payload shape + happy-path ────────────────────────
 
 describe('runAttestHumanReview', () => {
+  let savedShowInputBox: typeof vscodeMock.window.showInputBox;
+  let savedShowQuickPick: typeof vscodeMock.window.showQuickPick;
+
+  beforeEach(() => {
+    savedShowInputBox = vscodeMock.window.showInputBox;
+    savedShowQuickPick = vscodeMock.window.showQuickPick;
+  });
+
+  afterEach(() => {
+    vscodeMock.window.showInputBox = savedShowInputBox;
+    vscodeMock.window.showQuickPick = savedShowQuickPick;
+  });
+
   it('sends camelCase payload to /review/attest and returns ReviewStatus', async () => {
     let capturedPath: string | undefined;
     let capturedBody: unknown;
@@ -92,64 +113,54 @@ describe('runAttestHumanReview', () => {
       }
     };
 
-    // Stub vscode.window to return deterministic values.
-    const mockWindow = {
-      showInputBox: jest
-        .fn()
-        .mockResolvedValueOnce('record-abc')   // scopeRef
-        .mockResolvedValueOnce('60')           // linesReviewed
-        .mockResolvedValueOnce('300')          // secondsOnDiff
-        .mockResolvedValueOnce('3'),           // commentCount
-      showQuickPick: jest.fn().mockResolvedValueOnce({ label: 'approved' })
-    };
+    // Queue: scopeRef → linesReviewed → secondsOnDiff → commentCount
+    vscodeMock.window.showInputBox = asyncQueue('record-abc', '60', '300', '3') as typeof vscodeMock.window.showInputBox;
+    vscodeMock.window.showQuickPick = asyncQueue({ label: 'approved' }) as typeof vscodeMock.window.showQuickPick;
 
     const tracker = new HumanReviewDepthTracker();
     tracker.setLinesShown(60);
     (tracker as unknown as { startMs: number }).startMs = Date.now() - 300_000;
     tracker.incrementComments(3);
 
-    // Temporarily swap the vscode module reference inside the module.
-    // In practice this test runs in jest with the __mocks__/vscode shim.
-    const vscode = require('vscode') as typeof import('vscode');
-    (vscode.window as unknown as Record<string, unknown>).showInputBox = mockWindow.showInputBox;
-    (vscode.window as unknown as Record<string, unknown>).showQuickPick = mockWindow.showQuickPick;
-
     const result = await runAttestHumanReview(
       mockClient as unknown as import('../backend').BackendIngestClient,
       tracker
     );
 
-    expect(capturedPath).toBe('/review/attest');
+    assert.strictEqual(capturedPath, '/review/attest');
 
     const body = capturedBody as Record<string, unknown>;
     // Must use camelCase keys — this is the key correctness check.
-    expect(body).toHaveProperty('scopeRef', 'record-abc');
-    expect(body).toHaveProperty('linesReviewed');
-    expect(body).toHaveProperty('secondsOnDiff');
-    expect(body).toHaveProperty('commentCount');
-    expect(body).toHaveProperty('verdict', 'approved');
+    assert.strictEqual(body['scopeRef'], 'record-abc');
+    assert.ok('linesReviewed' in body);
+    assert.ok('secondsOnDiff' in body);
+    assert.ok('commentCount' in body);
+    assert.strictEqual(body['verdict'], 'approved');
     // Must NOT have snake_case keys.
-    expect(body).not.toHaveProperty('scope_ref');
-    expect(body).not.toHaveProperty('lines_reviewed');
+    assert.ok(!('scope_ref' in body));
+    assert.ok(!('lines_reviewed' in body));
 
-    expect(result).not.toBeUndefined();
-    expect(result?.hasReview).toBe(true);
-    expect(result?.depthSignal).toBe('adequate');
-    expect(result?.verdict).toBe('approved');
-    expect(result?.attestationId).toBe(42);
+    assert.ok(result !== undefined);
+    assert.strictEqual(result?.hasReview, true);
+    assert.strictEqual(result?.depthSignal, 'adequate');
+    assert.strictEqual(result?.verdict, 'approved');
+    assert.strictEqual(result?.attestationId, 42);
 
     // Tracker must be reset after successful submission.
-    expect(tracker.secondsOnDiff).toBe(0);
-    expect(tracker.commentCount).toBe(0);
+    assert.strictEqual(tracker.secondsOnDiff, 0);
+    assert.strictEqual(tracker.commentCount, 0);
   });
 
   it('returns undefined when the user cancels scope ref input', async () => {
-    const vscode = require('vscode') as typeof import('vscode');
-    (vscode.window as unknown as Record<string, unknown>).showInputBox = jest
-      .fn()
-      .mockResolvedValueOnce(undefined); // user cancelled
+    vscodeMock.window.showInputBox = asyncQueue(undefined) as typeof vscodeMock.window.showInputBox;
 
-    const mockClient = { callApi: jest.fn() };
+    let callApiCalled = false;
+    const mockClient = {
+      callApi: async () => {
+        callApiCalled = true;
+        return { statusCode: 200, body: '{}' };
+      }
+    };
     const tracker = new HumanReviewDepthTracker();
 
     const result = await runAttestHumanReview(
@@ -157,8 +168,8 @@ describe('runAttestHumanReview', () => {
       tracker
     );
 
-    expect(result).toBeUndefined();
-    expect(mockClient.callApi).not.toHaveBeenCalled();
+    assert.strictEqual(result, undefined);
+    assert.strictEqual(callApiCalled, false);
   });
 });
 
@@ -184,10 +195,10 @@ describe('fetchReviewStatus', () => {
       'record-xyz'
     );
 
-    expect(status.hasReview).toBe(true);
-    expect(status.depthSignal).toBe('deep');
-    expect(status.verdict).toBe('approved');
-    expect(status.attestationId).toBe(99);
+    assert.strictEqual(status.hasReview, true);
+    assert.strictEqual(status.depthSignal, 'deep');
+    assert.strictEqual(status.verdict, 'approved');
+    assert.strictEqual(status.attestationId, 99);
   });
 
   it('returns hasReview=false on non-2xx response', async () => {
@@ -203,7 +214,7 @@ describe('fetchReviewStatus', () => {
       'missing-ref'
     );
 
-    expect(status.hasReview).toBe(false);
-    expect(status.depthSignal).toBeNull();
+    assert.strictEqual(status.hasReview, false);
+    assert.strictEqual(status.depthSignal, null);
   });
 });

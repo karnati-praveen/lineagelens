@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "vscode": ["./__mocks__/vscode.ts"]
+    }
+  },
+  "exclude": [
+    "node_modules",
+    ".vscode-test",
+    "lineagelens-ad",
+    "lineagelens-base-extension"
+  ]
+}

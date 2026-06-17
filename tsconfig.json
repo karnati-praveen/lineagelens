@@ -17,6 +17,8 @@
     "node_modules",
     ".vscode-test",
     "lineagelens-ad",
-    "lineagelens-base-extension"
+    "lineagelens-base-extension",
+    "lineagelens-src/test",
+    "__mocks__"
   ]
 }
