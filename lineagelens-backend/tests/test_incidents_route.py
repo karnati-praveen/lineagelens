@@ -22,7 +22,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.db.session import _CURRENT_ALEMBIC_HEAD
 
-_REVISION = "202606130001"
+_REVISION = "202606150001"
 
 
 # ─── Migration sanity ─────────────────────────────────────────────────────────
