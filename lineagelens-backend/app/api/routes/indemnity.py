@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.attestation import SignedAttestation, get_public_key_hex, verify_attestation
-from app.core.mode_guard import require_non_solo
+from app.core.mode_guard import require_non_solo, require_plan
 from app.core.security import AuthContext, ensure_workspace_scope, get_current_auth_context, require_admin
 from app.db.models import Attestation, IndemnityCertificate, IndemnityPolicy
 from app.db.session import get_db_session
@@ -149,7 +149,7 @@ async def get_policy(
 
 # ── Certificate endpoints ─────────────────────────────────────────────────────
 
-@router.post("/certificate", dependencies=[Depends(require_non_solo)])
+@router.post("/certificate", dependencies=[Depends(require_non_solo), Depends(require_plan("plus"))])
 async def create_certificate(
     body: CertificateRequest,
     session: Annotated[AsyncSession, Depends(get_db_session)],

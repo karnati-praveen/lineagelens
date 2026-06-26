@@ -20,7 +20,11 @@ from app.core.security import AuthContext
 from app.db.models import ProvenanceRecord, ProvenanceTag, ReviewQueue
 from app.schemas.provenance import SearchRequest, decode_cursor, encode_cursor
 from app.services.ast_normalizer import normalize_ast_tokens
-from app.services.embedding_service import generate_embedding
+from app.services.embedding_service import (
+    SEMANTIC_UNAVAILABLE_WARNING,
+    generate_embedding,
+    semantic_provider_active,
+)
 from app.services.ingest_normalizer import NormalizedIngestPayload
 from app.services.integrity_service import (
     compute_content_sha256,
@@ -614,6 +618,14 @@ async def search_provenance_records(
         filters.extend(access_filters)
 
     if query_text and settings.vector_search_enabled:
+        # PART 3 #18 — only do semantic search with a real semantic provider.
+        # With the default "hash" provider, cosine search returns meaningless
+        # neighbours; fall back to keyword and say so rather than faking quality.
+        if not semantic_provider_active(settings):
+            rows, warnings, total, cursor = await _keyword_search(
+                session, query_text, filters, offset, limit
+            )
+            return rows, [SEMANTIC_UNAVAILABLE_WARNING, *warnings], total, cursor
         return await _vector_search(session, query_text, filters, offset, limit, settings)
 
     if query_text:

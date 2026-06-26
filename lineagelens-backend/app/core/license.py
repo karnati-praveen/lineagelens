@@ -66,6 +66,13 @@ class Entitlement:
     expires: str | None  # ISO date (YYYY-MM-DD) or None for perpetual
     licensed: bool  # True only when a valid signed license produced this
     reason: str = ""  # diagnostic note when unlicensed/invalid
+    # PART 3 #20 — vendor-failure / perpetual-unlock covenant. A license minted
+    # with perpetual=true keeps its plan FOREVER (even past `expires`); the expiry
+    # then only marks when updates/support lapse, not when features switch off.
+    # This means a customer does not lose purchased self-hosted capability if the
+    # vendor disappears and a subscription cannot be renewed.
+    perpetual: bool = False
+    subscription_lapsed: bool = False  # True when past expiry but still entitled via covenant
 
     def allows(self, min_plan: str) -> bool:
         """True if this entitlement's plan meets or exceeds *min_plan* (ignores topology)."""
@@ -110,10 +117,13 @@ def issue_license(
     customer: str = "",
     expires: str | None = None,
     issued: date | None = None,
+    perpetual: bool = False,
 ) -> str:
     """Mint a signed license key. Requires the vendor's private key seed (base64, 32 bytes).
 
-    *expires* is an ISO date string (``YYYY-MM-DD``) or None for a perpetual license.
+    *expires* is an ISO date string (``YYYY-MM-DD``) or None for a license with no
+    expiry. *perpetual* honors the vendor-failure covenant (PART 3 #20): the plan
+    stays unlocked past *expires*; expiry then only marks the end of updates/support.
     """
     if plan not in PLAN_RANK:
         raise ValueError(f"plan must be one of {sorted(PLAN_RANK)}, got {plan!r}")
@@ -131,6 +141,7 @@ def issue_license(
         "exp": expires,
         "iat": (issued or datetime.now(tz=UTC).date()).isoformat(),
         "iss": _ISSUER,
+        "perpetual": bool(perpetual),
         "plan": plan,
         "seats": int(seats),
     }
@@ -194,6 +205,7 @@ def verify_license(
     if plan not in PLAN_RANK:
         return _free(f"unknown plan {plan!r}")
 
+    perpetual = bool(statement.get("perpetual", False))
     expires = statement.get("exp")
     if expires:
         try:
@@ -201,7 +213,20 @@ def verify_license(
         except (TypeError, ValueError):
             return _free("malformed expiry date")
         if (today or datetime.now(tz=UTC).date()) > exp_date:
-            # Expired licenses gracefully degrade to the free tier (renewal restores it).
+            # PART 3 #20 — perpetual licenses honor the vendor-failure covenant:
+            # the purchased plan stays unlocked past expiry; only updates/support
+            # lapse. Non-perpetual licenses still degrade to free on expiry.
+            if perpetual:
+                return Entitlement(
+                    plan=plan,
+                    seats=int(statement.get("seats", 0)),
+                    customer=str(statement.get("customer", "")),
+                    expires=expires,
+                    licensed=True,
+                    perpetual=True,
+                    subscription_lapsed=True,
+                    reason=f"subscription lapsed on {expires}; perpetual feature unlock honored",
+                )
             return _free(f"license expired on {expires}")
 
     return Entitlement(
@@ -210,6 +235,7 @@ def verify_license(
         customer=str(statement.get("customer", "")),
         expires=expires,
         licensed=True,
+        perpetual=perpetual,
         reason="",
     )
 

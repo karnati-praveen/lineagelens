@@ -110,6 +110,41 @@ def test_expired_license_degrades_to_free() -> None:
     assert "expired" in ent.reason
 
 
+def test_perpetual_license_survives_expiry() -> None:
+    """PART 3 #20 — a perpetual license keeps its plan past expiry (vendor-failure covenant)."""
+    priv, pub = _keypair()
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    key = lic.issue_license(plan="max", expires=yesterday, private_key_b64=priv, perpetual=True)
+
+    ent = lic.verify_license(key, public_key_hex=pub)
+
+    assert ent.licensed is True       # still entitled to the purchased plan
+    assert ent.plan == "max"
+    assert ent.perpetual is True
+    assert ent.subscription_lapsed is True
+    assert "perpetual" in ent.reason
+
+
+def test_non_perpetual_expired_still_degrades() -> None:
+    """Non-perpetual expired licenses still degrade to free (default behavior preserved)."""
+    priv, pub = _keypair()
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    key = lic.issue_license(plan="max", expires=yesterday, private_key_b64=priv, perpetual=False)
+    ent = lic.verify_license(key, public_key_hex=pub)
+    assert ent.licensed is False
+    assert ent.plan == "lite"
+
+
+def test_perpetual_unexpired_not_lapsed() -> None:
+    priv, pub = _keypair()
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    key = lic.issue_license(plan="plus", expires=tomorrow, private_key_b64=priv, perpetual=True)
+    ent = lic.verify_license(key, public_key_hex=pub)
+    assert ent.licensed is True
+    assert ent.perpetual is True
+    assert ent.subscription_lapsed is False
+
+
 def test_future_expiry_is_valid() -> None:
     priv, pub = _keypair()
     tomorrow = (date.today() + timedelta(days=1)).isoformat()

@@ -134,14 +134,144 @@ def sign_attestation(statement: dict) -> SignedAttestation:
     )
 
 
-def verify_attestation(signed: SignedAttestation) -> bool:
-    """Verify the Ed25519 signature on *signed*. Returns False (never raises) on failure."""
+# ── Key registry (PART 3 #19) ─────────────────────────────────────────────────
+#
+# verify_attestation used to validate only with the single currently-loaded key,
+# so historical attestations signed by a rotated key could not be verified and a
+# compromised key was still trusted. The registry adds:
+#   * multi-key lookup by public_key_id (historical verification),
+#   * validity windows (valid_from / valid_until),
+#   * compromise/revocation timestamps so a signature made AFTER compromise (or
+#     after a key was retired) is rejected even though the math checks out.
+#
+# Sourced from ATTESTATION_KEY_REGISTRY (JSON list); the current active key is
+# always included automatically.
+
+
+@dataclass(frozen=True, slots=True)
+class KeyRecord:
+    public_key_id: str
+    public_key_hex: str
+    valid_from: str | None = None
+    valid_until: str | None = None
+    compromised_at: str | None = None
+    status: str = "active"  # active | retired | compromised
+
+
+def _parse_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
     try:
-        private_key = _load_private_key()
-        pub_key = private_key.public_key()
-        canonical = json.dumps(signed.statement, sort_keys=True, default=str).encode()
-        sig_bytes = bytes.fromhex(signed.signature)
-        pub_key.verify(sig_bytes, canonical)
-        return True
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+@lru_cache(maxsize=1)
+def _registry() -> dict[str, KeyRecord]:
+    """Public-key registry keyed by public_key_id (env + current active key)."""
+    records: dict[str, KeyRecord] = {}
+    raw = os.environ.get("ATTESTATION_KEY_REGISTRY", "").strip()
+    if raw:
+        try:
+            for entry in json.loads(raw):
+                rec = KeyRecord(
+                    public_key_id=str(entry["publicKeyId"]),
+                    public_key_hex=str(entry["publicKeyHex"]),
+                    valid_from=entry.get("validFrom"),
+                    valid_until=entry.get("validUntil"),
+                    compromised_at=entry.get("compromisedAt"),
+                    status=entry.get("status", "active"),
+                )
+                records[rec.public_key_id] = rec
+        except Exception as exc:
+            logger.error("Failed to parse ATTESTATION_KEY_REGISTRY: %s", exc)
+    # Always include the currently-loaded key as active (unless overridden above).
+    try:
+        pk = _load_private_key()
+        cur_id = _get_public_key_id(pk)
+        records.setdefault(
+            cur_id,
+            KeyRecord(public_key_id=cur_id, public_key_hex=get_public_key_hex(), status="active"),
+        )
     except Exception:
-        return False
+        pass
+    return records
+
+
+def _registry_clear_cache() -> None:
+    _registry.cache_clear()
+
+
+def key_status_at(record: KeyRecord, at: datetime | None) -> str:
+    """Return the key's trust status at time *at*: valid | not_yet_valid | expired | compromised | retired."""
+    if record.status == "retired":
+        return "retired"
+    compromised = _parse_ts(record.compromised_at)
+    moment = at or datetime.now(tz=UTC)
+    if compromised is not None and moment >= compromised:
+        return "compromised"
+    vf = _parse_ts(record.valid_from)
+    vu = _parse_ts(record.valid_until)
+    if vf is not None and moment < vf:
+        return "not_yet_valid"
+    if vu is not None and moment > vu:
+        return "expired"
+    return "valid"
+
+
+def verify_attestation_detailed(signed: SignedAttestation, *, at: datetime | None = None) -> dict:
+    """Verify signature + key trust state. Returns a dict; never raises.
+
+    keys: valid (bool), signatureValid (bool), keyStatus, publicKeyId, reason.
+    *at* defaults to the statement's issued_at (so historical attestations are
+    judged against the key state at signing time), else now.
+    """
+    canonical = json.dumps(signed.statement, sort_keys=True, default=str).encode()
+    moment = at or _parse_ts((signed.statement or {}).get("issued_at"))
+
+    registry = _registry()
+    record = registry.get(signed.public_key_id)
+
+    # Resolve the public key: registry entry, else the currently-loaded key
+    # (back-compat for attestations made before a registry was configured).
+    if record is not None:
+        pub_hex = record.public_key_hex
+    else:
+        try:
+            pub_hex = get_public_key_hex()
+        except Exception:
+            return {"valid": False, "signatureValid": False, "keyStatus": "unknown_key",
+                    "publicKeyId": signed.public_key_id, "reason": "no key available"}
+
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(pub_hex))
+        pub.verify(bytes.fromhex(signed.signature), canonical)
+        signature_valid = True
+    except Exception:
+        signature_valid = False
+
+    if not signature_valid:
+        return {"valid": False, "signatureValid": False, "keyStatus": "n/a",
+                "publicKeyId": signed.public_key_id, "reason": "signature mismatch"}
+
+    status = key_status_at(record, moment) if record is not None else "valid"
+    valid = status == "valid"
+    return {
+        "valid": valid,
+        "signatureValid": True,
+        "keyStatus": status,
+        "publicKeyId": signed.public_key_id,
+        "reason": "" if valid else f"key status: {status}",
+    }
+
+
+def verify_attestation(signed: SignedAttestation, *, at: datetime | None = None) -> bool:
+    """Verify the Ed25519 signature *and* key trust state. False (never raises) on failure.
+
+    Backward compatible: with no registry configured, this validates against the
+    current key exactly as before.
+    """
+    return verify_attestation_detailed(signed, at=at)["valid"]

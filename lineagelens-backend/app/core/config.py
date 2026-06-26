@@ -157,6 +157,12 @@ class Settings(BaseSettings):
     license_key: str | None = Field(default=None, alias="LINEAGELENS_LICENSE")
     license_file: str | None = Field(default=None, alias="LINEAGELENS_LICENSE_FILE")
 
+    # PART 3 #21 — when true, paid-feature gates enforce the real signed-license
+    # entitlement (effective_plan) instead of trusting the BACKEND_MODE honor flag.
+    # Default false preserves the honor-flag behavior so unlicensed dev/team/CI
+    # instances keep working; flip to true to require a valid license for Plus/Max.
+    license_enforcement: bool = Field(default=False, alias="LICENSE_ENFORCEMENT")
+
     # When true, records with unknown human-review status pass the F1 eligibility check.
     # When false (default), unknown review status causes ineligibility for indemnity.
     indemnity_unknown_review_pass: bool = Field(default=False, alias="INDEMNITY_UNKNOWN_REVIEW_PASS")

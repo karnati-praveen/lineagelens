@@ -9,7 +9,7 @@ from sqlalchemy import and_, asc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import log_audit_event
-from app.core.mode_guard import require_non_solo
+from app.core.mode_guard import require_non_solo, require_plan
 from app.core.security import (
     AuthContext,
     ensure_workspace_scope,
@@ -29,7 +29,7 @@ router = APIRouter(prefix="/integrity", tags=["integrity"])
 logger = logging.getLogger(__name__)
 
 
-@router.get("/verify", dependencies=[Depends(require_non_solo)])
+@router.get("/verify", dependencies=[Depends(require_non_solo), Depends(require_plan("plus"))])
 async def verify_chain(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
@@ -180,7 +180,7 @@ async def verify_chain(
     }
 
 
-@router.post("/aibom", dependencies=[Depends(require_non_solo)])
+@router.post("/aibom", dependencies=[Depends(require_non_solo), Depends(require_plan("plus"))])
 async def export_aibom(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],

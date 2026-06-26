@@ -7,6 +7,18 @@ on:
 
 permissions:
   contents: write
+  # PART 3 #22 — required to emit SLSA build-provenance attestations for assets.
+  id-token: write
+  attestations: write
+
+# Supply-chain hardening (PART 3 #22):
+#   * npm ci (not npm install) for a reproducible, lockfile-pinned install.
+#   * SHA-256 checksums (SHA256SUMS.txt) published with the release.
+#   * SPDX SBOM generated for the released tree.
+#   * SLSA build-provenance attestation over every published asset.
+# NOTE: third-party actions below still use floating major tags. For maximum
+# tamper-resistance, pin each `uses:` to a full 40-char commit SHA (e.g.
+# `actions/checkout@<sha>  # v4.2.2`) once you can verify the digests.
 
 jobs:
   release:
@@ -29,7 +41,9 @@ jobs:
       # ── Base VSIX ──────────────────────────────────────────────────────
       - name: Install base extension dependencies
         working-directory: lineagelens-base-extension
-        run: npm install
+        # npm ci installs exactly from package-lock.json (reproducible) and fails
+        # if the lockfile is out of sync — unlike `npm install` (PART 3 #22).
+        run: npm ci
 
       - name: Sync base extension version to tag
         working-directory: lineagelens-base-extension
@@ -213,6 +227,33 @@ jobs:
             "${GITHUB_WORKSPACE}/lineagelens-releases/max/lineagelens-max-${VERSION}.zip" \
             "lineagelens-max-${VERSION}")
 
+      # ── Supply-chain: checksums, SBOM, provenance (PART 3 #22) ─────────
+      - name: Generate SHA-256 checksums
+        run: |
+          cd lineagelens-releases
+          # Relative paths so the published SHA256SUMS.txt verifies with a plain
+          #   `sha256sum -c SHA256SUMS.txt` from the download directory layout.
+          find . -type f \( -name '*.vsix' -o -name '*.zip' \) | sort \
+            | xargs sha256sum > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Generate SBOM (SPDX)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: lineagelens-releases/lineagelens-sbom-${{ steps.version.outputs.VERSION }}.spdx.json
+          artifact-name: lineagelens-sbom-${{ steps.version.outputs.VERSION }}.spdx.json
+
+      - name: Attest build provenance (SLSA)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            lineagelens-releases/base/*.vsix
+            lineagelens-releases/lite/*.zip
+            lineagelens-releases/plus/*.zip
+            lineagelens-releases/max/*.zip
+
       # ── GitHub Release ─────────────────────────────────────────────────
       - name: Create GitHub Release
         env:
@@ -228,4 +269,6 @@ jobs:
             "lineagelens-releases/base/lineagelens-base-${VERSION}.vsix#Base VS Code Extension (.vsix)" \
             "lineagelens-releases/lite/lineagelens-lite-${VERSION}.zip#Lite Bundle — SQLite, single container (.zip)" \
             "lineagelens-releases/plus/lineagelens-plus-${VERSION}.zip#Plus Bundle — PostgreSQL, full governance (.zip)" \
-            "lineagelens-releases/max/lineagelens-max-${VERSION}.zip#Max Bundle — PostgreSQL + Neo4j, graph lineage (.zip)"
+            "lineagelens-releases/max/lineagelens-max-${VERSION}.zip#Max Bundle — PostgreSQL + Neo4j, graph lineage (.zip)" \
+            "lineagelens-releases/SHA256SUMS.txt#SHA-256 checksums" \
+            "lineagelens-releases/lineagelens-sbom-${VERSION}.spdx.json#SPDX SBOM"

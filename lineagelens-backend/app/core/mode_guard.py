@@ -22,17 +22,23 @@ def require_non_solo(settings: Settings = Depends(get_settings)) -> None:
 
 
 def require_plan(min_plan: str) -> Callable[[Settings], None]:
-    """Build a route dependency that enforces a minimum paid plan.
+    """Build a route dependency that enforces a minimum paid plan (PART 3 #21).
 
     Unlike :func:`require_non_solo` (which trusts the BACKEND_MODE honor flag), this
     checks ``settings.effective_plan`` — derived from the offline, vendor-signed license
     and bounded by the deployed infrastructure — so it cannot be unlocked by editing
     ``.env``. Use ``require_plan("plus")`` or ``require_plan("max")``.
+
+    Enforcement is opt-in via ``LICENSE_ENFORCEMENT`` (default off). When disabled the
+    dependency is a no-op, preserving the honor-flag behavior so unlicensed dev/CI
+    instances keep working; ``require_non_solo`` still applies independently.
     """
     if min_plan not in PLAN_RANK:
         raise ValueError(f"min_plan must be one of {sorted(PLAN_RANK)}, got {min_plan!r}")
 
     def _dependency(settings: Settings = Depends(get_settings)) -> None:
+        if not getattr(settings, "license_enforcement", False):
+            return  # honor-flag mode: real-license enforcement is disabled
         current = settings.effective_plan
         if PLAN_RANK.get(current, -1) < PLAN_RANK[min_plan]:
             raise HTTPException(
