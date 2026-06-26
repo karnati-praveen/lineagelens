@@ -15,9 +15,16 @@ logger = logging.getLogger(__name__)
 
 DepthSignal = Literal["shallow", "adequate", "deep"]
 
-# ─── Depth signal formula (transparent thresholds) ────────────────────────────
+# PART 1 #5 — this signal is "review evidence strength", NOT proof of
+# comprehension. Every input (lines_reviewed / seconds_on_diff / comment_count)
+# is *client-claimed* engagement, i.e. what the reviewer says they saw. It does
+# not establish that the reviewer understood the code. Surfaced to consumers via
+# the `measures` field below.
+EVIDENCE_STRENGTH_MEANS = "claimed_engagement_not_comprehension"
+
+# ─── Review evidence strength formula (transparent thresholds) ────────────────
 #
-# Input signals
+# Input signals (all client-claimed)
 #   time_per_line  = seconds_on_diff / max(lines_reviewed, 1)
 #   comment_count  = inline or PR comments left by the reviewer
 #   lines_reviewed = AI-flagged lines the reviewer claims to have seen
@@ -90,6 +97,8 @@ async def record_review(
             "seconds_on_diff": seconds_on_diff,
             "comment_count": comment_count,
             "depth_signal": depth_signal,
+            "evidence_strength": depth_signal,
+            "measures": EVIDENCE_STRENGTH_MEANS,
             "depth_score": round(raw_score, 2),
             "verdict": verdict,
         },
@@ -170,6 +179,8 @@ async def get_review_status(
         return {
             "has_review": False,
             "depth_signal": None,
+            "evidence_strength": None,
+            "measures": EVIDENCE_STRENGTH_MEANS,
             "verdict": None,
             "reviewer_user_id": None,
             "lines_reviewed": None,
@@ -182,6 +193,8 @@ async def get_review_status(
     return {
         "has_review": True,
         "depth_signal": row.depth_signal,
+        "evidence_strength": row.depth_signal,
+        "measures": EVIDENCE_STRENGTH_MEANS,
         "verdict": row.verdict,
         "reviewer_user_id": row.reviewer_user_id,
         "lines_reviewed": row.lines_reviewed,

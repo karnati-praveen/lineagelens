@@ -54,10 +54,12 @@ _LICENSE_SCAN_MAX_CHARS = 50_000  # hard cap — never fingerprint huge blobs
 def _compute_shingles(code: str, k: int = _LICENSE_SHINGLE_K) -> list[int]:
     """Compute k-gram shingle hashes for *code* (same algorithm as the backend).
 
-    Returns a list of int32 hashes suitable for JSON serialisation.
+    Returns a list of 64-bit hashes suitable for JSON serialisation.
     Returns [] on any error so callers can safely skip the field.
     Uses stable SHA-256-derived hashes (not Python's hash()) for cross-process
-    reproducibility.
+    reproducibility. Truncated to 64 bits (16 hex chars) so birthday collisions
+    stay negligible even for large codebases; must match the backend's
+    license_match_service.compute_shingles width.
     """
     try:
         # Normalise: strip comments, lowercase, tokenize on word chars
@@ -69,11 +71,11 @@ def _compute_shingles(code: str, k: int = _LICENSE_SHINGLE_K) -> list[int]:
             return []
         if len(tokens) < k:
             gram_str = " ".join(tokens)
-            return [int(hashlib.sha256(gram_str.encode()).hexdigest()[:8], 16)]
+            return [int(hashlib.sha256(gram_str.encode()).hexdigest()[:16], 16)]
         seen: set[int] = set()
         for i in range(len(tokens) - k + 1):
             gram_str = " ".join(tokens[i : i + k])
-            h = int(hashlib.sha256(gram_str.encode()).hexdigest()[:8], 16)
+            h = int(hashlib.sha256(gram_str.encode()).hexdigest()[:16], 16)
             seen.add(h)
         return list(seen)
     except Exception:
@@ -95,6 +97,47 @@ def _license_scan(code: str) -> dict | None:
         return {"shingles": shingles, "k": _LICENSE_SHINGLE_K}
     except Exception:
         return None
+
+
+# Bumped if the commitment construction changes so a verifier can branch on it.
+_COMMITMENT_VERSION = "1"
+
+
+def _sha256_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _prompt_commitment(prompt_messages) -> str | None:
+    """SHA-256 over the canonical prompt JSON, matching the backend's
+    integrity_service.compute_prompt_sha256 so the two can be compared."""
+    if prompt_messages is None:
+        return None
+    try:
+        canonical = json.dumps(prompt_messages, sort_keys=True, default=str)
+    except Exception:
+        canonical = str(prompt_messages)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _build_commitments(*, inserted_text: str | None, prompt_messages=None) -> dict:
+    """Client-side (proxy) commitment to what was captured BEFORE it reaches the
+    backend (PART 2 #17).
+
+    The proxy is a privileged observer/modifier; self-hosting reduces but does
+    not remove that trust. Committing to the inserted code and prompt digests
+    here lets the backend's evidence layer detect if its own stored content
+    later disagrees with what the client actually saw — instead of silently
+    accepting whatever the proxy/DB holds.
+    """
+    return {
+        "version": _COMMITMENT_VERSION,
+        "algorithm": "sha256",
+        "committedBy": "lineagelens-proxy",
+        "insertedTextSha256": _sha256_text(inserted_text),
+        "promptSha256": _prompt_commitment(prompt_messages),
+    }
 
 
 def _extract_code(text: str) -> str:
@@ -155,6 +198,9 @@ async def _ingest_edit(
             "modelName": edit.get("_model", "") or "",
         }),
     }
+    payload["commitments"] = _build_commitments(
+        inserted_text=new_string, prompt_messages=redacted_messages
+    )
     routing_info = edit.get("_routing")
     if routing_info:
         payload["routing"] = routing_info
@@ -269,6 +315,7 @@ async def _ingest(
             "provider": provider,
         },
     }
+    payload["commitments"] = _build_commitments(inserted_text=code)
     if routing_info:
         payload["routing"] = routing_info
     # F5: attach license fingerprint — fail-open: never break forwarding on error
@@ -286,7 +333,7 @@ async def _ingest(
             headers={"Authorization": f"Bearer {INGEST_TOKEN}"},
         )
         resp.raise_for_status()
-        logger.info("captured %d chars → backend (provider=%s)", len(code), provider)
+        logger.info("captured %d chars -> backend (provider=%s)", len(code), provider)
     except Exception as exc:
         logger.error(
             "Failed to deliver ingest to backend: %s %s", type(exc).__name__, exc

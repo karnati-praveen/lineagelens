@@ -125,25 +125,43 @@ async def get_clean_room_certificate(
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found.")
 
+    from app.services.license_match_service import CLEAN_STATES
+
     if record.license_status is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Record has not been license-scanned yet. Call POST /license/rescan/{uuid} first.",
         )
-    if record.license_status != "clean":
+    if record.license_status in ("not_configured", "insufficient_corpus"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot issue clean-room certificate: license status is "
+                   f"'{record.license_status}' — no corpus was checked, so cleanliness "
+                   "cannot be certified. Configure LICENSE_FINGERPRINT_PATH and rescan.",
+        )
+    if record.license_status not in CLEAN_STATES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Cannot issue clean-room certificate: license status is '{record.license_status}' "
                    f"(matched: {record.license_match_license}).",
         )
 
+    # Carry the scan provenance into the cert so it states exactly what was checked.
+    scan_meta = {}
+    if isinstance(record.provenance_payload, dict):
+        scan_meta = record.provenance_payload.get("licenseScanResult", {}) or {}
+
     prev_hash = await _get_chain_tip(session, auth.workspace_id)
     statement = build_attestation(
         subject_type="record",
         subject_id=record_uuid,
         claims={
-            "license_status": "clean",
+            "license_status": record.license_status,
             "similarity": record.license_similarity,
+            "corpus_digest": scan_meta.get("corpusDigest"),
+            "scanner_version": scan_meta.get("scannerVersion"),
+            "match_threshold": scan_meta.get("matchThreshold"),
+            "coverage": scan_meta.get("coverage"),
             "scanned_at": datetime.now(tz=UTC).isoformat(),
         },
         workspace_id=auth.workspace_id,
@@ -167,7 +185,7 @@ async def get_clean_room_certificate(
     return {
         "uuid": record_uuid,
         "attestationId": att.id,
-        "licenseStatus": "clean",
+        "licenseStatus": record.license_status,
         "similarity": record.license_similarity,
         "signatureValid": True,
         "publicKeyId": signed.public_key_id,

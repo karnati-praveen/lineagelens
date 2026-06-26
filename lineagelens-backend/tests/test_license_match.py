@@ -19,6 +19,10 @@ from app.services.license_match_service import (
     scan_and_record,
 )
 
+# Keep the env-driven corpus path out of these unit tests so default-matcher
+# behaviour (not_configured) is deterministic regardless of the host machine.
+os.environ.pop("LICENSE_FINGERPRINT_PATH", None)
+
 
 # ── Corpus fixture ────────────────────────────────────────────────────────────
 
@@ -56,27 +60,35 @@ def test_identical_to_gpl_is_match():
     assert result.similarity >= _MATCH_THRESHOLD
 
 
-def test_unrelated_code_is_clean():
-    """Completely unrelated code must be 'clean' against the GPL corpus."""
+def test_unrelated_code_is_clean_within_corpus():
+    """Unrelated code scanned against a real corpus is 'clean_within_corpus'."""
     unrelated = "def add(a, b): return a + b"
     result = _matcher().scan(unrelated)
-    assert result.match_status == "clean"
+    assert result.match_status == "clean_within_corpus"
     assert result.best_match_license is None
+    assert result.corpus_digest is not None  # cert can state what was checked
 
 
-def test_empty_corpus_returns_clean():
-    """With an empty corpus every scan must return 'clean'."""
+def test_empty_injected_corpus_is_insufficient_corpus():
+    """A configured-but-empty corpus must be 'insufficient_corpus', never 'clean' (PART 1 #2)."""
     result = _matcher(corpus=[]).scan(_GPL_SNIPPET)
-    assert result.match_status == "clean"
+    assert result.match_status == "insufficient_corpus"
     assert result.similarity == 0.0
 
 
-def test_empty_code_returns_clean():
-    """Empty or whitespace-only code must always be 'clean'."""
+def test_no_corpus_configured_is_not_configured():
+    """Default matcher with no corpus + no env path must report not_configured."""
+    result = LocalMatcher().scan(_GPL_SNIPPET)
+    assert result.match_status == "not_configured"
+    assert result.coverage == "no_corpus"
+
+
+def test_empty_code_is_clean_within_corpus():
+    """Empty/whitespace code against a real corpus is clean_within_corpus (nothing matched)."""
     result = _matcher().scan("")
-    assert result.match_status == "clean"
+    assert result.match_status == "clean_within_corpus"
     result2 = _matcher().scan("   \n\t  ")
-    assert result2.match_status == "clean"
+    assert result2.match_status == "clean_within_corpus"
 
 
 def test_deterministic_across_runs():
@@ -106,8 +118,8 @@ def test_comment_stripped_before_matching():
 # ── Tests: scan_and_record ────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_scan_and_record_writes_clean_status():
-    """scan_and_record must set license_status='clean' on unrelated code."""
+async def test_scan_and_record_writes_clean_within_corpus_status():
+    """scan_and_record sets license_status='clean_within_corpus' on unrelated code."""
 
     class FakeRecord:
         inserted_code = "x = 1 + 2"
@@ -121,9 +133,31 @@ async def test_scan_and_record_writes_clean_status():
 
     record = FakeRecord()
     result = await scan_and_record(FakeSession(), record, matcher=_matcher())
-    assert result.match_status == "clean"
-    assert record.license_status == "clean"
+    assert result.match_status == "clean_within_corpus"
+    assert record.license_status == "clean_within_corpus"
     assert record.license_match_license is None
+    # Scan provenance is persisted for certificate transparency.
+    assert record.provenance_payload["licenseScanResult"]["scannerVersion"] == "kgram-shingle-1"
+
+
+@pytest.mark.asyncio
+async def test_scan_and_record_not_configured_when_no_corpus():
+    """With no corpus configured, scan_and_record records not_configured (never clean)."""
+
+    class FakeRecord:
+        inserted_code = "x = 1 + 2"
+        license_status = None
+        license_match_license = None
+        license_similarity = None
+        provenance_payload = {}
+
+    class FakeSession:
+        def add(self, obj): pass
+
+    record = FakeRecord()
+    result = await scan_and_record(FakeSession(), record, matcher=LocalMatcher())
+    assert result.match_status == "not_configured"
+    assert record.license_status == "not_configured"
 
 
 @pytest.mark.asyncio
@@ -169,9 +203,11 @@ async def test_scan_uses_proxy_supplied_shingles():
     assert record.license_status == "match"
 
 
-def test_certificate_only_issued_when_clean():
-    """No exception from the matcher — the route layer gates cert issuance on 'clean'."""
-    # The route enforces: if license_status != 'clean' → 409.
-    # Confirmed here by checking scan returns correct statuses for gate logic.
+def test_certificate_gate_statuses():
+    """The route gates cert issuance on CLEAN_STATES; confirm scan returns gate-correct statuses."""
+    from app.services.license_match_service import CLEAN_STATES
+
     assert _matcher().scan(_GPL_SNIPPET).match_status == "match"
-    assert _matcher().scan("x = 1").match_status == "clean"
+    assert _matcher().scan("x = 1").match_status in CLEAN_STATES
+    # not_configured must NOT be a clean state — no corpus, no certification.
+    assert LocalMatcher().scan("x = 1").match_status not in CLEAN_STATES

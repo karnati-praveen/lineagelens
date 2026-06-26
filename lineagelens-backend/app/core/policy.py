@@ -14,6 +14,10 @@ class PolicyViolation:
     policy_type: str
     action: str
     reason: str
+    # Binds the decision to the exact immutable policy version that produced it,
+    # so it can be reproduced later even after the policy is edited (PART 2 #12).
+    policy_version: int | None = None
+    policy_digest: str | None = None
 
 
 @dataclass
@@ -67,6 +71,8 @@ def evaluate_policies(policies: list, record_data: dict) -> PolicyEvalResult:
             policy_type=policy.policy_type,
             action=policy.action,
             reason=reason,
+            policy_version=getattr(policy, "current_version", None),
+            policy_digest=getattr(policy, "current_digest", None),
         )
         result.violations.append(violation)
 

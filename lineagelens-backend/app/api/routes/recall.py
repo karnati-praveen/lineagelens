@@ -96,13 +96,14 @@ async def preview_recall(
     matched_uuids = [str(r.uuid) for r in matched]
 
     neo4j = _get_neo4j(request)
-    blast_uuids = await compute_blast_radius(neo4j, matched_uuids, auth.workspace_id)
+    blast = await compute_blast_radius(neo4j, matched_uuids, auth.workspace_id)
 
     return {
         "matchedCount": len(matched),
-        "blastRadiusCount": len(blast_uuids),
+        "blastRadiusCount": len(blast.descendant_uuids),
         "matchedUuids": matched_uuids,
-        "blastUuids": blast_uuids,
+        "blastUuids": blast.descendant_uuids,
+        "blastRadius": blast.to_dict(),
         "criteria": criteria.model_dump(by_alias=True, exclude_none=True),
     }
 
@@ -122,12 +123,18 @@ async def create_recall(
     )
     matched_uuids = [str(r.uuid) for r in matched]
 
+    # Freeze the blast radius at open time so quarantine acts on the same set.
+    neo4j = _get_neo4j(request)
+    blast = await compute_blast_radius(neo4j, matched_uuids, auth.workspace_id)
+
     campaign = await open_recall(
         session,
         workspace_id=auth.workspace_id,
         created_by=auth.subject,
         criteria_json=criteria.model_dump(by_alias=True, exclude_none=True),
         matched_count=len(matched_uuids),
+        member_uuids=matched_uuids,
+        blast=blast,
     )
 
     if matched_uuids:
@@ -151,14 +158,10 @@ async def quarantine_campaign(
     if campaign.status != "open":
         raise HTTPException(status_code=409, detail="Campaign is not open.")
 
-    criteria = RecallCriteria(**campaign.criteria_json)
-    matched = await find_affected_records(
-        session, auth.workspace_id, **_criteria_to_kwargs(criteria)
-    )
-    matched_uuids = [str(r.uuid) for r in matched]
-
-    neo4j = _get_neo4j(request)
-    blast_uuids = await compute_blast_radius(neo4j, matched_uuids, auth.workspace_id)
+    # Use the FROZEN membership + blast set captured at open time — never re-run
+    # the criteria, which could silently drift the recall scope (PART 2 #13).
+    matched_uuids = list(campaign.member_uuids or [])
+    blast_uuids = list(campaign.blast_uuids or [])
 
     count = await quarantine_records(
         session,
@@ -172,6 +175,7 @@ async def quarantine_campaign(
     return {
         "quarantinedCount": count,
         "blastCount": len(blast_uuids),
+        "blastCoverageStatus": campaign.blast_coverage_status,
         "campaign": _campaign_to_dict(campaign),
     }
 

@@ -14,6 +14,7 @@ from app.core.audit import log_audit_event
 from app.core.security import AuthContext, ensure_workspace_scope, require_role
 from app.db.models import Policy, RoutingPolicy
 from app.db.session import get_db_session
+from app.services.policy_version_service import append_version, list_versions
 
 # Captured at module import time (correct for production).
 # Unit tests that need a different token should patch policies._BACKEND_INGEST_TOKEN directly.
@@ -58,6 +59,9 @@ def _serialize_policy(p: Policy) -> dict:
         "config": p.config,
         "action": p.action,
         "enabled": p.enabled,
+        "archived": p.archived,
+        "currentVersion": p.current_version,
+        "currentDigest": p.current_digest,
         "createdBy": p.created_by,
         "createdAt": p.created_at.isoformat() if p.created_at else None,
         "updatedAt": p.updated_at.isoformat() if p.updated_at else None,
@@ -87,12 +91,14 @@ async def create_policy(
         created_by=auth.subject,
     )
     session.add(policy)
+    await session.flush()  # populate policy.id before snapshotting
+    await append_version(session, policy, change_type="create", created_by=auth.subject)
     await log_audit_event(
         session,
         workspace_id=auth.workspace_id,
         user_id=auth.subject,
         action="policy.create",
-        details={"name": payload.name},
+        details={"name": payload.name, "version": policy.current_version},
     )
     await session.commit()
     await session.refresh(policy)
@@ -143,16 +149,55 @@ async def update_policy(
     if payload.enabled is not None:
         policy.enabled = payload.enabled
 
+    # Append an immutable new version rather than silently overwriting history.
+    await append_version(session, policy, change_type="update", created_by=auth.subject)
     await log_audit_event(
         session,
         workspace_id=auth.workspace_id,
         user_id=auth.subject,
         action="policy.update",
         target_uuid=policy_id,
+        details={"version": policy.current_version, "digest": policy.current_digest},
     )
     await session.commit()
     await session.refresh(policy)
     return _serialize_policy(policy)
+
+
+@router.get("/policies/{policy_id}/versions")
+async def get_policy_versions(
+    policy_id: str,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    auth: Annotated[AuthContext, Depends(require_role("admin", "reviewer"))],
+) -> dict:
+    """Return the immutable version history of a policy (PART 2 #12)."""
+    try:
+        pid = uuid_pkg.UUID(policy_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid policy ID.")
+
+    versions = await list_versions(session, pid, auth.workspace_id)
+    return {
+        "results": [
+            {
+                "version": v.version,
+                "changeType": v.change_type,
+                "name": v.name,
+                "description": v.description,
+                "policyType": v.policy_type,
+                "config": v.config,
+                "action": v.action,
+                "enabled": v.enabled,
+                "digest": v.digest,
+                "evaluatorVersion": v.evaluator_version,
+                "createdBy": v.created_by,
+                "createdAt": v.created_at.isoformat() if v.created_at else None,
+                "supersededAt": v.superseded_at.isoformat() if v.superseded_at else None,
+            }
+            for v in versions
+        ],
+        "count": len(versions),
+    }
 
 
 @router.delete("/policies/{policy_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
@@ -161,6 +206,8 @@ async def delete_policy(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(require_role("admin"))],
 ) -> None:
+    """Archive a policy. Non-destructive: the row and its immutable version
+    history are retained so past decisions remain reproducible (PART 2 #12)."""
     try:
         pid = uuid_pkg.UUID(policy_id)
     except ValueError:
@@ -173,13 +220,16 @@ async def delete_policy(
     if policy is None:
         raise HTTPException(status_code=404, detail="Policy not found.")
 
-    await session.delete(policy)
+    policy.enabled = False
+    policy.archived = True
+    await append_version(session, policy, change_type="archive", created_by=auth.subject)
     await log_audit_event(
         session,
         workspace_id=auth.workspace_id,
         user_id=auth.subject,
         action="policy.delete",
         target_uuid=policy_id,
+        details={"archived": True, "version": policy.current_version},
     )
     await session.commit()
 

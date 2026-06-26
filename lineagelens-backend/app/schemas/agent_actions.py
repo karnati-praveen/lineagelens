@@ -17,6 +17,11 @@ class AgentActionItem(BaseModel):
     toolName: str = Field(max_length=128)
     argumentsJson: dict | None = None
     occurredAt: str  # ISO-8601 datetime string
+    # PART 2 #16 — authority context (optional; absence → recorded "unmandated").
+    agentIdentity: str | None = Field(default=None, max_length=256)
+    humanPrincipal: str | None = Field(default=None, max_length=256)
+    mandateRef: str | None = Field(default=None, max_length=256)
+    capability: str | None = Field(default=None, max_length=64)
 
 
 class IngestAgentActionsPayload(BaseModel):
@@ -40,6 +45,11 @@ class AgentActionResponse(BaseModel):
     toolName: str = Field(validation_alias="tool_name")
     argumentsJson: dict | None = Field(validation_alias="arguments_json")
     riskFlagsJson: dict | None = Field(validation_alias="risk_flags_json")
+    agentIdentity: str | None = Field(default=None, validation_alias="agent_identity")
+    humanPrincipal: str | None = Field(default=None, validation_alias="human_principal")
+    mandateRef: str | None = Field(default=None, validation_alias="mandate_ref")
+    capability: str | None = Field(default=None, validation_alias="capability")
+    authorityState: str | None = Field(default=None, validation_alias="authority_state")
     recordHash: str | None = Field(validation_alias="record_hash")
     prevHash: str | None = Field(validation_alias="prev_hash")
     occurredAt: datetime = Field(validation_alias="occurred_at")

@@ -430,3 +430,63 @@ class TestRiskyFlagsStored:
         assert action.risk_flags_json is not None
         assert "pipe_to_shell" in action.risk_flags_json.get("patterns", [])
         assert action.risk_flags_json.get("riskLevel") == "high"
+
+
+class TestAgentAuthority:
+    """PART 2 #16 — the ledger records authority, not just effects."""
+
+    def test_unmandated_by_default(self, client, make_user):
+        user = make_user(role="admin")
+        client.post(
+            "/agent-actions",
+            json=_action_payload(user.workspace_id, session_key="auth-sess", n=1),
+            headers={"Authorization": f"Bearer {_PROXY_TOKEN}"},
+        )
+        resp = client.get("/agent-actions?sessionKey=auth-sess", headers=user.auth_headers)
+        assert resp.status_code == 200
+        row = resp.json()[0]
+        # Absence of a mandate is recorded honestly as "unmandated", never authorised.
+        assert row["authorityState"] == "unmandated"
+
+    def test_mandate_recorded_and_bound_to_hash(self, client, make_user, db_query):
+        user = make_user(role="admin")
+        payload = {
+            "workspaceId": user.workspace_id,
+            "sessionKey": "mandate-sess",
+            "promptContextId": "deadbeef" * 4,
+            "actions": [{
+                "actionType": "shell",
+                "toolName": "Bash",
+                "argumentsJson": {"command": "ls"},
+                "occurredAt": _NOW,
+                "agentIdentity": "claude-code@1.0",
+                "humanPrincipal": "user:karnati",
+                "mandateRef": "mandate-42",
+                "capability": "shell",
+            }],
+        }
+        resp = client.post(
+            "/agent-actions", json=payload,
+            headers={"Authorization": f"Bearer {_PROXY_TOKEN}"},
+        )
+        assert resp.status_code == 201
+
+        got = client.get("/agent-actions?sessionKey=mandate-sess", headers=user.auth_headers).json()[0]
+        assert got["authorityState"] == "mandated"
+        assert got["agentIdentity"] == "claude-code@1.0"
+        assert got["humanPrincipal"] == "user:karnati"
+        assert got["mandateRef"] == "mandate-42"
+        assert got["capability"] == "shell"
+        assert got["recordHash"] is not None
+
+    def test_authority_context_changes_action_hash(self):
+        """The authority context is bound into the tamper-evident hash."""
+        from app.services.agent_action_service import compute_action_hash
+
+        base = dict(
+            workspace_id="ws", session_key="s", action_type="shell", tool_name="Bash",
+            arguments_json={"command": "ls"}, occurred_at="2026-06-26T00:00:00+00:00", prev_hash=None,
+        )
+        without = compute_action_hash(**base)
+        with_authority = compute_action_hash(**base, mandate_ref="m-1", authority_state="mandated")
+        assert without != with_authority

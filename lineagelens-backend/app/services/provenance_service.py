@@ -15,13 +15,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
+from app.core.evidence import classify_record_claims
 from app.core.security import AuthContext
 from app.db.models import ProvenanceRecord, ProvenanceTag, ReviewQueue
 from app.schemas.provenance import SearchRequest, decode_cursor, encode_cursor
 from app.services.ast_normalizer import normalize_ast_tokens
 from app.services.embedding_service import generate_embedding
 from app.services.ingest_normalizer import NormalizedIngestPayload
-from app.services.integrity_service import compute_prompt_sha256, compute_record_hash
+from app.services.integrity_service import (
+    compute_content_sha256,
+    compute_prompt_sha256,
+    compute_record_hash,
+)
 from app.services.neo4j_service import Neo4jLineageService
 from app.services.risk_service import compute_risk_score
 
@@ -364,6 +369,11 @@ async def _attach_hash_chain(
 
     prompt_sha = compute_prompt_sha256(record.prompt_messages)
     record.prev_hash = prev_hash
+    # Commit to the content now so a later redaction/deletion tombstone stays
+    # verifiable (the verifier checks the committed digest, not the scrubbed
+    # plaintext). See record_lifecycle_service.
+    record.prompt_sha256 = prompt_sha
+    record.content_sha256 = compute_content_sha256(record.inserted_code)
     record.record_hash = compute_record_hash(
         record_uuid=str(record.uuid),
         workspace_id=record.workspace_id,
@@ -658,6 +668,11 @@ def serialize_provenance_record(
 
     if model_durability is not None:
         payload["modelDurabilityScore"] = model_durability
+
+    # Typed evidence/claim model (PART 1 #7): expose what is observed vs
+    # declared vs derived vs unknown so the UI never collapses to one green check.
+    payload["claims"] = classify_record_claims(record)
+    payload["lifecycleState"] = getattr(record, "lifecycle_state", "active")
 
     return payload
 

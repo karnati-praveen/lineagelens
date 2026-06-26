@@ -163,19 +163,28 @@ async def evaluate_eligibility(
                 f"Record {uid}: risk score {record.risk_score} exceeds policy maximum {max_risk}."
             )
 
-        # License check (F5)
+        # License check (F5). "nothing checked" (not scanned / no corpus) must
+        # never satisfy a require_license_clean gate — PART 1 #2.
         if require_license_clean:
+            from app.services.license_match_service import CLEAN_STATES
+
             ls = record.license_status
             if ls is None:
                 eligible = False
                 reasons.append(
-                    f"Record {uid}: license status not yet scanned — cannot confirm clean."
+                    f"Record {uid}: license not yet scanned (not_scanned) — cannot confirm clean."
                 )
-            elif ls != "clean":
+            elif ls in ("not_configured", "insufficient_corpus"):
+                eligible = False
+                reasons.append(
+                    f"Record {uid}: license status '{ls}' — no corpus was checked, "
+                    "absence of a match is not evidence of cleanliness."
+                )
+            elif ls not in CLEAN_STATES:
                 eligible = False
                 reasons.append(
                     f"Record {uid}: license status '{ls}' "
-                    f"(matched: {record.license_match_license}) — policy requires 'clean'."
+                    f"(matched: {record.license_match_license}) — policy requires a clean scan."
                 )
 
         # Human-review check (Prompt 3 will populate ReviewQueue; until then → "unknown")

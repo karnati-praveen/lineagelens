@@ -7,10 +7,16 @@ from typing import Any
 from sqlalchemy import and_, asc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.attestation import get_public_key_hex, sign_detached, verify_detached
 from app.db.models import ProvenanceRecord
-from app.services.integrity_service import compute_prompt_sha256, sign_aibom
+from app.services.integrity_service import (
+    compute_prompt_sha256,
+    sign_aibom,
+    verify_aibom_signature,
+)
 
-AIBOM_SCHEMA_VERSION = "1.0"
+# Bumped to 1.1 with the addition of the Ed25519 (asymmetric) signature block.
+AIBOM_SCHEMA_VERSION = "1.1"
 
 
 async def generate_aibom(
@@ -50,8 +56,10 @@ async def generate_aibom(
         model = record.model_name or "unknown"
         model_counts[model] = model_counts.get(model, 0) + 1
 
-        prompt_sha = compute_prompt_sha256(record.prompt_messages)
-        if record.prompt_messages is not None:
+        # Prefer the committed digest so a redacted/deleted record still reports
+        # its original prompt commitment instead of a null (PART 2 #10).
+        prompt_sha = getattr(record, "prompt_sha256", None) or compute_prompt_sha256(record.prompt_messages)
+        if prompt_sha is not None:
             disclosed_count += 1
 
         # Verify chain linkage for records that have hashes
@@ -81,6 +89,7 @@ async def generate_aibom(
                 "risk_reasons": risk_reasons,
                 "timestamp_iso": record.timestamp_iso.isoformat(),
                 "is_redacted": record.is_redacted,
+                "lifecycle_state": getattr(record, "lifecycle_state", "active"),
                 "record_hash": record.record_hash,
                 "prev_hash": record.prev_hash,
             }
@@ -110,11 +119,40 @@ async def generate_aibom(
         "records": entries,
     }
 
-    # Sign everything except the signature block itself
+    # Sign everything except the signature block itself. We dual-sign:
+    #   * HMAC-SHA256 — preserved for backward compatibility (verifiable only by
+    #     a holder of JWT_SECRET_KEY).
+    #   * Ed25519 — asymmetric, so a standalone tool holding only the exported
+    #     public key can verify the document offline (PART 1 #9).
     canonical = json.dumps(payload, sort_keys=True, default=str)
+    ed25519_sig, public_key_id = sign_detached(canonical.encode())
     payload["signature"] = {
+        # `algorithm`/`value` kept at top level for backward-compatible HMAC verify.
         "algorithm": "hmac-sha256",
         "value": sign_aibom(canonical),
+        "ed25519": {
+            "algorithm": "ed25519",
+            "value": ed25519_sig,
+            "publicKeyId": public_key_id,
+            "publicKeyHex": get_public_key_hex(),
+        },
     }
 
     return payload
+
+
+def verify_aibom(payload: dict[str, Any]) -> dict[str, bool]:
+    """Verify both signatures on a generated AI-BOM payload.
+
+    Returns {"hmac": bool, "ed25519": bool}. The Ed25519 check needs only the
+    public key embedded in the document, so it works offline / in a standalone
+    verifier; the HMAC check needs the original signing secret.
+    """
+    sig_block = payload.get("signature") or {}
+    body = {k: v for k, v in payload.items() if k != "signature"}
+    canonical = json.dumps(body, sort_keys=True, default=str)
+
+    hmac_ok = bool(sig_block.get("value")) and verify_aibom_signature(canonical, sig_block["value"])
+    ed = sig_block.get("ed25519") or {}
+    ed_ok = bool(ed.get("value")) and verify_detached(canonical.encode(), ed["value"])
+    return {"hmac": hmac_ok, "ed25519": ed_ok}

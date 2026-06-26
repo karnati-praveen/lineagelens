@@ -222,10 +222,30 @@ def test_agent_trace_confidence_in_metadata():
     assert conf["level"] == "high"
 
 
-def test_agent_trace_vcs_is_none():
-    """VCS is not captured at insertion time; must be null."""
+def test_agent_trace_vcs_is_none_when_no_commit():
+    """VCS is null only when no commit was captured."""
     doc = record_to_agent_trace(_rec("r1"))
     assert doc.vcs is None
+
+
+def test_agent_trace_vcs_populated_from_commit():
+    """PART 2 #15 — a captured commit binds the export to a VCS revision."""
+    rec = _rec("r1", payload={"repository": {"gitCommit": "a1b2c3d4"}})
+    doc = record_to_agent_trace(rec)
+    assert doc.vcs is not None
+    assert doc.vcs.type == "git"
+    assert doc.vcs.revision == "a1b2c3d4"
+
+
+def test_agent_trace_range_has_content_hash():
+    """PART 2 #15 — the range carries a durable sha256 content hash, not null."""
+    rec = _rec("r1", inserted_code="def f():\n    return 1\n")
+    doc = record_to_agent_trace(rec)
+    rng = doc.files[0].conversations[0].ranges[0]
+    assert rng.content_hash is not None
+    assert rng.content_hash.startswith("sha256:")
+    import hashlib
+    assert rng.content_hash == "sha256:" + hashlib.sha256(rec.inserted_code.encode()).hexdigest()
 
 
 # ── tool extraction ───────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.models import ProvenanceRecord, RetentionPolicy
+from app.services.record_lifecycle_service import apply_lifecycle_event
 
 logger = logging.getLogger(__name__)
 
@@ -73,24 +74,33 @@ async def run_retention_cleanup(
         for policy in policies:
             ws_id = policy.workspace_id
 
-            # Hard delete records older than retain_days
+            # Delete records older than retain_days via a signed deletion
+            # tombstone — never a physical row delete, which would dangle the
+            # next record's prev_hash and break the append-only chain (PART 2 #11).
             cutoff_delete = now - timedelta(days=policy.retain_days)
             records_to_delete_result = await session.execute(
                 select(ProvenanceRecord).where(
                     and_(
                         ProvenanceRecord.workspace_id == ws_id,
                         ProvenanceRecord.timestamp_iso < cutoff_delete,
+                        ProvenanceRecord.lifecycle_state != "deleted",
                     )
                 )
             )
             records_to_delete = records_to_delete_result.scalars().all()
             for record in records_to_delete:
-                await session.delete(record)
+                await apply_lifecycle_event(
+                    session,
+                    record,
+                    event_type="deletion",
+                    authorized_by="retention-policy",
+                    reason=f"retention: older than {policy.retain_days} days",
+                    policy_ref=f"retention_policy:{ws_id}",
+                )
             deleted_total += len(records_to_delete)
 
-            # Soft redact records older than redact_after_days but not yet queued
-            # for hard deletion — modifying a pending-delete instance in the same
-            # session raises InvalidRequestError.
+            # Redact records older than redact_after_days (but newer than the
+            # delete cutoff) that are not yet redacted.
             if policy.redact_after_days is not None:
                 cutoff_redact = now - timedelta(days=policy.redact_after_days)
                 records_to_redact_result = await session.execute(
@@ -105,11 +115,14 @@ async def run_retention_cleanup(
                 )
                 records_to_redact = records_to_redact_result.scalars().all()
                 for record in records_to_redact:
-                    record.prompt_messages = None
-                    record.raw_model_response = None
-                    record.surrounding_context = None
-                    record.context_snapshot = None
-                    record.is_redacted = True
+                    await apply_lifecycle_event(
+                        session,
+                        record,
+                        event_type="redaction",
+                        authorized_by="retention-policy",
+                        reason=f"retention: redact after {policy.redact_after_days} days",
+                        policy_ref=f"retention_policy:{ws_id}",
+                    )
                 redacted_total += len(records_to_redact)
 
         await session.commit()

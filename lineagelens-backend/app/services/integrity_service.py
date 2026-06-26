@@ -22,6 +22,20 @@ def compute_prompt_sha256(prompt_messages: Any) -> str | None:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+def compute_content_sha256(inserted_code: str | None) -> str | None:
+    """Return SHA-256 hex of the inserted code, or None if absent.
+
+    Stored as a content *commitment* at ingest time so the original code can be
+    cryptographically attested even after it is scrubbed by a redaction or
+    deletion tombstone — the verifier checks the commitment, not the (now
+    removed) plaintext, and reports ``validly_redacted`` / ``validly_deleted``
+    instead of ``tampered``.
+    """
+    if inserted_code is None:
+        return None
+    return hashlib.sha256(inserted_code.encode()).hexdigest()
+
+
 def compute_record_hash(
     *,
     record_uuid: str,

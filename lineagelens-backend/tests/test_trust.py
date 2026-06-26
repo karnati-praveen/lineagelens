@@ -78,6 +78,24 @@ def _outcome_payload(record_uuid: str, outcome_type: str, source: str = "manual"
     }
 
 
+def _seed_n_with_outcome(
+    client, user, *, model_name: str, n: int, outcome_type: str, source: str = "manual",
+    extra_outcome: str | None = None, extra_source: str = "incident",
+) -> list[str]:
+    """Seed n distinct records for a model and post one outcome (+ optional extra) each.
+
+    Used to clear the insufficient_evidence threshold (>=5 decided outcomes).
+    """
+    uuids = []
+    for _ in range(n):
+        rid = _seed_provenance(client.database_url, user.workspace_id, model_name=model_name)
+        client.post("/trust/outcomes", json=_outcome_payload(rid, outcome_type, source), headers=user.auth_headers)
+        if extra_outcome:
+            client.post("/trust/outcomes", json=_outcome_payload(rid, extra_outcome, extra_source), headers=user.auth_headers)
+        uuids.append(rid)
+    return uuids
+
+
 # ─── Tests ────────────────────────────────────────────────────────────────────
 
 def test_ingest_outcome_created(client, make_user):
@@ -154,23 +172,37 @@ def test_durability_groupby_model(client, make_user):
 def test_durability_formula_hand_computed(client, make_user):
     """Verify durability score matches the hand-computed value for a known fixture.
 
-    Fixture: 2 blocks, 1 survived, 1 reverted, 0 incidents, 0 test_failures.
-      survived=1, reverted=1, rewritten=0, test_failed=0, incident_linked=0
-      total_blocks=2, total_out=2, survival_rate=0.5
+    Fixture (scaled to clear the insufficient_evidence threshold): 10 blocks,
+    5 survived, 5 reverted, 0 incidents, 0 test_failures.
+      total_blocks=10, total_out=10, survival_rate=0.5, revert_rate=0.5
       score = round(0.5*70 + (1-0)*15 + (1-0.5)*10 + (1-0)*5)
             = round(35 + 15 + 5 + 5) = 60
     """
     from app.services.outcome_service import _compute_durability_score
 
     score = _compute_durability_score(
-        survived=1,
-        reverted=1,
+        survived=5,
+        reverted=5,
         rewritten=0,
         test_failed=0,
         incident_linked=0,
-        total_blocks=2,
+        total_blocks=10,
     )
     assert score == 60
+
+
+def test_durability_insufficient_evidence_below_threshold(client, make_user):
+    """Below the minimum decided outcomes the score is None, never a misleading 100 (PART 1 #3)."""
+    from app.services.outcome_service import _compute_durability_score
+
+    # 2 survived, nothing else — too few to score.
+    assert _compute_durability_score(
+        survived=2, reverted=0, rewritten=0, test_failed=0, incident_linked=0, total_blocks=2
+    ) is None
+    # Zero outcomes must NOT score 100.
+    assert _compute_durability_score(
+        survived=0, reverted=0, rewritten=0, test_failed=0, incident_linked=0, total_blocks=0
+    ) is None
 
 
 def test_incident_linked_lowers_score(client, make_user):
@@ -178,30 +210,47 @@ def test_incident_linked_lowers_score(client, make_user):
     from app.services.outcome_service import _compute_durability_score
 
     score_clean = _compute_durability_score(
-        survived=2, reverted=0, rewritten=0, test_failed=0, incident_linked=0, total_blocks=2
+        survived=5, reverted=0, rewritten=0, test_failed=0, incident_linked=0, total_blocks=5
     )
     score_incident = _compute_durability_score(
-        survived=2, reverted=0, rewritten=0, test_failed=0, incident_linked=2, total_blocks=2
+        survived=5, reverted=0, rewritten=0, test_failed=0, incident_linked=5, total_blocks=5
     )
     assert score_incident < score_clean
 
 
 def test_durability_via_api_with_incidents(client, make_user):
-    """End-to-end: a model with all incident-linked should have lower score than one with all survived."""
+    """End-to-end: a model with incidents should score lower than one with all survived."""
     user = make_user(role="member")
-    db_url = client.database_url
 
-    rec_good = _seed_provenance(db_url, user.workspace_id, model_name="good-model")
-    rec_bad = _seed_provenance(db_url, user.workspace_id, model_name="bad-model")
-
-    client.post("/trust/outcomes", json=_outcome_payload(rec_good, "survived"), headers=user.auth_headers)
-    client.post("/trust/outcomes", json=_outcome_payload(rec_bad, "incident_linked", "incident"), headers=user.auth_headers)
+    _seed_n_with_outcome(client, user, model_name="good-model", n=5, outcome_type="survived")
+    # bad-model: same 5 survived but each also incident-linked.
+    _seed_n_with_outcome(
+        client, user, model_name="bad-model", n=5, outcome_type="survived",
+        extra_outcome="incident_linked", extra_source="incident",
+    )
 
     resp = client.get("/trust/durability?groupBy=model", headers=user.auth_headers)
     assert resp.status_code == 200
     items = {i["groupValue"]: i for i in resp.json()["items"]}
 
+    assert items["good-model"]["scoreStatus"] == "ok"
+    assert items["bad-model"]["scoreStatus"] == "ok"
     assert items["good-model"]["durabilityScore"] > items["bad-model"]["durabilityScore"]
+
+
+def test_durability_api_insufficient_evidence(client, make_user):
+    """A model with a single outcome reports insufficient_evidence, not a number."""
+    user = make_user(role="member")
+    rec = _seed_provenance(client.database_url, user.workspace_id, model_name="sparse-model")
+    client.post("/trust/outcomes", json=_outcome_payload(rec, "survived"), headers=user.auth_headers)
+
+    resp = client.get("/trust/durability?groupBy=model", headers=user.auth_headers)
+    items = {i["groupValue"]: i for i in resp.json()["items"]}
+    sparse = items["sparse-model"]
+    assert sparse["durabilityScore"] is None
+    assert sparse["scoreStatus"] == "insufficient_evidence"
+    assert "survivalRateCI95" in sparse
+    assert sparse["negativeOutcomesByTrust"]["declared"] == 0
 
 
 def test_workspace_isolation_durability(client, make_user):

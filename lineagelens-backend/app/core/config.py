@@ -146,7 +146,8 @@ class Settings(BaseSettings):
     attestation_signing_key: str | None = Field(default=None, alias="ATTESTATION_SIGNING_KEY")
 
     # Path to a JSON file containing license fingerprint corpus for F5 license matching.
-    # If unset, all scans return "clean" (safe default — no false positives without corpus).
+    # If unset, scans return "not_configured" (NOT "clean") — absence of a corpus is
+    # not evidence of cleanliness (PART 1 #2).
     license_fingerprint_path: str | None = Field(default=None, alias="LICENSE_FINGERPRINT_PATH")
 
     # Paid-tier license (offline, Ed25519-signed). The reader of record is

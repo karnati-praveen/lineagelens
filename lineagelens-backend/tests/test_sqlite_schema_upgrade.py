@@ -73,5 +73,9 @@ def test_initialize_database_upgrades_legacy_sqlite_provenance_schema() -> None:
     assert "token_count" in columns
     assert "cost_usd" in columns
     assert "is_redacted" in columns
+    # PART 2 #10/#11 — content commitments + privacy lifecycle state.
+    assert "prompt_sha256" in columns
+    assert "content_sha256" in columns
+    assert "lifecycle_state" in columns
     assert "ix_provenance_records_risk_score" in indexes
     assert "ix_provenance_workspace_risk" in indexes

@@ -41,11 +41,18 @@ def compute_action_hash(
     arguments_json: dict | None,
     occurred_at: str,
     prev_hash: str | None,
+    agent_identity: str | None = None,
+    human_principal: str | None = None,
+    mandate_ref: str | None = None,
+    capability: str | None = None,
+    authority_state: str | None = None,
 ) -> str:
     """SHA-256 chain hash for one AgentAction row.
 
     Canonical serialisation is sorted-key JSON; any retrospective DB edit
-    changes the hash and breaks the chain — that is the tamper signal.
+    changes the hash and breaks the chain — that is the tamper signal. The
+    authority context (PART 2 #16) is bound into the hash so a claim that an
+    action was permitted cannot be added or altered after the fact.
     """
     canonical = json.dumps(
         {
@@ -56,6 +63,11 @@ def compute_action_hash(
             "arguments_json": arguments_json or {},
             "occurred_at": occurred_at,
             "prev_hash": prev_hash or "",
+            "agent_identity": agent_identity or "",
+            "human_principal": human_principal or "",
+            "mandate_ref": mandate_ref or "",
+            "capability": capability or "",
+            "authority_state": authority_state or "",
         },
         sort_keys=True,
         default=str,
@@ -233,6 +245,15 @@ async def record_action(
         occurred_at = datetime.now(tz=UTC)
 
     occurred_iso = occurred_at.isoformat()
+
+    # PART 2 #16 — derive authority context. Absence of a mandate is recorded as
+    # "unmandated", never silently treated as authorised.
+    agent_identity = getattr(action, "agentIdentity", None)
+    human_principal = getattr(action, "humanPrincipal", None)
+    mandate_ref = getattr(action, "mandateRef", None)
+    capability = getattr(action, "capability", None)
+    authority_state = "mandated" if mandate_ref else "unmandated"
+
     record_hash = compute_action_hash(
         workspace_id=workspace_id,
         session_key=session_key,
@@ -241,6 +262,11 @@ async def record_action(
         arguments_json=args,
         occurred_at=occurred_iso,
         prev_hash=prev_hash,
+        agent_identity=agent_identity,
+        human_principal=human_principal,
+        mandate_ref=mandate_ref,
+        capability=capability,
+        authority_state=authority_state,
     )
 
     row = AgentAction(
@@ -251,6 +277,11 @@ async def record_action(
         tool_name=action.toolName,
         arguments_json=args,
         risk_flags_json=risk,
+        agent_identity=agent_identity,
+        human_principal=human_principal,
+        mandate_ref=mandate_ref,
+        capability=capability,
+        authority_state=authority_state,
         record_hash=record_hash,
         prev_hash=prev_hash,
         occurred_at=occurred_at,

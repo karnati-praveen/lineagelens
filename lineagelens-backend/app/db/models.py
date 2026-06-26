@@ -104,9 +104,28 @@ class ProvenanceRecord(Base):
     record_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     prev_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    # Content commitments captured at hash-chain time. These let a redaction or
+    # deletion tombstone scrub the plaintext (prompt / inserted_code) while the
+    # verifier can still confirm the original content via its committed digest —
+    # so privacy operations report `validly_redacted`/`validly_deleted` rather
+    # than a false `tampered`. NULL on Lite / pre-migration / non-chained rows.
+    prompt_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Privacy lifecycle state: active | redacted | deleted.
+    #   active   — full content present.
+    #   redacted — sensitive prompt/response/context scrubbed; inserted_code kept.
+    #   deleted  — tombstone: all content scrubbed, row + hash-chain link retained.
+    # A redacted/deleted row MUST have a matching signed RecordLifecycleEvent;
+    # content missing without one is what the verifier treats as tampering.
+    lifecycle_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active", server_default="active", index=True
+    )
+
     # F5 license-contamination fields — populated by license_match_service.scan_and_record.
-    # NULL means not yet scanned.  Values: clean | review | match.
-    license_status: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    # NULL means not yet scanned (surfaced as not_scanned). Values: not_configured |
+    # insufficient_corpus | clean_within_corpus | review | match | scan_error.
+    license_status: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     license_match_license: Mapped[str | None] = mapped_column(String(128), nullable=True)
     license_similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
 
@@ -250,8 +269,55 @@ class Policy(Base):
     action: Mapped[str] = mapped_column(String(32), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Pointer to the current immutable PolicyVersion. Every edit appends a new
+    # version (never an in-place patch) so a past decision can be reproduced
+    # against the exact policy text that produced it (PART 2 #12).
+    current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    current_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Soft-archive flag — delete is non-destructive so version history survives.
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class PolicyVersion(Base):
+    """Immutable, append-only snapshot of a Policy at one point in time.
+
+    Editing or deleting a policy used to mutate/remove the row in place, so a
+    decision made under an old policy could no longer be reproduced (PART 2 #12).
+    Each create/update/archive now appends one of these frozen versions, carrying
+    a content digest and the evaluator version, and decisions reference the
+    digest of the version that produced them.
+    """
+
+    __tablename__ = "policy_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    policy_id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(), index=True, nullable=False)
+    workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # create | update | archive
+    change_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    policy_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    config: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # SHA-256 of the canonical (name, description, policy_type, config, action).
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    evaluator_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    # Set when a newer version supersedes this one (the row itself stays immutable).
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_policy_version_policy", "policy_id", "version"),
+        UniqueConstraint("policy_id", "version", name="uq_policy_version"),
+    )
 
 
 class ResourcePermission(Base):
@@ -427,6 +493,19 @@ class RecallCampaign(Base):
     criteria_json: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open", server_default="open")
     matched_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # PART 2 #13 — frozen, signed membership snapshot taken at open time. Without
+    # this, quarantine re-ran the criteria and the matched set could drift.
+    criteria_version: Mapped[str] = mapped_column(String(16), nullable=False, default="1", server_default="1")
+    member_uuids: Mapped[list] = mapped_column(_JSON_TYPE, nullable=False, default=list)
+    member_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    member_signature: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    member_public_key_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Frozen blast-radius descendants + the coverage state of that computation.
+    blast_uuids: Mapped[list] = mapped_column(_JSON_TYPE, nullable=False, default=list)
+    blast_coverage_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    graph_checkpoint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -534,6 +613,53 @@ class Attestation(Base):
     )
 
 
+class RecordLifecycleEvent(Base):
+    """Signed, append-only record of a privacy operation on a provenance record.
+
+    Redaction and deletion no longer silently mutate a record (which made the
+    hash chain report a false `tampered` and broke chain linkage when rows were
+    physically removed).  Instead each operation:
+
+      * commits to the original content (prompt_sha256 / content_sha256),
+      * is signed with the Ed25519 attestation key, and
+      * leaves the original row in place as a tombstone (chain link preserved).
+
+    The offline verifier uses these events to report `validly_redacted` /
+    `validly_deleted` instead of `tampered`.
+    """
+
+    __tablename__ = "record_lifecycle_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Non-enumerable public identifier for any future public verify endpoint.
+    public_ref: Mapped[uuid_pkg.UUID] = mapped_column(
+        Uuid(), unique=True, index=True, nullable=False, default=uuid_pkg.uuid4
+    )
+    workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    record_uuid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    # event_type: redaction | deletion
+    event_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Free-form reference to the policy / legal basis that authorised the operation.
+    policy_ref: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    authorized_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Commitment to the removed content: {prompt_sha256, content_sha256, fields_removed}
+    content_commitment: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False, default=dict)
+    # Signed attestation statement + signature (Ed25519, verifiable offline).
+    statement_json: Mapped[str] = mapped_column(Text, nullable=False)
+    signature: Mapped[str] = mapped_column(String(256), nullable=False)
+    public_key_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Links the event to the record_hash of the version it acted on.
+    prev_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_lifecycle_event_workspace_record", "workspace_id", "record_uuid"),
+    )
+
+
 class HumanReviewAttestation(Base):
     """Signed attestation that a human reviewed AI-generated lines in a change.
 
@@ -610,6 +736,22 @@ class AgentAction(Base):
     arguments_json: Mapped[dict | None] = mapped_column(_JSON_TYPE, nullable=True)
     # Risky pattern flags: {"patterns": [...], "riskLevel": "high|medium|low"}
     risk_flags_json: Mapped[dict | None] = mapped_column(_JSON_TYPE, nullable=True)
+
+    # PART 2 #16 — authority context. The ledger recorded *effects* but not
+    # *authority*: who/what was permitted to act. These capture the agent's
+    # identity, the human principal who delegated, the governing mandate, the
+    # capability exercised, and whether the action was authorised at execution
+    # time. authority_state defaults to "unmandated" (NOT "allowed") when no
+    # mandate is supplied — absence of a mandate is not authorisation.
+    agent_identity: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    human_principal: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    mandate_ref: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    capability: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # unmandated | mandated | expired | exceeded | unknown
+    authority_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="unmandated", server_default="unmandated"
+    )
+
     # Tamper-evident chain: SHA-256 of this record; prev_hash links to predecessor
     record_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     prev_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)

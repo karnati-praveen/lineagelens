@@ -12,17 +12,45 @@ from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
 
-_CURRENT_ALEMBIC_HEAD = "202606150001"
+_CURRENT_ALEMBIC_HEAD = "202606260005"
 _SQLITE_PROVENANCE_COLUMNS = {
     "risk_score": "INTEGER",
     "token_count": "INTEGER",
     "cost_usd": "FLOAT",
     "is_redacted": "BOOLEAN NOT NULL DEFAULT 0",
+    "prompt_sha256": "VARCHAR(64)",
+    "content_sha256": "VARCHAR(64)",
+    "lifecycle_state": "VARCHAR(16) NOT NULL DEFAULT 'active'",
 }
 _SQLITE_PROVENANCE_INDEXES = (
     "CREATE INDEX IF NOT EXISTS ix_provenance_records_risk_score ON provenance_records (risk_score)",
     "CREATE INDEX IF NOT EXISTS ix_provenance_workspace_risk ON provenance_records (workspace_id, risk_score)",
 )
+# Columns added to existing `policies` tables on legacy SQLite upgrades (PART 2 #12).
+_SQLITE_POLICY_COLUMNS = {
+    "current_version": "INTEGER NOT NULL DEFAULT 1",
+    "current_digest": "VARCHAR(64)",
+    "archived": "BOOLEAN NOT NULL DEFAULT 0",
+}
+# Columns added to existing `recall_campaigns` tables on legacy SQLite (PART 2 #13/#14).
+_SQLITE_RECALL_COLUMNS = {
+    "criteria_version": "VARCHAR(16) NOT NULL DEFAULT '1'",
+    "member_uuids": "JSON",
+    "member_digest": "VARCHAR(64)",
+    "member_signature": "VARCHAR(256)",
+    "member_public_key_id": "VARCHAR(64)",
+    "blast_uuids": "JSON",
+    "blast_coverage_status": "VARCHAR(32)",
+    "graph_checkpoint": "VARCHAR(64)",
+}
+# Columns added to existing `agent_actions` tables on legacy SQLite (PART 2 #16).
+_SQLITE_AGENT_ACTION_COLUMNS = {
+    "agent_identity": "VARCHAR(256)",
+    "human_principal": "VARCHAR(256)",
+    "mandate_ref": "VARCHAR(256)",
+    "capability": "VARCHAR(64)",
+    "authority_state": "VARCHAR(16) NOT NULL DEFAULT 'unmandated'",
+}
 
 
 def _is_sqlite(url: str) -> bool:
@@ -83,6 +111,30 @@ def _upgrade_sqlite_schema(connection) -> None:
 
     for statement in _SQLITE_PROVENANCE_INDEXES:
         connection.exec_driver_sql(statement)
+
+    if "policies" in inspector.get_table_names():
+        policy_columns = {column["name"] for column in inspector.get_columns("policies")}
+        for column_name, column_sql in _SQLITE_POLICY_COLUMNS.items():
+            if column_name not in policy_columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE policies ADD COLUMN {column_name} {column_sql}"
+                )
+
+    if "recall_campaigns" in inspector.get_table_names():
+        recall_columns = {column["name"] for column in inspector.get_columns("recall_campaigns")}
+        for column_name, column_sql in _SQLITE_RECALL_COLUMNS.items():
+            if column_name not in recall_columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE recall_campaigns ADD COLUMN {column_name} {column_sql}"
+                )
+
+    if "agent_actions" in inspector.get_table_names():
+        action_columns = {column["name"] for column in inspector.get_columns("agent_actions")}
+        for column_name, column_sql in _SQLITE_AGENT_ACTION_COLUMNS.items():
+            if column_name not in action_columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE agent_actions ADD COLUMN {column_name} {column_sql}"
+                )
 
 
 async def initialize_database(engine: AsyncEngine) -> None:

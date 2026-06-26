@@ -76,6 +76,29 @@ def get_public_key_hex() -> str:
     return pk.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
 
 
+def sign_detached(data: bytes) -> tuple[str, str]:
+    """Sign arbitrary bytes with the Ed25519 attestation key.
+
+    Returns (signature_hex, public_key_id). Used to add an asymmetric signature
+    to artifacts (e.g. the AI-BOM) so a standalone tool holding only the public
+    key can verify them — unlike an HMAC, which needs the shared secret
+    (PART 1 #9).
+    """
+    private_key = _load_private_key()
+    sig = private_key.sign(data)
+    return sig.hex(), _get_public_key_id(private_key)
+
+
+def verify_detached(data: bytes, signature_hex: str) -> bool:
+    """Verify a detached Ed25519 signature over *data*. Returns False, never raises."""
+    try:
+        pub_key = _load_private_key().public_key()
+        pub_key.verify(bytes.fromhex(signature_hex), data)
+        return True
+    except Exception:
+        return False
+
+
 def build_attestation(
     subject_type: str,
     subject_id: str,

@@ -100,9 +100,9 @@ def test_aibom_top_level_keys():
         assert k in aibom, f"missing top-level key: {k!r}"
 
 
-def test_aibom_schema_version_is_1_0():
+def test_aibom_schema_version_is_current():
     aibom = asyncio.run(generate_aibom(_FakeSession([_rec("r1")]), "ws"))
-    assert aibom["schema_version"] == "1.0"
+    assert aibom["schema_version"] == "1.1"
 
 
 def test_aibom_signature_algorithm_and_length():
@@ -110,6 +110,35 @@ def test_aibom_signature_algorithm_and_length():
     assert aibom["signature"]["algorithm"] == "hmac-sha256"
     assert len(aibom["signature"]["value"]) == 64
     assert all(c in "0123456789abcdef" for c in aibom["signature"]["value"])
+
+
+def test_aibom_has_ed25519_signature():
+    """PART 1 #9 — AI-BOM carries an asymmetric Ed25519 signature + public key."""
+    aibom = asyncio.run(generate_aibom(_FakeSession([_rec("r1")]), "ws"))
+    ed = aibom["signature"]["ed25519"]
+    assert ed["algorithm"] == "ed25519"
+    assert len(ed["value"]) == 128  # 64-byte sig, hex
+    assert len(ed["publicKeyHex"]) == 64  # 32-byte raw public key, hex
+
+
+def test_aibom_ed25519_verifies_offline_with_public_key():
+    """The Ed25519 signature verifies using only the public key in the document."""
+    from app.services.aibom_service import verify_aibom
+
+    aibom = asyncio.run(generate_aibom(_FakeSession([_rec("r1")]), "ws"))
+    result = verify_aibom(aibom)
+    assert result["ed25519"] is True
+    assert result["hmac"] is True
+
+
+def test_aibom_ed25519_detects_mutation():
+    from app.services.aibom_service import verify_aibom
+
+    aibom = asyncio.run(generate_aibom(_FakeSession([_rec("r1")]), "ws"))
+    aibom["summary"]["total_records"] = 4242  # tamper after signing
+    result = verify_aibom(aibom)
+    assert result["ed25519"] is False
+    assert result["hmac"] is False
 
 
 def test_aibom_summary_model_counts():

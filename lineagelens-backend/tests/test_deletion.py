@@ -1,13 +1,15 @@
 """Tests for app/api/routes/deletion.py.
 
 Covers:
-  - Hard-delete is workspace-scoped (cannot delete another workspace's record)
+  - Delete is workspace-scoped (cannot delete another workspace's record)
   - Deletion writes an audit event
   - Non-admin is forbidden from deleting
   - Soft-redact clears sensitive fields and marks is_redacted=True
   - Redacting an already-redacted record returns 409
   - Redact writes an audit event
-  - Right-to-erasure (hard delete) removes the row from the DB
+  - Deletion is a signed tombstone: the row is retained (so the append-only
+    hash chain is not broken) but all content is scrubbed and a signed
+    RecordLifecycleEvent is written (PART 2 #11).
 
 Fixtures: client, make_user, db_query from conftest.py.
 """
@@ -80,14 +82,66 @@ def _get_record(db_query, workspace_id: str, record_uuid: str):
 # ── Hard delete ───────────────────────────────────────────────────────────────
 
 def test_admin_can_delete_own_workspace_record(client, make_user, db_query):
-    """Admin can hard-delete a record in their own workspace."""
+    """Admin can delete a record in their own workspace via a signed tombstone.
+
+    The row is retained (chain integrity) but content is scrubbed and the
+    lifecycle state becomes 'deleted'.
+    """
     admin = make_user(role="admin")
     record_uuid = _seed_record(db_query, admin.workspace_id)
 
     resp = client.delete(f"/provenance/{record_uuid}", headers=admin.auth_headers)
     assert resp.status_code == 204, resp.text
 
-    assert not _record_exists(db_query, admin.workspace_id, record_uuid)
+    # Tombstone: row still exists, but content is scrubbed and state is 'deleted'.
+    rec = _get_record(db_query, admin.workspace_id, record_uuid)
+    assert rec is not None
+    assert rec.lifecycle_state == "deleted"
+    assert rec.is_redacted is True
+    assert rec.inserted_code == ""
+    assert rec.prompt_messages is None
+    assert rec.raw_model_response is None
+
+
+def test_delete_writes_signed_lifecycle_event(client, make_user, db_query):
+    """Deletion writes a signed RecordLifecycleEvent that verifies and commits the content."""
+    from app.db.models import RecordLifecycleEvent
+    from app.services.record_lifecycle_service import verify_event_signature
+
+    admin = make_user(role="admin")
+    code = "print('to be erased')"
+    record_uuid = _seed_record(db_query, admin.workspace_id, inserted_code=code)
+
+    resp = client.delete(f"/provenance/{record_uuid}", headers=admin.auth_headers)
+    assert resp.status_code == 204, resp.text
+
+    async def _get_event(session):
+        from sqlalchemy import select
+        result = await session.execute(
+            select(RecordLifecycleEvent).where(
+                RecordLifecycleEvent.record_uuid == record_uuid
+            )
+        )
+        return result.scalar_one_or_none()
+
+    event = db_query(_get_event)
+    assert event is not None
+    assert event.event_type == "deletion"
+    assert verify_event_signature(event) is True
+    # Commitment freezes the original code digest even though plaintext is gone.
+    import hashlib
+    assert event.content_commitment["content_sha256"] == hashlib.sha256(code.encode()).hexdigest()
+
+
+def test_double_delete_returns_409(client, make_user, db_query):
+    """Deleting an already-deleted (tombstoned) record returns 409."""
+    admin = make_user(role="admin")
+    record_uuid = _seed_record(db_query, admin.workspace_id)
+
+    r1 = client.delete(f"/provenance/{record_uuid}", headers=admin.auth_headers)
+    assert r1.status_code == 204
+    r2 = client.delete(f"/provenance/{record_uuid}", headers=admin.auth_headers)
+    assert r2.status_code == 409
 
 
 def test_delete_writes_audit_event(client, make_user, db_query):

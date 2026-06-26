@@ -22,6 +22,18 @@ logger = logging.getLogger(__name__)
 
 _VALID_SCOPES = {"record", "pr", "release"}
 
+# PART 1 #1 — this artifact is a *Policy Eligibility Attestation*, not insurance.
+# It only attests that a scope met the configured policy (max risk, license
+# state, review state) and was signed. There is no insurer, warranty, payout,
+# or claims process. Every response carries this disclaimer to prevent the
+# "indemnity" name from implying coverage that does not exist.
+ATTESTATION_TYPE = "policy_eligibility_attestation"
+ATTESTATION_DISCLAIMER = (
+    "This is a Policy Eligibility Attestation: a signed statement that the scope "
+    "met the configured policy at issuance time. It is NOT insurance, indemnity, a "
+    "warranty, or a guarantee, and carries no payout or claims process."
+)
+
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
 
@@ -69,6 +81,8 @@ def _serialize_cert(cert: IndemnityCertificate) -> dict:
     return {
         "id": str(cert.id),
         "workspaceId": cert.workspace_id,
+        "attestationType": ATTESTATION_TYPE,
+        "disclaimer": ATTESTATION_DISCLAIMER,
         "scope": cert.scope,
         "scopeRef": cert.scope_ref,
         "eligibility": cert.eligibility,
@@ -141,7 +155,10 @@ async def create_certificate(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> dict:
-    """Evaluate eligibility and issue an indemnity certificate."""
+    """Evaluate eligibility and issue a Policy Eligibility Attestation (PART 1 #1).
+
+    This is not insurance/indemnity — see ATTESTATION_DISCLAIMER in the response.
+    """
     if body.scope not in _VALID_SCOPES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -243,6 +260,8 @@ async def verify_certificate(
 
     return {
         "id": cert_id,
+        "attestationType": ATTESTATION_TYPE,
+        "disclaimer": ATTESTATION_DISCLAIMER,
         "valid": valid and not expired,
         "signatureValid": valid,
         "expired": expired,

@@ -26,8 +26,32 @@ from app.schemas.agent_trace import (
     AgentTraceFile,
     AgentTraceRange,
     AgentTraceTool,
+    AgentTraceVcs,
 )
-from app.services.integrity_service import compute_prompt_sha256, compute_record_hash
+from app.services.integrity_service import (
+    compute_content_sha256,
+    compute_prompt_sha256,
+    compute_record_hash,
+)
+
+
+def _extract_commit(payload: dict, source: dict) -> str | None:
+    """Find a VCS commit/revision anywhere the capture pipeline might place it."""
+    repo = payload.get("repository") or {}
+    vcs = payload.get("vcs") or {}
+    for candidate in (
+        repo.get("gitCommit"),
+        repo.get("commitSha"),
+        repo.get("commit"),
+        payload.get("gitCommit"),
+        payload.get("commitSha"),
+        vcs.get("revision"),
+        source.get("gitCommit"),
+        source.get("commitSha"),
+    ):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
 
 
 def _derive_contributor_type(
@@ -88,6 +112,12 @@ def record_to_agent_trace(
         model_id=(record.model_name or model_block.get("name")) or None,
     )
 
+    # PART 2 #15 — bind a durable content hash so the range can be re-located
+    # after line moves/rebase/format drift instead of relying only on line
+    # numbers. Prefer the commitment captured at hash-chain time.
+    content_sha = getattr(record, "content_sha256", None) or compute_content_sha256(record.inserted_code)
+    content_hash = f"sha256:{content_sha}" if content_sha else None
+
     conversation = AgentTraceConversation(
         # TODO:SPEC url should be a conversation lookup URL; we have only an
         # opaque conversationId, not a URL, so this is null.
@@ -96,9 +126,7 @@ def record_to_agent_trace(
         ranges=[AgentTraceRange(
             start_line=start_line,
             end_line=end_line,
-            # TODO:SPEC content_hash ("algorithm:hash") requires hashing the
-            # inserted code range; LineageLens does not compute this; null.
-            content_hash=None,
+            content_hash=content_hash,
         )],
     )
 
@@ -135,11 +163,16 @@ def record_to_agent_trace(
     if rich_tool:
         metadata["lineagelens.tool"] = rich_tool
 
+    # PART 2 #15 — bind to the source commit when the capture pipeline supplied
+    # one, so the range survives rebase/cherry-pick. Null only when truly absent.
+    commit = _extract_commit(payload, source)
+    vcs = AgentTraceVcs(type="git", revision=commit) if commit else None
+
     return AgentTraceDocument(
         version=SPEC_VERSION,
         id=str(record.uuid),
         timestamp=record.timestamp_iso.isoformat(),
-        vcs=None,   # TODO:SPEC commit SHA not captured at insertion time
+        vcs=vcs,
         tool=tool,
         files=[AgentTraceFile(
             path=record.file_path,

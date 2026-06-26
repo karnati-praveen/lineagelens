@@ -22,9 +22,15 @@ Durability score formula (0–100):
   Interpretation: 100 = no negative outcomes, fully survived.
   Incident linkage is penalised most heavily (up to -15 from the 15-pt band),
   then reverts/rewrites (-10), then test failures (-5).
-  A group with zero outcomes starts at 100 (neutral assumption of survival).
+
+  A group with fewer than _MIN_DECIDED_OUTCOMES decided outcomes scores None
+  (scoreStatus="insufficient_evidence"), NOT 100 — absence of observed failure
+  is not evidence of durability (PART 1 #3). Survival is reported as a rate
+  *with* a Wilson 95% CI, and negative outcomes are broken down by source trust
+  (PART 1 #4).
 """
 
+import math
 import statistics
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -43,6 +49,41 @@ _VALID_SOURCES = frozenset({"git", "ci", "incident", "review", "manual"})
 _VALID_GROUP_BY = frozenset({"model", "prompt_pattern", "developer"})
 
 _DEDUP_WINDOW_HOURS = 24
+
+# PART 1 #3 — a durability score is meaningless without enough observed outcomes.
+# Below this many decided outcomes we report `insufficient_evidence`, never 100.
+_MIN_DECIDED_OUTCOMES = 5
+
+# PART 1 #4 — outcomes carry no cryptographic source proof, so rank by how
+# directly observed the source is. A self-declared "manual" survival is far
+# weaker evidence than a CI/git-observed revert.
+_SOURCE_TRUST = {
+    "ci": "observed",
+    "git": "observed",
+    "incident": "corroborated",
+    "review": "corroborated",
+    "manual": "declared",
+}
+
+
+def source_trust(source: str) -> str:
+    """Map an outcome source to its evidence-trust tier (observed/corroborated/declared)."""
+    return _SOURCE_TRUST.get(source, "declared")
+
+
+def _wilson_interval(successes: int, n: int, z: float = 1.96) -> tuple[float, float] | None:
+    """Wilson score 95% confidence interval for a survival proportion.
+
+    Honest uncertainty: a 1/1 survival is not the same as 50/50, and the CI
+    width makes the difference visible instead of collapsing to a point score.
+    """
+    if n <= 0:
+        return None
+    phat = successes / n
+    denom = 1.0 + z * z / n
+    center = (phat + z * z / (2 * n)) / denom
+    margin = (z * math.sqrt((phat * (1 - phat) + z * z / (4 * n)) / n)) / denom
+    return (round(max(0.0, center - margin), 4), round(min(1.0, center + margin), 4))
 
 
 async def record_outcome(
@@ -110,12 +151,19 @@ def _compute_durability_score(
     test_failed: int,
     incident_linked: int,
     total_blocks: int,
-) -> int:
-    """Pure function implementing the durability formula documented in module docstring."""
-    if total_blocks == 0:
-        return 100
+) -> int | None:
+    """Durability score (0–100), or None when there is insufficient evidence.
 
+    PART 1 #3: a group with no decided outcomes used to score 100 ("looks
+    perfect"). That is false assurance — it means "we have not observed
+    anything", not "nothing went wrong". We now return None below a minimum
+    number of decided outcomes; callers surface `insufficient_evidence`.
+    """
     terminal = reverted + rewritten
+    decided = terminal + survived
+    if total_blocks == 0 or decided < _MIN_DECIDED_OUTCOMES:
+        return None
+
     total_out = terminal + survived
     survival_rate = survived / total_out if total_out > 0 else 1.0
     incident_rate = incident_linked / total_blocks
@@ -248,7 +296,10 @@ async def compute_durability(
 
         terminal = reverted + rewritten
         total_out = terminal + survived
-        survival_rate = round(survived / total_out, 4) if total_out > 0 else 1.0
+        # Honest uncertainty: only report a point survival_rate alongside its CI,
+        # and don't pretend an empty sample is 100% survival.
+        survival_rate = round(survived / total_out, 4) if total_out > 0 else None
+        survival_ci = _wilson_interval(survived, total_out)
         incident_rate = round(incident_linked / total_blocks, 4)
 
         score = _compute_durability_score(
@@ -259,6 +310,20 @@ async def compute_durability(
             incident_linked=incident_linked,
             total_blocks=total_blocks,
         )
+        score_status = "ok" if score is not None else "insufficient_evidence"
+
+        # Negative outcomes ranked by source trust (PART 1 #4). A self-declared
+        # ("manual") revert is weaker evidence than a CI/git-observed one.
+        negative_by_trust = {"observed": 0, "corroborated": 0, "declared": 0}
+        for otype in ("reverted", "rewritten_by_human", "test_failed", "incident_linked"):
+            for o in by_type.get(otype, []):
+                negative_by_trust[source_trust(o.source)] += 1
+
+        observed_times = [o.observed_at for o in outcomes if o.observed_at]
+        observation_window = {
+            "from": min(observed_times).isoformat() if observed_times else None,
+            "to": max(observed_times).isoformat() if observed_times else None,
+        }
 
         results.append({
             "groupBy": group_by,
@@ -270,13 +335,20 @@ async def compute_durability(
             "testFailedCount": test_failed,
             "incidentLinkedCount": incident_linked,
             "reviewFlaggedCount": review_flagged,
+            "decidedOutcomes": total_out,
             "survivalRate": survival_rate,
+            "survivalRateCI95": list(survival_ci) if survival_ci else None,
             "incidentRate": incident_rate,
             "medianTimeToRevertSeconds": median_ttr,
             "durabilityScore": score,
+            "scoreStatus": score_status,
+            "minDecidedOutcomesForScore": _MIN_DECIDED_OUTCOMES,
+            "negativeOutcomesByTrust": negative_by_trust,
+            "observationWindow": observation_window,
         })
 
-    results.sort(key=lambda x: x["durabilityScore"], reverse=True)
+    # Sort best-first; groups with insufficient evidence (score=None) sort last.
+    results.sort(key=lambda x: x["durabilityScore"] if x["durabilityScore"] is not None else -1, reverse=True)
     return results
 
 
@@ -330,6 +402,7 @@ async def get_record_outcome_timeline(
             "id": o.id,
             "outcomeType": o.outcome_type,
             "source": o.source,
+            "sourceTrust": source_trust(o.source),
             "observedAt": o.observed_at.isoformat(),
             "detailJson": o.detail_json,
         }

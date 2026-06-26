@@ -150,8 +150,15 @@ resolve whether the edit actually landed.
   cost savings on every routed record.
 - **Tamper-evident hash chain** — on Plus/Max, each record is SHA-256 hashed and linked to its
   predecessor. `GET /integrity/verify` walks the chain and reports the first tampered record.
-- **Signed AI Bill of Materials** — `POST /integrity/aibom` produces an HMAC-signed summary
-  (percent AI-authored, per-model breakdown, disclosure coverage, chain status) for compliance.
+  This is *tamper-evident*, not immutable: it detects edits that don't also rewrite the chain.
+  A party with full write access to the database could recompute every hash; strengthen this
+  with externally-witnessed periodic roots if that is in your threat model. Redaction and
+  deletion are handled as signed lifecycle tombstones, so the verifier reports
+  `validly_redacted` / `validly_deleted` rather than a false `tampered`.
+- **Signed AI Bill of Materials** — `POST /integrity/aibom` produces a dual-signed summary
+  (percent AI-authored, per-model breakdown, disclosure coverage, chain status). It carries an
+  HMAC signature (verifiable by the secret holder) **and** an Ed25519 signature plus public key,
+  so a standalone tool can verify the document offline.
 - **Agent Trace interchange** — export/import records in the portable
   [cursor/agent-trace 0.1.0](https://github.com/cursor/agent-trace) format
   (`GET /export/agent-trace`, `POST /import/agent-trace`, or the extension's
@@ -243,11 +250,17 @@ architecture reference.
 
 ## Compliance context
 
-The **EU AI Act (Articles 11, 12, 14)**, enforceable from August 2026, requires organizations
-to document which AI model generated code, what governed its generation, and what human review
-occurred. LineageLens creates that audit trail automatically at the point of generation — the
-hash chain provides tamper evidence and the signed AI-BOM provides an exportable summary —
-without changing the git workflow.
+Frameworks such as the **EU AI Act (e.g. Articles 11, 12, 14)** push organizations to document
+which AI model generated code, what governed its generation, and what human review occurred.
+LineageLens can supply technical records that support such documentation — captured at the point
+of generation, with a tamper-evident hash chain and an exportable signed AI-BOM — without
+changing the git workflow.
+
+This is **not a compliance certification**, and it does not by itself make you "EU AI Act
+compliant." Whether any specific obligation applies depends on your system, your role
+(provider/deployer), the use case, and its risk classification, and the regulation is being
+phased in over time. Treat LineageLens as evidence tooling and have qualified counsel determine
+applicability for your situation.
 
 ---
 

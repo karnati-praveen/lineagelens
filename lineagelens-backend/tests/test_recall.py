@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from app.db.session import _CURRENT_ALEMBIC_HEAD
 
-_REVISION = "202606150001"
+_REVISION = "202606260005"
 
 
 # ─── Migration sanity ─────────────────────────────────────────────────────────
@@ -266,12 +266,16 @@ def test_blast_radius_includes_descendants(client, make_user, monkeypatch):
         # called as session.run(query, params) inside the neo4j session
         ...
 
-    from unittest.mock import AsyncMock as _AsyncMock
+    from app.services.recall_service import BlastRadiusResult
 
     async def _fake_compute_blast_radius(neo4j_svc, uuids, workspace_id):
-        if parent_uuid in uuids:
-            return [child_uuid]
-        return []
+        descendants = [child_uuid] if parent_uuid in uuids else []
+        return BlastRadiusResult(
+            descendant_uuids=descendants,
+            coverage_status="checked" if descendants else "checked_empty",
+            sources_checked=["neo4j"],
+            graph_checkpoint="2026-06-26T00:00:00+00:00",
+        )
 
     monkeypatch.setattr(
         "app.api.routes.recall.compute_blast_radius",
@@ -293,8 +297,43 @@ def test_blast_radius_includes_descendants(client, make_user, monkeypatch):
         body = preview_resp.json()
         assert child_uuid in body["blastUuids"]
         assert body["blastRadiusCount"] >= 1
+        assert body["blastRadius"]["coverageStatus"] == "checked"
     finally:
         fastapi_app.state.neo4j_service = original
+
+
+def test_blast_radius_unavailable_not_zero(client, make_user):
+    """With no Neo4j, blast radius reports coverage 'unavailable', not a false empty (PART 2 #14)."""
+    admin = make_user(role="admin")
+    rec = _seed_provenance(client.database_url, admin.workspace_id, model_name="cov-model")
+
+    resp = client.post("/recall/preview", json={"model": "cov-model"}, headers=admin.auth_headers)
+    assert resp.status_code == 200
+    blast = resp.json()["blastRadius"]
+    assert blast["coverageStatus"] == "unavailable"
+    assert any("neo4j" in lim for lim in blast["limitations"])
+    assert rec  # seeded record exists
+
+
+def test_recall_freezes_signed_membership(client, make_user):
+    """Opening a recall freezes a signed member snapshot; quarantine uses it, not a re-run (PART 2 #13)."""
+    admin = make_user(role="admin")
+    rec = _seed_provenance(client.database_url, admin.workspace_id, model_name="freeze-model")
+
+    create = client.post("/recall", json={"model": "freeze-model"}, headers=admin.auth_headers)
+    assert create.status_code == 201, create.text
+    body = create.json()
+    assert rec in body["memberUuids"]
+    assert body["memberDigest"] is not None
+    assert body["memberSignature"] is not None
+
+    # Even if a new matching record appears AFTER open, quarantine acts only on
+    # the frozen membership.
+    new_rec = _seed_provenance(client.database_url, admin.workspace_id, model_name="freeze-model")
+    q = client.post(f"/recall/{body['id']}/quarantine", headers=admin.auth_headers)
+    assert q.status_code == 200
+    assert _get_quarantine_status(client.database_url, rec) == "quarantined"
+    assert _get_quarantine_status(client.database_url, new_rec) == "active"  # not retroactively pulled in
 
 
 def test_workspace_isolation_cannot_recall_other_workspace(client, make_user):
