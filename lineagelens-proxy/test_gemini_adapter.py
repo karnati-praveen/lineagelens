@@ -4,6 +4,7 @@ import sys
 
 sys.path.insert(0, ".")
 import proxy  # noqa: E402
+from adapters.contract import RESULT_CAPTURE_UNAVAILABLE, RESULT_UNKNOWN, classify_capture_result  # noqa: E402
 
 
 # ── functionCall → edits ───────────────────────────────────────────────────────
@@ -494,6 +495,31 @@ def test_unresolved_response_silently_skipped():
         asyncio.run(run())
     finally:
         proxy._ingest_edit = original_ingest
+
+
+def test_capability_is_declared():
+    """PART 5 #54 — the adapter must declare its capability/fidelity."""
+    assert proxy._GEMINI_CAPABILITY.provider == "gemini"
+    assert proxy._GEMINI_CAPABILITY.supports_multi_edit is False
+
+
+def test_capture_unavailable_for_malformed_args_on_mutating_tool():
+    status = classify_capture_result(
+        tool_name="replace",
+        mutating_tool_names=proxy._GEMINI_FILE_MUTATING_TOOLS,
+        edits=proxy._parse_gemini_function_call_to_edits(
+            {"name": "replace", "id": "g1", "args": "not-a-dict"}
+        ),
+        input_was_dict=False,
+    )
+    assert status == RESULT_CAPTURE_UNAVAILABLE
+
+
+def test_unknown_for_unrelated_tool():
+    status = classify_capture_result(
+        tool_name="list_files", mutating_tool_names=proxy._GEMINI_FILE_MUTATING_TOOLS, edits=[], input_was_dict=True
+    )
+    assert status == RESULT_UNKNOWN
 
 
 if __name__ == "__main__":

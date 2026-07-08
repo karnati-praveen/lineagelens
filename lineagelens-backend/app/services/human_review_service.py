@@ -148,6 +148,43 @@ async def record_review(
     return hra
 
 
+async def list_reviews_for_workspace(
+    session: AsyncSession,
+    workspace_id: str,
+    *,
+    date_from=None,
+    date_to=None,
+) -> list[dict]:
+    """All human-review attestations for a workspace, optionally date-bounded.
+
+    Used by the evidence capsule (PART 5 #51).
+    """
+    filters = [HumanReviewAttestation.workspace_id == workspace_id]
+    if date_from is not None:
+        filters.append(HumanReviewAttestation.created_at >= date_from)
+    if date_to is not None:
+        filters.append(HumanReviewAttestation.created_at <= date_to)
+    result = await session.execute(
+        select(HumanReviewAttestation).where(*filters).order_by(HumanReviewAttestation.created_at.asc())
+    )
+    return [
+        {
+            "scopeRef": row.scope_ref,
+            "reviewerUserId": row.reviewer_user_id,
+            "depthSignal": row.depth_signal,
+            "evidenceStrength": row.depth_signal,
+            "measures": EVIDENCE_STRENGTH_MEANS,
+            "verdict": row.verdict,
+            "linesReviewed": row.lines_reviewed,
+            "secondsOnDiff": row.seconds_on_diff,
+            "commentCount": row.comment_count,
+            "attestationId": row.attestation_id,
+            "createdAt": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in result.scalars().all()
+    ]
+
+
 async def get_review_status(
     session: AsyncSession,
     *,

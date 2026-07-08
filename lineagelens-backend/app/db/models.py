@@ -810,3 +810,129 @@ class Lead(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class AttestationKey(Base):
+    """DB-backed attestation key registry (PART 5 #57).
+
+    core.attestation's env-based registry (ATTESTATION_KEY_REGISTRY) requires a
+    redeploy to revoke a compromised key. This table is the mutable source of
+    truth: an admin can revoke a key at runtime via POST /admin/keys/{id}/revoke
+    without restarting the process. Env entries remain supported for back-compat
+    and air-gapped deployments with no admin API access.
+    """
+
+    __tablename__ = "attestation_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    public_key_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    public_key_hex: Mapped[str] = mapped_column(String(64), nullable=False)
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    compromised_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # active | retired | compromised
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active", server_default="active")
+    label: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    revoked_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    revocation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_attestation_keys_status", "status"),
+    )
+
+
+class EvidenceCapsule(Base):
+    """Record of a built Evidence Capsule (PART 5 #51).
+
+    The capsule zip itself is stored on disk (storage_ref), not in the DB —
+    this row is the auditable index: who built what scope, when, and its
+    signed content digest, so a capsule build is itself part of the evidence
+    trail rather than a bare file download.
+    """
+
+    __tablename__ = "evidence_capsules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    public_ref: Mapped[uuid_pkg.UUID] = mapped_column(
+        Uuid(), unique=True, index=True, nullable=False, default=uuid_pkg.uuid4
+    )
+    workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    variant: Mapped[str] = mapped_column(String(32), nullable=False, default="full_internal")
+    capsule_digest: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    manifest_json: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False)
+    signature: Mapped[str] = mapped_column(String(256), nullable=False)
+    public_key_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    record_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    date_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    date_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Path to the stored zip bytes (local disk by default; no paid object store required).
+    storage_ref: Mapped[str] = mapped_column(String(512), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_evidence_capsules_workspace", "workspace_id"),
+    )
+
+
+class ContinuityDrill(Base):
+    """Signed result of a provenance continuity drill run (PART 5 #55).
+
+    Each row is itself a piece of evidence: proof that on this date, capsule
+    export/verify/key-rotation/embedding-fallback/vendor-fallback (and graph
+    rebuild, when Neo4j was configured) were actually exercised — not just
+    assumed to work because the config exists.
+    """
+
+    __tablename__ = "continuity_drills"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    public_ref: Mapped[uuid_pkg.UUID] = mapped_column(
+        Uuid(), unique=True, index=True, nullable=False, default=uuid_pkg.uuid4
+    )
+    workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    # green | amber | red
+    overall_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    steps_json: Mapped[list] = mapped_column(_JSON_TYPE, nullable=False, default=list)
+    signature: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    public_key_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_continuity_drills_workspace", "workspace_id"),
+    )
+
+
+class WitnessReceipt(Base):
+    """One external-witness publish attempt for a periodic chain root (PART 5 #53).
+
+    Every backend's receipt is stored, including `not_configured` ones, so a
+    caller can see exactly which anchors are and aren't active for this
+    workspace — never a silently-omitted backend.
+    """
+
+    __tablename__ = "witness_receipts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    root_hash: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    backend: Mapped[str] = mapped_column(String(32), nullable=False)
+    # witnessed | not_configured | failed
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    external_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_witness_receipts_workspace_root", "workspace_id", "root_hash"),
+    )

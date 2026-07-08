@@ -1,0 +1,42 @@
+{
+  "provider": "openai_chat",
+  "note": "Synthetic fixtures — not real captured data (PART 5 #54 golden redacted fixtures).",
+  "cases": [
+    {
+      "name": "tool_call_replace_shape",
+      "input": {
+        "id": "fixture_tool_0001",
+        "name": "edit_file",
+        "arguments": "{\"path\": \"src/example.py\", \"old_str\": \"REDACTED_OLD_LINE\", \"new_str\": \"REDACTED_NEW_LINE\"}"
+      },
+      "expectedEditCount": 1
+    },
+    {
+      "name": "tool_call_write_shape",
+      "input": {
+        "id": "fixture_tool_0002",
+        "name": "write_file",
+        "arguments": "{\"path\": \"src/new_file.py\", \"content\": \"REDACTED_FILE_CONTENT\"}"
+      },
+      "expectedEditCount": 1
+    },
+    {
+      "name": "unrelated_tool_call_shape",
+      "input": {
+        "id": "fixture_tool_0003",
+        "name": "search_web",
+        "arguments": "{\"query\": \"REDACTED_QUERY\"}"
+      },
+      "expectedEditCount": 0
+    },
+    {
+      "name": "malformed_arguments_json",
+      "input": {
+        "id": "fixture_tool_0004",
+        "name": "edit_file",
+        "arguments": "{not valid json"
+      },
+      "expectedEditCount": 0
+    }
+  ]
+}

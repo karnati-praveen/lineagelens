@@ -9,17 +9,40 @@ from adapters.common import (
     _annotate_edits,
     _background_tasks,
     _get_ingest_fn,
+    _looks_like_rejection,
     _pending_edits,
     _pending_edits_lock,
     _PENDING_EDITS_MAX,
     _SSE_DATA_PREFIX,
     _SSE_DONE_MARKER,
 )
+from adapters.contract import AdapterCapability
 
 logger = logging.getLogger("lineagelens-proxy")
 
+# PART 5 #54 — static capability/fidelity declaration for the provider-
+# collapse adapter contract. MultiEdit gives multi-file/multi-hunk support;
+# SSE assembly (_extract_anthropic_tool_uses_from_sse) gives streaming;
+# tool_result blocks give resolution. Native tool_use blocks are structured
+# (not text-heuristic), hence "full" fidelity.
+CAPABILITY = AdapterCapability(
+    provider="anthropic",
+    supports_multi_edit=True,
+    supports_streaming=True,
+    supports_tool_results=True,
+    fidelity="full",
+)
+
 # Claude Code's file-mutating tools (captured as code provenance).
-_FILE_MUTATING_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+# Includes both the display names Claude Code shows in its UI AND the real
+# internal API tool names that appear in raw tool_use blocks on the wire.
+# str_replace_based_edit_tool covers Edit (command=str_replace) and Write
+# (command=create). notebook_edit_tool covers NotebookEdit.
+_FILE_MUTATING_TOOLS = {
+    "Edit", "Write", "MultiEdit", "NotebookEdit",   # display names (kept for mock/compat)
+    "str_replace_based_edit_tool",                   # real Claude Code wire name for Edit/Write
+    "notebook_edit_tool",                            # real Claude Code wire name for NotebookEdit
+}
 
 # Read-only tools that produce no side-effects — skip from action ledger.
 _READ_ONLY_TOOLS = {
@@ -242,6 +265,43 @@ def _parse_anthropic_tool_use_to_edits(tool_use: dict) -> list[dict]:
             "new_string": inp.get("new_source", ""),
         }]
 
+    # Real Claude Code wire names — parameter shapes differ from display names.
+    # str_replace_based_edit_tool uses path/old_str/new_str and an optional
+    # command field ("str_replace" = Edit, "create" = Write, "view" = skip).
+    if name == "str_replace_based_edit_tool":
+        command = inp.get("command", "str_replace")
+        path = inp.get("path", "")
+        if command == "create":
+            return [{
+                "tool_use_id": tool_use_id,
+                "tool_name": "Write",
+                "edit_index": 0,
+                "file_path": path,
+                "old_string": "",
+                "new_string": inp.get("file_text", "") or inp.get("new_str", ""),
+            }]
+        if command in ("str_replace", "insert", ""):
+            return [{
+                "tool_use_id": tool_use_id,
+                "tool_name": "Edit",
+                "edit_index": 0,
+                "file_path": path,
+                "old_string": inp.get("old_str", ""),
+                "new_string": inp.get("new_str", ""),
+            }]
+        # command="view" and future read-only sub-commands produce no edit record.
+        return []
+
+    if name == "notebook_edit_tool":
+        return [{
+            "tool_use_id": tool_use_id,
+            "tool_name": "NotebookEdit",
+            "edit_index": 0,
+            "file_path": inp.get("notebook_path", "") or inp.get("path", ""),
+            "old_string": "",
+            "new_string": inp.get("new_source", ""),
+        }]
+
     return []
 
 
@@ -388,7 +448,7 @@ def _classify_tool_result(result: dict) -> tuple[str, str]:
         return ("applied", "")
 
     lower = content_str.lower()
-    if "reject" in lower or "deni" in lower or "permission" in lower or "user " in lower:
+    if _looks_like_rejection(lower):
         return ("rejected", content_str[:500])
     return ("errored", content_str[:500])
 

@@ -1,13 +1,26 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { CaptureStore, CaptureSource } from './store';
+import { CaptureStore, CaptureSource, ReviewState } from './store';
 import { CaptureService } from './capture';
+import { selectForGate, hasBlockingFindings, gateSummaryLine } from './review/precommit';
+import { buildPrSummary } from './review/prSummary';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { buildDetailPanel } from './sidebar';
 import { CaptureWebviewProvider } from './webviewSidebar';
 import { captureStoreTojsonl } from './agentTrace';
-import { redactRecords } from './secrets';
+import { redactRecords, containsSecret } from './secrets';
+import { verifyEvidence } from './evidence/verifier';
+import { buildCapsule } from './evidence/exportCapsule';
+import { buildRecallSet, buildRecallReport } from './risk/recall';
+import { scanInstructionFiles, InstructionFile } from './risk/instructionScan';
 import { runWelcomeFlow, promptAndSaveEmail, removeEmail } from './welcomeFlow';
+import { openWelcomePanel } from './welcome';
+import { CaptureCodeLensProvider } from './ide/codeLens';
+import { CaptureHoverProvider } from './ide/hover';
+import { CaptureDecorations } from './ide/decorations';
+import { openFileTimeline } from './ide/timeline';
 
 /** Whether secrets should be scrubbed from data leaving the machine (default on). */
 function shouldRedactOnEgress(): boolean {
@@ -25,6 +38,34 @@ function resolveId(idOrItem: unknown): string {
     return typeof rec?.id === 'string' ? rec.id : '';
   }
   return '';
+}
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * Best-effort list of absolute staged file paths for the pre-commit gate.
+ * Returns null when git is unavailable or the folder is not a repo (the caller
+ * then falls back to checking every captured file) — capture never depends on git.
+ */
+async function getStagedFiles(cwd: string): Promise<string[] | null> {
+  try {
+    const root = (await execFileAsync('git', ['rev-parse', '--show-toplevel'], { cwd })).stdout.trim();
+    const out = (await execFileAsync('git', ['diff', '--cached', '--name-only'], { cwd })).stdout;
+    return out
+      .split('\n')
+      .map(s => s.trim())
+      .filter(Boolean)
+      .map(rel => path.join(root, rel));
+  } catch {
+    return null;
+  }
+}
+
+/** Inventory AI instruction files for the workspace folder containing `filePath`. */
+function instructionFilesFor(filePath: string): InstructionFile[] {
+  const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath));
+  const root = folder?.uri.fsPath ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  return root ? scanInstructionFiles(root) : [];
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -61,11 +102,49 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.registerWebviewViewProvider(CaptureWebviewProvider.VIEW_ID, webviewProvider),
   );
 
-  // Full UI sync after any store change: re-render the cards + status bar count.
+  // Full UI sync after any store change: re-render the cards + status bar count
+  // + the in-editor surfaces (CodeLens / decorations).
   const syncUi = () => {
     webviewProvider.refresh();
     statusBar.text = `$(history) ${store.count} captures`;
+    refreshIdeSurfaces();
   };
+
+  // ── IDE-native surfaces: CodeLens, hover receipts, gutter decorations ─────────
+  const codeLensProvider = new CaptureCodeLensProvider(store);
+  const decorations = new CaptureDecorations(store);
+  context.subscriptions.push(
+    vscode.languages.registerCodeLensProvider({ scheme: 'file' }, codeLensProvider),
+    vscode.languages.registerHoverProvider({ scheme: 'file' }, new CaptureHoverProvider(store)),
+    decorations,
+  );
+
+  // Hoisted so syncUi (defined above) can call it; only invoked at runtime once
+  // codeLensProvider/decorations are initialised.
+  function refreshIdeSurfaces(): void {
+    codeLensProvider.refresh();
+    decorations.apply(vscode.window.activeTextEditor);
+  }
+
+  // Repaint decorations when the user switches files.
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(editor => decorations.apply(editor)),
+  );
+
+  // Captured ranges shift as the user types — debounce a repaint of the active
+  // file so CodeLens/decorations follow the code without thrashing on each keypress.
+  let ideDebounce: ReturnType<typeof setTimeout> | null = null;
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument(e => {
+      if (e.document !== vscode.window.activeTextEditor?.document) { return; }
+      if (ideDebounce !== null) { clearTimeout(ideDebounce); }
+      ideDebounce = setTimeout(() => { ideDebounce = null; refreshIdeSurfaces(); }, 400);
+    }),
+    { dispose: () => { if (ideDebounce !== null) { clearTimeout(ideDebounce); } } },
+  );
+
+  // Paint whatever file is already open at activation.
+  decorations.apply(vscode.window.activeTextEditor);
 
   // ── Shared record actions (reused by tree commands and the detail panel) ──────
   function insertRecord(record: { insertedCode: string; fileName: string }): void {
@@ -82,7 +161,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
 
   function copyRecord(record: { insertedCode: string; fileName: string }): void {
-    vscode.env.clipboard.writeText(record.insertedCode).then(() => {
+    Promise.resolve(vscode.env.clipboard.writeText(record.insertedCode)).then(() => {
       vscode.window.showInformationMessage(`LineageLens: Copied code from "${record.fileName}".`);
     }).catch(() => {});
   }
@@ -113,15 +192,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return removed;
   }
 
-  // Capture service
-  const captureService = new CaptureService(store, statusBar, context, () => {
-    webviewProvider.refresh();
-    statusBar.text = `$(history) ${store.count} captures`;
-  });
+  // Capture service — refresh every surface (cards, status bar, CodeLens,
+  // decorations) the moment a new insertion is captured.
+  const captureService = new CaptureService(store, statusBar, context, () => syncUi());
   captureService.start();
   // Retry any pending outbox entries left over from a previous session.
   captureService.retryOutbox().catch(() => {});
   context.subscriptions.push({ dispose: () => captureService.dispose() });
+  // Flush/cancel any pending capture-store write on deactivate.
+  context.subscriptions.push({ dispose: () => store.dispose() });
 
   // Open capture detail panel
   context.subscriptions.push(
@@ -138,9 +217,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         vscode.ViewColumn.Beside,
         { enableScripts: true },
       );
-      buildDetailPanel(panel, record);
+      // Inventory AI instruction files once; reused across panel rebuilds.
+      const instructionFiles = instructionFilesFor(record.filePath);
+      buildDetailPanel(panel, record, instructionFiles);
 
-      panel.webview.onDidReceiveMessage(async (msg: { type: string; source?: string }) => {
+      panel.webview.onDidReceiveMessage(async (msg: { type: string; source?: string; state?: string; note?: string }) => {
         // Always re-read from the store — the record may have changed since open.
         const current = store.getById(id);
         if (!current) {
@@ -159,8 +240,34 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             const src = msg.source as CaptureSource;
             if (src === 'ai' || src === 'paste' || src === 'unknown') {
               const updated = store.setClassification(id, src);
-              if (updated) { syncUi(); buildDetailPanel(panel, updated); }
+              if (updated) { syncUi(); buildDetailPanel(panel, updated, instructionFiles); }
             }
+            break;
+          }
+          case 'review': {
+            const valid: ReviewState[] = ['unreviewed', 'reviewed', 'needs_changes', 'rejected', 'accepted'];
+            // A button click carries a target state; a bare "Save note" keeps the
+            // current state and only updates the note.
+            const target = msg.state && valid.includes(msg.state as ReviewState)
+              ? (msg.state as ReviewState)
+              : (current.reviewState ?? 'unreviewed');
+            const updated = store.setReviewState(id, target, msg.note);
+            if (updated) { syncUi(); buildDetailPanel(panel, updated, instructionFiles); }
+            break;
+          }
+          case 'recall': {
+            const set = buildRecallSet(current, store.getAll());
+            if (set.matches.length === 0) {
+              vscode.window.showInformationMessage(
+                'LineageLens: no other captures resemble this block — nothing to recall.',
+              );
+              break;
+            }
+            const doc = await vscode.workspace.openTextDocument({
+              content: buildRecallReport(set),
+              language: 'markdown',
+            });
+            await vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.Beside });
             break;
           }
         }
@@ -214,7 +321,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         'Open File',
       );
       if (open === 'Open File') {
-        vscode.workspace.openTextDocument(uri).then(doc => vscode.window.showTextDocument(doc)).catch(() => {});
+        Promise.resolve(vscode.workspace.openTextDocument(uri).then(doc => vscode.window.showTextDocument(doc))).catch(() => {});
       }
     }),
   );
@@ -244,7 +351,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         'Open File',
       );
       if (open === 'Open File') {
-        vscode.workspace.openTextDocument(uri).then(doc => vscode.window.showTextDocument(doc)).catch(() => {});
+        Promise.resolve(vscode.workspace.openTextDocument(uri).then(doc => vscode.window.showTextDocument(doc))).catch(() => {});
       }
     }),
   );
@@ -289,6 +396,119 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const record = id ? store.getById(id) : undefined;
       if (!record) { return; }
       await revealRecord(record);
+    }),
+  );
+
+  // Show the AI timeline for the active file
+  context.subscriptions.push(
+    vscode.commands.registerCommand('lineagelens.showFileTimeline', () => {
+      openFileTimeline(store, context);
+    }),
+  );
+
+  // Toggle gutter focus mode (only drift / needs-changes captures)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('lineagelens.toggleFocusMode', () => {
+      const on = decorations.toggleFocusMode();
+      decorations.apply(vscode.window.activeTextEditor);
+      vscode.window.showInformationMessage(
+        on
+          ? 'LineageLens AI Focus Mode on — showing only drifted or needs-changes captures.'
+          : 'LineageLens AI Focus Mode off — showing all captures.',
+      );
+    }),
+  );
+
+  // Pre-commit AI review gate
+  context.subscriptions.push(
+    vscode.commands.registerCommand('lineagelens.checkBeforeCommit', async () => {
+      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      const staged = folder ? await getStagedFiles(folder) : null;
+
+      // git available but nothing staged → nothing to gate.
+      if (staged !== null && staged.length === 0) {
+        vscode.window.showInformationMessage('LineageLens: no staged changes to check.');
+        return;
+      }
+
+      // Fall back to all captured files when git is unavailable.
+      const targetPaths = staged ?? store.getAll().map(r => r.filePath);
+      const scope = staged ? 'staged changes' : 'captured files (git unavailable)';
+      const buckets = selectForGate(store.getAll(), targetPaths);
+
+      if (!hasBlockingFindings(buckets)) {
+        vscode.window.showInformationMessage(`LineageLens: ✓ ${gateSummaryLine(buckets)}`);
+        return;
+      }
+      const action = await vscode.window.showWarningMessage(
+        `LineageLens: ${gateSummaryLine(buckets)} in ${scope}.`,
+        'Show captures',
+      );
+      if (action === 'Show captures') {
+        void vscode.commands.executeCommand('lineagelens.captures.focus');
+      }
+    }),
+  );
+
+  // Deterministic PR summary of AI-assisted changes (opens as a markdown doc)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('lineagelens.exportPrSummary', async () => {
+      const summary = buildPrSummary(store.getAll());
+      const doc = await vscode.workspace.openTextDocument({ content: summary, language: 'markdown' });
+      await vscode.window.showTextDocument(doc, { preview: false });
+    }),
+  );
+
+  // Verify the local evidence store (tamper-evident chain + schema check)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('lineagelens.verifyEvidence', () => {
+      const report = verifyEvidence(store.getAll());
+      if (report.ok) {
+        vscode.window.showInformationMessage(`LineageLens: ${report.summary}`);
+      } else {
+        vscode.window.showWarningMessage(`LineageLens: ${report.summary}`);
+      }
+    }),
+  );
+
+  // Export a verifiable evidence capsule (.llcapsule)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('lineagelens.exportCapsule', async () => {
+      const records = store.getAll();
+      if (records.length === 0) {
+        vscode.window.showInformationMessage('LineageLens: no captures to export.');
+        return;
+      }
+      // Capsules are full-fidelity so they stay verifiable — warn before writing
+      // one that carries detected secrets (redaction would break verification).
+      if (shouldRedactOnEgress() && records.some(r => containsSecret(r.insertedCode))) {
+        const proceed = await vscode.window.showWarningMessage(
+          'This evidence capsule contains code with detected secrets. Redacting would break ' +
+            'verification, so the capsule keeps the original code. Export anyway?',
+          { modal: true },
+          'Export anyway',
+        );
+        if (proceed !== 'Export anyway') { return; }
+      }
+      const uri = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(path.join(
+          vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '',
+          `lineagelens-capsule-${Date.now()}.llcapsule`,
+        )),
+        filters: { 'LineageLens Capsule': ['llcapsule'] },
+      });
+      if (!uri) { return; }
+      const cfg = vscode.workspace.getConfiguration('lineagelensBase');
+      const workspaceId = cfg.get<string>('workspaceId', 'vscode-capture') || 'vscode-capture';
+      const capsule = buildCapsule(records, workspaceId, new Date().toISOString());
+      fs.writeFileSync(uri.fsPath, JSON.stringify(capsule, null, 2), 'utf-8');
+      const open = await vscode.window.showInformationMessage(
+        `LineageLens: Exported evidence capsule — ${capsule.verification.summary}`,
+        'Open File',
+      );
+      if (open === 'Open File') {
+        Promise.resolve(vscode.workspace.openTextDocument(uri).then(doc => vscode.window.showTextDocument(doc))).catch(() => {});
+      }
     }),
   );
 
@@ -370,18 +590,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Email management commands
   context.subscriptions.push(
-    vscode.commands.registerCommand('lineagelens.openWelcome', async () => {
-      if (!context.globalState.get('lineagelens.hasSeenWelcomeV2')) {
-        await runWelcomeFlow(context);
-      } else {
-        const action = await vscode.window.showInformationMessage(
-          'LineageLens tracks AI-generated code — model, prompt, and timestamp. All features work locally with no account required.',
-          'Show my AI code',
-        );
-        if (action === 'Show my AI code') {
-          void vscode.commands.executeCommand('lineagelens.captures.focus');
-        }
-      }
+    vscode.commands.registerCommand('lineagelens.openWelcome', () => {
+      openWelcomePanel(context);
     }),
     vscode.commands.registerCommand('lineagelens.saveEmail', async () => {
       await promptAndSaveEmail(context, true);

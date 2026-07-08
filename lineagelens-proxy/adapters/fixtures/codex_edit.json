@@ -1,0 +1,36 @@
+{
+  "provider": "codex",
+  "note": "Synthetic fixtures — not real captured data (PART 5 #54 golden redacted fixtures).",
+  "cases": [
+    {
+      "name": "apply_patch_single_file_add",
+      "input": {
+        "type": "function_call",
+        "call_id": "call_fixture_0001",
+        "name": "apply_patch",
+        "arguments": "{\"input\": \"*** Begin Patch\\n*** Add File: src/example.py\\n+REDACTED_NEW_LINE\\n*** End Patch\"}"
+      },
+      "expectedEditCount": 1
+    },
+    {
+      "name": "shell_tool_is_not_attributed",
+      "input": {
+        "type": "function_call",
+        "call_id": "call_fixture_0002",
+        "name": "shell",
+        "arguments": "{\"command\": \"ls\"}"
+      },
+      "expectedEditCount": 0
+    },
+    {
+      "name": "malformed_arguments_json",
+      "input": {
+        "type": "function_call",
+        "call_id": "call_fixture_0003",
+        "name": "apply_patch",
+        "arguments": "{not valid json"
+      },
+      "expectedEditCount": 0
+    }
+  ]
+}

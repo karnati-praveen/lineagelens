@@ -206,6 +206,59 @@ class Neo4jLineageService:
             for r in records
         ]
 
+    async def rebuild_projection(self, records: list[Any]) -> dict[str, Any]:
+        """Re-derive the graph's block/version nodes from Postgres ProvenanceRecord rows
+        (PART 4 #30 canonical-events-rebuildable-projections, exercised by the
+        continuity drill, PART 5 #55).
+
+        Honest limitation: Postgres does not persist an explicit "evolved from"
+        parent reference per record (only a flat `lineage_node_id`), so this
+        rebuild restores every record's own block/version node (making it
+        locatable again for blast-radius queries) but does NOT reconstruct
+        historical EVOLVED_FROM ancestry edges between distinct records. That
+        gap is a real architecture item, not something to silently paper over —
+        callers must surface `limitation` rather than claim a full rebuild.
+        """
+        query = """
+        MERGE (b:AIGeneratedBlock {blockId: $recordUuid})
+          ON CREATE SET b.createdAt = datetime($timestampIso), b.deleted = false
+          SET b.workspaceId = $workspaceId, b.updatedAt = datetime($timestampIso)
+
+        MERGE (v:ProvenanceBlockVersion {versionId: $recordUuid})
+          SET v.blockId = $recordUuid,
+              v.workspaceId = $workspaceId,
+              v.filePath = $filePath,
+              v.code = $code,
+              v.createdAt = datetime($timestampIso),
+              v.updatedAt = datetime($timestampIso),
+              v.deleted = false
+
+        MERGE (b)-[:HAS_VERSION]->(v)
+        MERGE (b)-[:LATEST_VERSION]->(v)
+        """
+        rebuilt = 0
+        async with self._driver.session(database=self._database) as session:
+            for record in records:
+                await session.run(
+                    query,
+                    {
+                        "recordUuid": str(record.uuid),
+                        "workspaceId": record.workspace_id,
+                        "filePath": record.file_path,
+                        "code": record.inserted_code or "",
+                        "timestampIso": record.timestamp_iso.isoformat(),
+                    },
+                )
+                rebuilt += 1
+
+        return {
+            "nodesRebuilt": rebuilt,
+            "limitation": (
+                "EVOLVED_FROM ancestry edges between distinct records are not "
+                "reconstructed — Postgres does not persist that lineage relationally yet."
+            ),
+        }
+
     async def find_blocks_in_file(
         self, *, workspace_id: str, file_path: str
     ) -> list[dict[str, Any]]:

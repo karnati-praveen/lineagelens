@@ -4,6 +4,7 @@ import sys
 
 sys.path.insert(0, ".")
 import proxy  # noqa: E402
+from adapters.contract import RESULT_CAPTURE_UNAVAILABLE, RESULT_UNKNOWN, classify_capture_result  # noqa: E402
 
 
 # ── apply_patch DSL parser ─────────────────────────────────────────────────────
@@ -504,6 +505,31 @@ def test_full_lifecycle_errored_classification():
         asyncio.run(run())
     finally:
         proxy._ingest_edit = original_ingest
+
+
+def test_capability_is_declared():
+    """PART 5 #54 — the adapter must declare its capability/fidelity."""
+    assert proxy._CODEX_CAPABILITY.provider == "codex"
+    assert proxy._CODEX_CAPABILITY.supports_multi_edit is True
+
+
+def test_capture_unavailable_for_malformed_arguments_on_apply_patch():
+    status = classify_capture_result(
+        tool_name="apply_patch",
+        mutating_tool_names={"apply_patch"},
+        edits=proxy._parse_codex_function_call_to_edits(
+            {"name": "apply_patch", "call_id": "c1", "arguments": "{not valid json"}
+        ),
+        input_was_dict=False,
+    )
+    assert status == RESULT_CAPTURE_UNAVAILABLE
+
+
+def test_unknown_for_shell_tool():
+    status = classify_capture_result(
+        tool_name="shell", mutating_tool_names={"apply_patch"}, edits=[], input_was_dict=True
+    )
+    assert status == RESULT_UNKNOWN
 
 
 if __name__ == "__main__":

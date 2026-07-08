@@ -1,6 +1,7 @@
 import * as http from 'node:http';
 import * as https from 'node:https';
 import * as vscode from 'vscode';
+import { openWelcomePanel } from './welcome';
 
 const EMAIL_REGEX = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{1,63}$/;
 const MAX_EMAIL_LENGTH = 254;
@@ -19,16 +20,10 @@ export async function runWelcomeFlow(context: vscode.ExtensionContext): Promise<
     // Keep old flag in sync so the legacy branch never fires either.
     await context.globalState.update('lineagelens.welcomeShown', true);
 
-    const action = await vscode.window.showInformationMessage(
-        'Welcome to LineageLens! Track every line of AI-generated code — model, prompt, and timestamp. All features work locally with no account required.',
-        'Show my AI code',
-        'Dismiss',
-    );
-    if (action === 'Show my AI code') {
-        void vscode.commands.executeCommand('lineagelens.captures.focus');
-    }
+    // Open the full getting-started panel (every feature + Easy→Power mode).
+    openWelcomePanel(context);
 
-    // Non-blocking: show email prompt after welcome closes
+    // Non-blocking: show email prompt after welcome opens
     void promptAndSaveEmail(context);
 }
 

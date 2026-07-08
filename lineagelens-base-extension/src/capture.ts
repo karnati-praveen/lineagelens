@@ -1,7 +1,10 @@
 import * as vscode from 'vscode';
 import { minimatch } from 'minimatch';
 import { CaptureStore, CaptureSource } from './store';
-import { redactSecrets } from './secrets';
+import { captureGitContext, GitContext, GIT_UNAVAILABLE } from './evidence/git';
+import { buildIngestPayload, IngestCapability } from './sync/payload';
+import { detectCapability } from './sync/capability';
+import { OutboxEntry, enqueueEntry, dueEntries, backoffDelay, RETRY_BASE_MS } from './sync/outbox';
 
 // Extension IDs (or fragments) of known AI coding assistants.
 // Used to boost confidence when one of these is installed and active.
@@ -85,19 +88,9 @@ async function scoreInsertion(
   return { confidence: score, source: score >= 0.5 ? 'ai' : 'unknown' };
 }
 
-// ── Outbox types and constants ────────────────────────────────────────────────
+// ── Outbox (queue mechanics live in sync/outbox.ts) ───────────────────────────
 
 const OUTBOX_KEY = 'lineagelens.base.outbox';
-const MAX_OUTBOX = 200;
-const RETRY_BASE_MS = 30_000;   // 30 s
-const RETRY_MAX_MS = 600_000;   // 10 min
-
-interface OutboxEntry {
-  id: string;
-  payload: object;
-  attempts: number;
-  nextRetryAt: number;
-}
 
 // ── CaptureService ────────────────────────────────────────────────────────────
 
@@ -109,6 +102,13 @@ export class CaptureService {
   private context: vscode.ExtensionContext;
   private _disposed = false;
   private _retryTimer: ReturnType<typeof setTimeout> | null = null;
+  // Cached git context, refreshed in the background so capture never shells out
+  // synchronously on the typing path.
+  private _gitContext: GitContext = GIT_UNAVAILABLE;
+  private _gitContextAt = 0;
+  private static readonly GIT_TTL_MS = 15_000;
+  // Backend ingest capability (legacy vs evidence-v2); detected in the background.
+  private _capability: IngestCapability = 'legacy';
 
   constructor(
     store: CaptureStore,
@@ -135,6 +135,37 @@ export class CaptureService {
     this.disposables.push(
       vscode.extensions.onDidChange(() => { _cachedAiToolActive = null; }),
     );
+
+    // Warm the git context cache for the first capture (non-blocking).
+    const cwd = this.gitCwd();
+    if (cwd) { void this.refreshGitContext(cwd); }
+
+    // Detect the backend ingest capability in the background (non-blocking).
+    void this.refreshCapability();
+  }
+
+  /** Detect whether the configured backend accepts the richer evidence-v2 payload. */
+  private async refreshCapability(): Promise<void> {
+    const backendUrl = (vscode.workspace
+      .getConfiguration('lineagelensBase')
+      .get<string>('backendUrl', '') ?? '').trim().replace(/\/$/, '');
+    if (!backendUrl) { return; }
+    this._capability = await detectCapability(backendUrl);
+  }
+
+  /** Resolve the repo cwd for a document, falling back to the first workspace folder. */
+  private gitCwd(doc?: vscode.TextDocument): string | undefined {
+    if (doc) {
+      const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+      if (folder) { return folder.uri.fsPath; }
+    }
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  }
+
+  /** Refresh the cached git context (best-effort; never throws). */
+  private async refreshGitContext(cwd: string): Promise<void> {
+    this._gitContext = await captureGitContext(cwd);
+    this._gitContextAt = Date.now();
   }
 
   private async handleChange(event: vscode.TextDocumentChangeEvent): Promise<void> {
@@ -192,6 +223,21 @@ export class CaptureService {
 
       const workspaceFolder = vscode.workspace.getWorkspaceFolder(doc.uri);
 
+      // Record the inserted range (zero-based) so IDE surfaces can locate, and
+      // later relocate, the block. The store computes rangeContentHash from
+      // insertedCode automatically.
+      const startLine = change.range.start.line;
+      const endLine = startLine + newLines;
+
+      // Refresh the git context in the background if stale; use the cached value
+      // for this capture so we never block typing on git.
+      const cwd = this.gitCwd(doc);
+      if (cwd && Date.now() - this._gitContextAt > CaptureService.GIT_TTL_MS) {
+        this._gitContextAt = Date.now(); // mark immediately to avoid a refresh stampede
+        void this.refreshGitContext(cwd);
+      }
+      const git = this._gitContext;
+
       const record = this.store.add({
         filePath: doc.uri.fsPath,
         fileName: doc.fileName.split(/[\\/]/).filter(Boolean).pop() || doc.fileName,
@@ -201,6 +247,10 @@ export class CaptureService {
         workspaceFolder: workspaceFolder?.name ?? null,
         confidence,
         source,
+        startLine,
+        endLine,
+        gitBranch: git.branch,
+        gitCommit: git.commit,
       });
 
       this._postToBackend(record);
@@ -220,19 +270,7 @@ export class CaptureService {
     if (!backendUrl || !ingestToken) { return; }
 
     const redact = cfg.get<boolean>('redactSecretsOnEgress', true);
-    const insertedText = redact ? redactSecrets(record.insertedCode).text : record.insertedCode;
-
-    const payload = {
-      id: record.id,
-      timestampIso: record.timestamp,
-      filePath: record.filePath,
-      insertedText,
-      netAddedLines: record.linesAdded,
-      workspaceId,
-      languageId: record.language,
-      captureStatus: 'file_diff',
-      source: { shim: 'lineagelens-base-extension', ide: 'vscode' },
-    };
+    const payload = buildIngestPayload(record, { workspaceId, redact, capability: this._capability });
 
     this._sendOnce(record.id, payload, backendUrl, ingestToken).catch(() => {
       // First attempt failed — add to persistent outbox for retry.
@@ -268,18 +306,8 @@ export class CaptureService {
   }
 
   private _enqueue(entry: OutboxEntry): void {
-    const outbox = this._loadOutbox();
-    const existing = outbox.findIndex(e => e.id === entry.id);
-    if (existing >= 0) {
-      outbox[existing] = entry;  // update in place (same idempotency key)
-    } else {
-      outbox.push(entry);
-      // Cap at MAX_OUTBOX, drop the oldest (front of array) to make room.
-      if (outbox.length > MAX_OUTBOX) {
-        outbox.splice(0, outbox.length - MAX_OUTBOX);
-      }
-    }
-    this._saveOutbox(outbox);
+    // enqueueEntry dedupes by id (idempotency key) and caps the queue.
+    this._saveOutbox(enqueueEntry(this._loadOutbox(), entry));
     this.updateStatusBar();
     this._scheduleRetry();
   }
@@ -307,8 +335,7 @@ export class CaptureService {
     const now = Date.now();
     let changed = false;
 
-    for (const entry of outbox) {
-      if (entry.nextRetryAt > now) { continue; }
+    for (const entry of dueEntries(outbox, now)) {
       try {
         await this._sendOnce(entry.id, entry.payload, backendUrl, ingestToken);
         // Success — mark for removal.
@@ -317,8 +344,7 @@ export class CaptureService {
       } catch {
         // Exponential backoff: 30s → 60s → 120s → … up to 10min.
         entry.attempts++;
-        const delay = Math.min(RETRY_BASE_MS * Math.pow(2, entry.attempts - 1), RETRY_MAX_MS);
-        entry.nextRetryAt = now + delay;
+        entry.nextRetryAt = now + backoffDelay(entry.attempts);
         changed = true;
       }
     }

@@ -3,7 +3,9 @@ import * as os from 'os';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
 
-import { CaptureStore } from '../store';
+import { CaptureStore, CAPTURE_SCHEMA_VERSION } from '../store';
+import { rangeContentHash } from '../evidence/hash';
+import { verifyChain } from '../evidence/hashChain';
 
 let tmpDir: string;
 
@@ -30,7 +32,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  // A debounced background save can briefly re-create the store file in this
+  // soon-to-be-removed dir (it never targets the next test's fresh dir), which
+  // makes the final rmdir race with ENOTEMPTY on Windows. Best-effort cleanup.
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* tolerate teardown race */ }
 });
 
 test('starts empty', () => {
@@ -91,10 +96,11 @@ test('exportJson returns valid JSON with all records', () => {
   expect(parsed[0].workspaceFolder).toBe('proj');
 });
 
-test('persists to disk and reloads on new instance', () => {
+test('persists to disk and reloads on new instance', async () => {
   const ctx = makeContext();
   const store = new CaptureStore(ctx);
   const rec = store.add({ filePath: '/p.ts', fileName: 'p.ts', language: 'typescript', insertedCode: 'persist', linesAdded: 3, workspaceFolder: null });
+  await store.flush();
 
   const store2 = new CaptureStore(ctx);
   expect(store2.count).toBe(1);
@@ -155,11 +161,12 @@ test('remove returns false for an unknown id and leaves the store intact', () =>
   expect(store.count).toBe(1);
 });
 
-test('remove persists to disk', () => {
+test('remove persists to disk', async () => {
   const ctx = makeContext();
   const store = new CaptureStore(ctx);
   const a = store.add({ filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'a', linesAdded: 1, workspaceFolder: null });
   store.remove(a.id);
+  await store.flush();
   const store2 = new CaptureStore(ctx);
   expect(store2.count).toBe(0);
 });
@@ -198,6 +205,7 @@ test('create() writes an encrypted store, not plaintext', async () => {
   const ctx = makeContextWithSecrets();
   const store = await CaptureStore.create(ctx);
   store.add({ filePath: '/s.ts', fileName: 's.ts', language: 'typescript', insertedCode: 'SECRET_TOKEN_abc123', linesAdded: 1, workspaceFolder: null });
+  await store.flush();
 
   const onDisk = fs.readFileSync(CAPTURES_PATH(), 'utf-8');
   expect(onDisk.startsWith('LLENC1:')).toBe(true);
@@ -210,6 +218,7 @@ test('create() reloads and decrypts persisted records', async () => {
   const ctx = makeContextWithSecrets();
   const store = await CaptureStore.create(ctx);
   const rec = store.add({ filePath: '/r.ts', fileName: 'r.ts', language: 'typescript', insertedCode: 'roundtrip', linesAdded: 2, workspaceFolder: null });
+  await store.flush();
 
   const store2 = await CaptureStore.create(ctx);
   expect(store2.count).toBe(1);
@@ -224,6 +233,7 @@ test('create() migrates a legacy plaintext store to encrypted on load', async ()
   const ctx = makeContextWithSecrets();
   const store = await CaptureStore.create(ctx);
   expect(store.getById('lll')?.insertedCode).toBe('legacy');
+  await store.flush();
 
   // After migration the file is encrypted.
   const onDisk = fs.readFileSync(CAPTURES_PATH(), 'utf-8');
@@ -318,9 +328,129 @@ test('reorder multi-select with null puts all dragged items at top in drag order
   expect(names[2]).toBe('b.ts');
 });
 
-test('reorder persists to disk', () => {
+test('reorder persists to disk', async () => {
   const { store, ctx, a, b, c } = makeThree();
   store.reorder([a.id], null);
+  await store.flush();
   const store2 = new CaptureStore(ctx);
   expect(store2.getAll()[0].fileName).toBe('a.ts');
+});
+
+// ── v2 evidence layer (schemaVersion / reviewState / lineageState / hash) ───────
+
+test('add() stamps a new record with the current schema version and defaults', () => {
+  const store = new CaptureStore(makeContext());
+  const rec = store.add({ filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'const x = 1;\n'.repeat(4), linesAdded: 4, workspaceFolder: null });
+  expect(rec.schemaVersion).toBe(CAPTURE_SCHEMA_VERSION);
+  expect(rec.reviewState).toBe('unreviewed');
+  // A freshly inserted block is at its original location.
+  expect(rec.lineageState).toBe('original');
+  // Content hash is computed from the inserted code.
+  expect(rec.rangeContentHash).toBe(rangeContentHash(rec.insertedCode));
+});
+
+test('add() lets a caller override evidence fields', () => {
+  const store = new CaptureStore(makeContext());
+  const rec = store.add({ filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'x', linesAdded: 1, workspaceFolder: null, startLine: 10, endLine: 14, lineageState: 'unknown' });
+  expect(rec.startLine).toBe(10);
+  expect(rec.endLine).toBe(14);
+  expect(rec.lineageState).toBe('unknown');
+});
+
+// ── setReviewState() ──────────────────────────────────────────────────────────
+
+test('setReviewState applies a legal transition and stamps reviewedAt', () => {
+  const store = new CaptureStore(makeContext());
+  const a = store.add({ filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'x', linesAdded: 4, workspaceFolder: null });
+  expect(a.reviewState).toBe('unreviewed');
+  const out = store.setReviewState(a.id, 'reviewed', 'LGTM');
+  expect(out?.reviewState).toBe('reviewed');
+  expect(out?.reviewNote).toBe('LGTM');
+  expect(out?.reviewedAt).toBeTruthy();
+  expect(store.getById(a.id)?.reviewState).toBe('reviewed');
+});
+
+test('setReviewState leaves the record unchanged on an illegal transition', () => {
+  const store = new CaptureStore(makeContext());
+  const a = store.add({ filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'x', linesAdded: 4, workspaceFolder: null });
+  const out = store.setReviewState(a.id, 'accepted'); // unreviewed → accepted is illegal
+  expect(out?.reviewState).toBe('unreviewed');
+});
+
+test('setReviewState returns undefined for an unknown id', () => {
+  const store = new CaptureStore(makeContext());
+  expect(store.setReviewState('nope', 'reviewed')).toBeUndefined();
+});
+
+test('setReviewState persists across reload', async () => {
+  const ctx = makeContext();
+  const store = new CaptureStore(ctx);
+  const a = store.add({ filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'x', linesAdded: 4, workspaceFolder: null });
+  store.setReviewState(a.id, 'reviewed');
+  await store.flush();
+  const store2 = new CaptureStore(ctx);
+  expect(store2.getById(a.id)?.reviewState).toBe('reviewed');
+});
+
+test('load() migrates a legacy v1 record to schema v2 with backfilled fields', () => {
+  const ctx = makeContext();
+  // Legacy record: no schemaVersion / reviewState / lineageState / rangeContentHash.
+  const legacy = [{ id: 'v1', timestamp: new Date().toISOString(), filePath: '/x.ts', fileName: 'x.ts', language: 'typescript', insertedCode: 'legacy code\nline two', linesAdded: 2, workspaceFolder: null, confidence: 0.6, source: 'ai' }];
+  fs.writeFileSync(path.join(tmpDir, 'captures.json'), JSON.stringify(legacy), 'utf-8');
+
+  const store = new CaptureStore(ctx);
+  const rec = store.getById('v1');
+  expect(rec?.schemaVersion).toBe(CAPTURE_SCHEMA_VERSION);
+  expect(rec?.reviewState).toBe('unreviewed');
+  // We cannot know where a legacy block sits → unknown, not original.
+  expect(rec?.lineageState).toBe('unknown');
+  expect(rec?.rangeContentHash).toBe(rangeContentHash('legacy code\nline two'));
+  // Existing fields are preserved.
+  expect(rec?.confidence).toBe(0.6);
+  expect(rec?.source).toBe('ai');
+});
+
+// ── evidence chain ────────────────────────────────────────────────────────────
+
+test('add() seals records into a verifiable chain', () => {
+  const store = new CaptureStore(makeContext());
+  for (let i = 0; i < 3; i++) {
+    store.add({ filePath: `/f${i}.ts`, fileName: `f${i}.ts`, language: 'typescript', insertedCode: `code ${i}`, linesAdded: 4, workspaceFolder: null });
+  }
+  const v = verifyChain(store.getAll());
+  expect(v.ok).toBe(true);
+  expect(v.verified).toBe(3);
+  expect(v.breaks).toBe(0);
+});
+
+test('load() seals legacy records that predate the chain', () => {
+  const ctx = makeContext();
+  const legacy = [
+    { id: 'a', timestamp: '2026-06-25T10:00:00.000Z', filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'aaa', linesAdded: 1, workspaceFolder: null, confidence: 0.5, source: 'ai' },
+    { id: 'b', timestamp: '2026-06-25T10:01:00.000Z', filePath: '/b.ts', fileName: 'b.ts', language: 'typescript', insertedCode: 'bbb', linesAdded: 1, workspaceFolder: null, confidence: 0.5, source: 'ai' },
+  ];
+  fs.writeFileSync(path.join(tmpDir, 'captures.json'), JSON.stringify(legacy), 'utf-8');
+
+  const store = new CaptureStore(ctx);
+  const v = verifyChain(store.getAll());
+  expect(v.unsealed).toEqual([]);
+  expect(v.ok).toBe(true);
+});
+
+test('add() attaches local risk signals (and none for clean code)', () => {
+  const store = new CaptureStore(makeContext());
+  const risky = store.add({ filePath: '/repo/src/auth/login.ts', fileName: 'login.ts', language: 'typescript', insertedCode: 'function authenticate(u){ return jwt.sign(u); }', linesAdded: 4, workspaceFolder: null });
+  expect(risky.riskSignals?.some(s => s.id === 'generated-auth-code')).toBe(true);
+
+  const clean = store.add({ filePath: '/repo/src/util.test.ts', fileName: 'util.test.ts', language: 'typescript', insertedCode: 'expect(1).toBe(1);', linesAdded: 1, workspaceFolder: null });
+  expect(clean.riskSignals).toEqual([]);
+});
+
+test('reclassifying or reviewing a record does not break its chain', () => {
+  const store = new CaptureStore(makeContext());
+  const a = store.add({ filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'x', linesAdded: 4, workspaceFolder: null });
+  store.add({ filePath: '/b.ts', fileName: 'b.ts', language: 'typescript', insertedCode: 'y', linesAdded: 4, workspaceFolder: null });
+  store.setClassification(a.id, 'unknown', 0.2);
+  store.setReviewState(a.id, 'reviewed');
+  expect(verifyChain(store.getAll()).ok).toBe(true);
 });

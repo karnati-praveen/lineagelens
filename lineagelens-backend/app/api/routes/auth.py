@@ -32,6 +32,7 @@ from app.schemas.auth import (
     AcceptInviteRequest,
     AuthTokenResponse,
     AuthUserResponse,
+    ChangePasswordRequest,
     CreateInviteRequest,
     CreateInviteResponse,
     LoginRequest,
@@ -280,6 +281,47 @@ async def get_authenticated_user(
         "role": user.role or "member",
         "scopes": sorted(auth.scopes),
     }
+
+
+@router.post("/change-password")
+async def change_password(
+    payload: ChangePasswordRequest,
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AuthTokenResponse:
+    """Change the authenticated user's own password.
+
+    Requires the current password, enforces password strength on the new one,
+    then bumps token_version to revoke every previously-issued token. Fresh
+    tokens are returned so the caller stays signed in on this device.
+    """
+    user = await get_user_by_id(session, auth.subject)
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Authenticated user not found.",
+        )
+
+    if not verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Current password is incorrect.",
+        )
+
+    validate_password_strength(payload.new_password, settings)
+
+    if verify_password(payload.new_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be different from the current password.",
+        )
+
+    user.password_hash = hash_password(payload.new_password)
+    # Revoke all prior tokens; issue_token_response embeds the new version and commits.
+    user.token_version = (user.token_version or 0) + 1
+
+    return await issue_token_response(session, user, settings)
 
 
 _INVITE_PREFIX = "invite:"

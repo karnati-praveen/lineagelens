@@ -11,6 +11,34 @@ logger = logging.getLogger("lineagelens-proxy")
 _SSE_DATA_PREFIX = "data:"
 _SSE_DONE_MARKER = "[DONE]"
 
+# Explicit phrases that signal a *user* (not system) rejection of a proposed
+# edit. A bare "user " substring is intentionally NOT used here: benign error
+# text like "another user connected" or "user token expired" would otherwise be
+# misclassified as a rejected edit (CODE-02).
+_REJECTION_PHRASES = (
+    "user rejected",
+    "user denied",
+    "user declined",
+    "user cancelled",
+    "user canceled",
+    "rejected by user",
+    "denied by user",
+    "permission denied",
+    "operation not permitted",
+    "edit was rejected",
+    "change was rejected",
+)
+
+
+def _looks_like_rejection(lower_content: str) -> bool:
+    """Return True iff *lower_content* (already lowercased) reads as a user rejection.
+
+    Matches explicit rejection phrases instead of broad single-word substrings so
+    that ordinary error messages containing the word "user" are not misread as
+    rejections.
+    """
+    return any(phrase in lower_content for phrase in _REJECTION_PHRASES)
+
 # Background tasks set — shared between proxy.py (lifespan cleanup) and all adapters.
 _background_tasks: set[asyncio.Task] = set()
 

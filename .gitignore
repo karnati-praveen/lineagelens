@@ -11,6 +11,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .mypy_cache/
+*.egg-info/
 .coverage
 coverage.xml
 lineagelens-backend/data/
@@ -51,6 +52,16 @@ lineagelens-marketing/
 lineagelens-n8n/
 
 # Dated working / planning documents (local only — never commit)
+improvements.md
+ll-improvement.md
+lineagelens-docs/base-extension-build-order-plan.md
+lineagelens-docs/base-extension-ide-competition-blueprint.md
+lineagelens-docs/buildable-future-architecture-blueprint.md
+lineagelens-docs/deeper-market-and-novel-systems-research.md
+lineagelens-docs/independence-trust-product-report.md
+
+# Scratch / manual runtime-check outputs (local only)
+outputs/
 SATURDAY_CONTENT*.md
 BUILD_PROMPTS*.md
 SECURITY_AUDIT*.md

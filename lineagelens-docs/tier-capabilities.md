@@ -112,6 +112,14 @@ This document is the human-readable companion to [`lineagelens-config/tiers.json
 
 **Backend mode:** `BACKEND_MODE=enterprise`
 
+**Why teams upgrade from Plus:** Plus lets you *see and review* AI provenance; Max lets you *enforce, retain, and prove* it. Five concrete Max-only capabilities — surfaced in the dashboard so the upgrade value is visible, not just SSO:
+
+1. **SSO / OIDC** single sign-on (Okta, Auth0, Azure AD, Keycloak).
+2. **Retention & redaction policies** — auto-redact prompt contents and purge old records per workspace (Governance → Retention in the dashboard).
+3. **Semantic / vector search** across AI-generated code.
+4. **Neo4j graph lineage** — track how a code block evolves over commits.
+5. **Kubernetes / Helm** deployment for scale.
+
 **What it adds over Plus:**
 - Neo4j 5+ for graph lineage — tracks code block evolution as a directed graph.
 - pgvector for semantic / vector similarity search.

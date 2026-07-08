@@ -76,6 +76,11 @@ def get_public_key_hex() -> str:
     return pk.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
 
 
+def get_current_public_key_id() -> str:
+    """Return the public_key_id of the currently active signing key."""
+    return _get_public_key_id(_load_private_key())
+
+
 def sign_detached(data: bytes) -> tuple[str, str]:
     """Sign arbitrary bytes with the Ed25519 attestation key.
 
@@ -221,17 +226,25 @@ def key_status_at(record: KeyRecord, at: datetime | None) -> str:
     return "valid"
 
 
-def verify_attestation_detailed(signed: SignedAttestation, *, at: datetime | None = None) -> dict:
+def verify_attestation_detailed(
+    signed: SignedAttestation,
+    *,
+    at: datetime | None = None,
+    registry_override: dict[str, KeyRecord] | None = None,
+) -> dict:
     """Verify signature + key trust state. Returns a dict; never raises.
 
     keys: valid (bool), signatureValid (bool), keyStatus, publicKeyId, reason.
     *at* defaults to the statement's issued_at (so historical attestations are
     judged against the key state at signing time), else now.
+    *registry_override*, if given, is used instead of the env-based registry —
+    callers that maintain a DB-backed registry (PART 5 #57) load it themselves
+    (async) and pass the dict in, keeping this function sync/pure/testable.
     """
     canonical = json.dumps(signed.statement, sort_keys=True, default=str).encode()
     moment = at or _parse_ts((signed.statement or {}).get("issued_at"))
 
-    registry = _registry()
+    registry = registry_override if registry_override is not None else _registry()
     record = registry.get(signed.public_key_id)
 
     # Resolve the public key: registry entry, else the currently-loaded key
@@ -275,3 +288,118 @@ def verify_attestation(signed: SignedAttestation, *, at: datetime | None = None)
     current key exactly as before.
     """
     return verify_attestation_detailed(signed, at=at)["valid"]
+
+
+# ── DB-backed key registry (PART 5 #57) ───────────────────────────────────────
+#
+# The env-based registry above requires a redeploy to revoke a compromised key.
+# These functions add a mutable, DB-backed registry so an admin can revoke or
+# register a key at runtime. The env registry is still consulted (as a
+# fallback / for air-gapped deployments with no admin API access) — DB entries
+# take precedence when both exist.
+
+def _key_record_from_row(row: object) -> KeyRecord:
+    return KeyRecord(
+        public_key_id=row.public_key_id,
+        public_key_hex=row.public_key_hex,
+        valid_from=row.valid_from.isoformat() if row.valid_from else None,
+        valid_until=row.valid_until.isoformat() if row.valid_until else None,
+        compromised_at=row.compromised_at.isoformat() if row.compromised_at else None,
+        status=row.status,
+    )
+
+
+async def load_registry_from_db(session) -> dict[str, KeyRecord]:
+    """Return the merged (DB + env + current key) registry.
+
+    DB rows take precedence over an env entry with the same public_key_id
+    since the DB is the mutable source of truth for runtime revocation.
+    """
+    from sqlalchemy import select
+
+    from app.db.models import AttestationKey
+
+    merged = dict(_registry())
+    result = await session.execute(select(AttestationKey))
+    for row in result.scalars().all():
+        merged[row.public_key_id] = _key_record_from_row(row)
+    return merged
+
+
+async def register_key(
+    session,
+    *,
+    public_key_id: str,
+    public_key_hex: str,
+    valid_from: datetime | None = None,
+    label: str | None = None,
+) -> "AttestationKey":  # noqa: F821 - forward ref, imported lazily below
+    """Register a new signing key for rotation. Returns the created row."""
+    from app.db.models import AttestationKey
+
+    row = AttestationKey(
+        public_key_id=public_key_id,
+        public_key_hex=public_key_hex,
+        valid_from=valid_from,
+        label=label,
+        status="active",
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def revoke_key(
+    session,
+    public_key_id: str,
+    *,
+    reason: str,
+    revoked_by: str,
+) -> "AttestationKey":  # noqa: F821
+    """Mark a key compromised at the current time. Raises ValueError if unknown.
+
+    Any signature made after this timestamp will be rejected by
+    verify_attestation_detailed even though the cryptographic math checks out —
+    that is the point of a runtime-revocable registry.
+    """
+    from sqlalchemy import select
+
+    from app.db.models import AttestationKey
+
+    result = await session.execute(
+        select(AttestationKey).where(AttestationKey.public_key_id == public_key_id)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise ValueError(f"Unknown public_key_id: {public_key_id!r}")
+
+    row.status = "compromised"
+    row.compromised_at = datetime.now(tz=UTC)
+    row.revocation_reason = reason
+    row.revoked_by = revoked_by
+    await session.flush()
+    return row
+
+
+# ── Customer-controlled countersignature (PART 5 #57, partial) ───────────────
+#
+# A customer can hold their own Ed25519 keypair out of band and countersign a
+# LineageLens statement to add an independent trust root. This is a generic
+# verify helper only — it does not manage, store, or rotate customer keys
+# (that would require KMS/HSM integration, scoped as a follow-up; see
+# SECURITY_NOTES.md).
+
+def verify_customer_countersignature(
+    payload_canonical: bytes,
+    customer_public_key_hex: str,
+    customer_signature_hex: str,
+) -> bool:
+    """Verify a customer-supplied Ed25519 countersignature. False, never raises."""
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(customer_public_key_hex))
+        pub.verify(bytes.fromhex(customer_signature_hex), payload_canonical)
+        return True
+    except Exception:
+        return False

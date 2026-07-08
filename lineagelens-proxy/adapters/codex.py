@@ -9,14 +9,27 @@ from adapters.common import (
     _annotate_edits,
     _background_tasks,
     _get_ingest_fn,
+    _looks_like_rejection,
     _pending_edits,
     _pending_edits_lock,
     _PENDING_EDITS_MAX,
     _SSE_DATA_PREFIX,
     _SSE_DONE_MARKER,
 )
+from adapters.contract import AdapterCapability
 
 logger = logging.getLogger("lineagelens-proxy")
+
+# PART 5 #54 — apply_patch DSL supports multiple file hunks per call
+# (multi-edit); SSE assembly and function_call_output resolution both exist.
+# The DSL is structured (not text-heuristic), hence "full" fidelity.
+CAPABILITY = AdapterCapability(
+    provider="codex",
+    supports_multi_edit=True,
+    supports_streaming=True,
+    supports_tool_results=True,
+    fidelity="full",
+)
 
 
 def _is_codex_responses_path(url: str) -> bool:
@@ -61,9 +74,22 @@ def _codex_session_key(body_dict: dict, headers: dict) -> str:
     return hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:16]
 
 
+# Upper bound on the apply_patch DSL string we will tokenize. The patch comes
+# from the upstream model response; a multi-megabyte blob would make split() and
+# the per-line scan below burn CPU on the event loop (CODE-06). Real edits are
+# far smaller than this; anything larger is dropped rather than parsed.
+_MAX_PATCH_BYTES = 2_000_000
+
+
 def _parse_apply_patch_dsl(patch: str) -> list[dict]:
     """Parse Codex CLI's apply_patch DSL into per-file edit records."""
     if not isinstance(patch, str) or not patch.strip():
+        return []
+    if len(patch) > _MAX_PATCH_BYTES:
+        logger.warning(
+            "apply_patch DSL too large (%d chars > %d) — skipping parse",
+            len(patch), _MAX_PATCH_BYTES,
+        )
         return []
 
     lines = patch.splitlines()
@@ -316,7 +342,7 @@ def _classify_codex_function_call_output(item: dict) -> tuple[str, str]:
         output = str(output) if output else ""
 
     lower = output.lower()
-    if "reject" in lower or "deni" in lower or "declined" in lower or "user " in lower:
+    if _looks_like_rejection(lower):
         return ("rejected", output[:500])
     if (
         lower.startswith("error")

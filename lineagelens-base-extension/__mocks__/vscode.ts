@@ -28,6 +28,7 @@ const vscode = {
   },
   extensions: {
     all: [] as { id: string; isActive: boolean }[],
+    onDidChange: (_listener: unknown) => ({ dispose: () => {} }),
   },
   env: {
     clipboard: {

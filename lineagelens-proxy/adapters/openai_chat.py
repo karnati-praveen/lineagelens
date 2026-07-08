@@ -36,8 +36,24 @@ from adapters.common import (
     _SSE_DONE_MARKER,
 )
 from adapters.codex import _parse_apply_patch_dsl
+from adapters.contract import AdapterCapability
 
 logger = logging.getLogger("lineagelens-proxy")
+
+# PART 5 #54 — this adapter uniquely also falls back to text-content heuristics
+# (aider SEARCH/REPLACE, unified diff, fenced code blocks) when no structured
+# tool_calls are present (module docstring, strategy B). That heuristic
+# fallback surface is real but lower-confidence than the other three adapters'
+# purely structured tool-call/function-call parsing, so fidelity is declared
+# "partial" rather than "full" — an honest reflection of the extra guesswork,
+# not a claim the tool-call path itself is weaker.
+CAPABILITY = AdapterCapability(
+    provider="openai_chat",
+    supports_multi_edit=True,
+    supports_streaming=True,
+    supports_tool_results=True,
+    fidelity="partial",
+)
 
 
 # ── Path / provider detection ─────────────────────────────────────────────────
@@ -463,9 +479,14 @@ def _parse_text_content_to_edits(text: str) -> list[dict]:
                 "moved_to": e["moved_to"],
             })
 
-    edits.extend(_parse_aider_search_replace(text))
-    edits.extend(_parse_unified_diff(text))
-
+    # Short-circuit: each parser only runs when the higher-priority ones found
+    # nothing, so a single edit that happens to match multiple formats (e.g. an
+    # apply-patch block whose body also contains an Aider SEARCH/REPLACE example)
+    # is never recorded twice (CODE-04).
+    if not edits:
+        edits.extend(_parse_aider_search_replace(text))
+    if not edits:
+        edits.extend(_parse_unified_diff(text))
     if not edits:
         edits.extend(_parse_fenced_code_blocks(text))
 

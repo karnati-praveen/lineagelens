@@ -69,10 +69,26 @@ becomes unverifiable** until the old public key is also retained for validation.
 
 ### Current implementation gaps (do not close in this session)
 
-- `verify_attestation` validates only with the single currently-loaded key. A
-  multi-key registry is needed before any rotation can be performed safely.
-- There is no `key_id` registry table yet — add one before the first production
-  rotation.
+- ~~`verify_attestation` validates only with the single currently-loaded key.~~
+  Closed by PART 3 #19 (env-based `ATTESTATION_KEY_REGISTRY`, multi-key lookup,
+  validity windows, compromise timestamps) and PART 5 #57 (DB-backed
+  `attestation_keys` table + `POST /admin/keys/{id}/revoke`, so a compromised
+  key can be revoked at runtime without a redeploy).
+- ~~There is no `key_id` registry table yet.~~ Closed by PART 5 #57 — see
+  `app.db.models.AttestationKey` / `app.core.attestation.load_registry_from_db`.
 - Indemnity certificate validity checks do not verify that the signing key was
-  not compromised at the time of issuance — add a `key_valid_at` check once the
-  compromise-timestamp tracking is in place.
+  not compromised at the time of issuance — add a `key_valid_at` check once
+  callers route indemnity verification through `verify_attestation_detailed`
+  with a `registry_override` loaded from the DB registry.
+
+### Customer KMS/HSM integration — scoped follow-up (PART 5 #57)
+
+`app.core.attestation.verify_customer_countersignature` provides a generic
+Ed25519 verify against a customer-supplied public key, so a customer can
+countersign a LineageLens statement with a key they hold entirely out of
+band. What is **not** built: actual integration with a specific customer's
+KMS/HSM (AWS KMS, Azure Key Vault, on-prem HSM) to manage or rotate that
+customer key on their behalf. That requires a live customer environment to
+integrate against and is not something a solo developer can build generically
+in advance — it is scoped as follow-up work for the first design partner who
+needs it, matching how PART 3 #26 (SQL graph fallback) was scoped.

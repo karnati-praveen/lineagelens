@@ -14,6 +14,7 @@ from sqlalchemy import Text, and_, cast, desc, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.assurance_states import prompt_availability_state
 from app.core.config import Settings
 from app.core.evidence import classify_record_claims
 from app.core.security import AuthContext
@@ -685,6 +686,9 @@ def serialize_provenance_record(
     # declared vs derived vs unknown so the UI never collapses to one green check.
     payload["claims"] = classify_record_claims(record)
     payload["lifecycleState"] = getattr(record, "lifecycle_state", "active")
+    # PART 5 #58 — explicit machine-readable prompt-availability state; missing
+    # prompt must never be silently read as "disclosure complete".
+    payload["promptState"] = prompt_availability_state(record)
 
     return payload
 

@@ -1,19 +1,41 @@
 import * as vscode from 'vscode';
-import { CaptureRecord } from './store';
+import { CaptureRecord, ReviewState } from './store';
+import { checklistFor } from './review/checklist';
+import { InstructionFile } from './risk/instructionScan';
 
 /** Human label for a capture's best-guess origin. */
 function sourceLabel(source: string): string {
   return source === 'ai' ? '🤖 AI' : source === 'paste' ? '📋 Paste' : '❓ Unknown';
 }
 
+/** Human label for the review lifecycle state. */
+function reviewLabel(state: ReviewState | undefined): string {
+  switch (state) {
+    case 'reviewed': return 'Reviewed';
+    case 'needs_changes': return 'Needs changes';
+    case 'rejected': return 'Rejected';
+    case 'accepted': return 'Accepted';
+    default: return 'Unreviewed';
+  }
+}
+
 // ── Webview detail panel ──────────────────────────────────────────────────────
 
-export function buildDetailPanel(panel: vscode.WebviewPanel, record: CaptureRecord): void {
+export function buildDetailPanel(
+  panel: vscode.WebviewPanel,
+  record: CaptureRecord,
+  instructionFiles: InstructionFile[] = [],
+): void {
   const date = new Date(record.timestamp).toLocaleString();
   const esc  = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const pct = Math.round((record.confidence ?? 0.5) * 100);
   const srcLabel = sourceLabel(record.source);
+  const reviewState = record.reviewState ?? 'unreviewed';
+  const reviewStatusLabel = reviewLabel(reviewState);
+  const risks = record.riskSignals ?? [];
+  // Tailor the review checklist to the highest-severity risk category.
+  const checklistCategory = risks[0]?.category ?? 'generic';
 
   const langColors: Record<string, string> = {
     typescript: '#3178c6', javascript: '#f7df1e', python: '#3572a5',
@@ -146,6 +168,66 @@ export function buildDetailPanel(panel: vscode.WebviewPanel, record: CaptureReco
   .tk-com { color: #6a9955; font-style: italic; }
   .path { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; color: var(--vscode-descriptionForeground); word-break: break-all; }
   .id   { font-family: var(--vscode-editor-font-family, monospace); font-size: 10px; color: var(--vscode-descriptionForeground); opacity: .6; }
+  /* ── Review section ─────────────────────────────────────────────────────── */
+  .review-box {
+    border: 1px solid var(--vscode-panel-border); border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 18px;
+    background: var(--vscode-textBlockQuote-background, var(--vscode-editor-inactiveSelectionBackground));
+  }
+  .review-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .review-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--vscode-descriptionForeground); }
+  .review-status { margin-left: auto; font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 10px; border: 1px solid var(--vscode-panel-border); }
+  .review-status.s-reviewed, .review-status.s-accepted { color: #34d058; border-color: rgba(52,208,88,.4); }
+  .review-status.s-needs_changes, .review-status.s-rejected { color: #f44747; border-color: rgba(244,71,71,.4); }
+  .review-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .rbtn {
+    background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground);
+    border: 1px solid transparent; border-radius: 5px; padding: 5px 10px; font-size: 11px; cursor: pointer;
+    font-family: var(--vscode-font-family);
+  }
+  .rbtn:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  .rbtn.active { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  .review-note {
+    width: 100%; min-height: 52px; resize: vertical; box-sizing: border-box;
+    background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 6px;
+    padding: 6px 8px; font-family: var(--vscode-font-family); font-size: 12px; margin-bottom: 8px;
+  }
+  .review-note:focus { outline: none; border-color: var(--vscode-focusBorder); }
+  .checklist { margin-top: 6px; font-size: 12px; }
+  .checklist summary { cursor: pointer; color: var(--vscode-descriptionForeground); }
+  .checklist ul { margin: 8px 0 0 18px; }
+  .checklist li { margin-bottom: 4px; line-height: 1.45; }
+  /* ── Risk signals ───────────────────────────────────────────────────────── */
+  .risk-box {
+    border: 1px solid rgba(244,71,71,.35); border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 14px;
+    background: rgba(244,71,71,.06);
+  }
+  .risk-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  .risk-title { font-size: 12px; font-weight: 700; color: var(--vscode-errorForeground); }
+  .risk-note { font-size: 10px; color: var(--vscode-descriptionForeground); }
+  .risk-list { list-style: none; }
+  .risk-list li { padding: 6px 0; border-top: 1px solid var(--vscode-panel-border); }
+  .risk-list li:first-child { border-top: none; }
+  .risk-pill { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 4px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+  .risk-sev { font-size: 10px; font-weight: 700; text-transform: uppercase; margin-left: 8px; letter-spacing: .04em; }
+  .sev-high .risk-sev { color: #f44747; }
+  .sev-medium .risk-sev { color: #f5a623; }
+  .sev-low .risk-sev { color: var(--vscode-descriptionForeground); }
+  .risk-msg { font-size: 11.5px; color: var(--vscode-foreground); margin-top: 3px; line-height: 1.45; }
+  /* ── AI instruction influence ───────────────────────────────────────────── */
+  .instr-box {
+    border: 1px solid var(--vscode-panel-border); border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 18px;
+    background: var(--vscode-textBlockQuote-background, var(--vscode-editor-inactiveSelectionBackground));
+  }
+  .instr-head { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--vscode-descriptionForeground); margin-bottom: 6px; }
+  .instr-note { font-size: 11.5px; color: var(--vscode-foreground); margin-bottom: 8px; }
+  .instr-list { list-style: none; }
+  .instr-list li { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; }
+  .instr-tool { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 4px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); white-space: nowrap; }
+  .instr-path { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; color: var(--vscode-descriptionForeground); word-break: break-all; }
 </style>
 </head>
 <body>
@@ -160,6 +242,7 @@ export function buildDetailPanel(panel: vscode.WebviewPanel, record: CaptureReco
     <button class="btn" id="insertBtn" type="button">⤵ Insert at cursor</button>
     <button class="btn secondary" id="copyBtn" type="button">Copy</button>
     <button class="btn secondary" id="revealBtn" type="button">↗ Reveal in file</button>
+    <button class="btn secondary" id="recallBtn" type="button">⟲ Recall similar</button>
     <button class="btn danger" id="deleteBtn" type="button">Delete</button>
     <span class="reclass">
       <span class="reclass-label">Reclassify:</span>
@@ -193,6 +276,37 @@ export function buildDetailPanel(panel: vscode.WebviewPanel, record: CaptureReco
     </div>
     ${record.workspaceFolder ? `<div class="card" style="grid-column:1/-1"><div class="card-label">Workspace</div><div class="card-value">${esc(record.workspaceFolder)}</div></div>` : ''}
   </div>
+  ${risks.length ? `<div class="risk-box">
+    <div class="risk-head"><span class="risk-title">⚠ Local risk signals</span><span class="risk-note">heuristic — not a security scan</span></div>
+    <ul class="risk-list">
+      ${risks.map(s => `<li class="sev-${esc(s.severity)}"><span class="risk-pill">${esc(s.label)}</span><span class="risk-sev">${esc(s.severity)}</span><div class="risk-msg">${esc(s.message)}</div></li>`).join('')}
+    </ul>
+  </div>` : ''}
+  <div class="review-box">
+    <div class="review-head">
+      <span class="review-title">Review</span>
+      <span class="review-status s-${esc(reviewState)}">${esc(reviewStatusLabel)}</span>
+    </div>
+    <div class="review-actions">
+      <button class="rbtn ${reviewState === 'reviewed' ? 'active' : ''}" data-review="reviewed" type="button">✓ Reviewed</button>
+      <button class="rbtn ${reviewState === 'needs_changes' ? 'active' : ''}" data-review="needs_changes" type="button">✎ Needs changes</button>
+      <button class="rbtn ${reviewState === 'rejected' ? 'active' : ''}" data-review="rejected" type="button">✕ Rejected</button>
+      <button class="rbtn ${reviewState === 'unreviewed' ? 'active' : ''}" data-review="unreviewed" type="button">↺ Reopen</button>
+    </div>
+    <textarea id="reviewNote" class="review-note" placeholder="Add a review note (optional)…">${esc(record.reviewNote ?? '')}</textarea>
+    <button class="btn secondary" id="saveNote" type="button">Save note</button>
+    <details class="checklist">
+      <summary>Review checklist${checklistCategory !== 'generic' ? ` · ${esc(checklistCategory)}` : ''}</summary>
+      <ul>${checklistFor(checklistCategory).map(item => `<li>${esc(item)}</li>`).join('')}</ul>
+    </details>
+  </div>
+  ${instructionFiles.length ? `<div class="instr-box">
+    <div class="instr-head">AI instruction influence</div>
+    <div class="instr-note">This change may have been shaped by project AI instruction files:</div>
+    <ul class="instr-list">
+      ${instructionFiles.map(f => `<li><span class="instr-tool">${esc(f.tool)}</span><span class="instr-path">${esc(f.path)}</span></li>`).join('')}
+    </ul>
+  </div>` : ''}
   <div class="code-header">
     <span class="code-label">Inserted Code</span>
   </div>
@@ -251,6 +365,7 @@ export function buildDetailPanel(panel: vscode.WebviewPanel, record: CaptureReco
       function on(id, fn) { var el = document.getElementById(id); if (el) { el.addEventListener('click', fn); } }
       on('insertBtn', function() { vscode.postMessage({ type: 'insert' }); });
       on('revealBtn', function() { vscode.postMessage({ type: 'reveal' }); });
+      on('recallBtn', function() { vscode.postMessage({ type: 'recall' }); });
       on('deleteBtn', function() { vscode.postMessage({ type: 'delete' }); });
       on('copyBtn', function() {
         var btn = document.getElementById('copyBtn');
@@ -264,6 +379,16 @@ export function buildDetailPanel(panel: vscode.WebviewPanel, record: CaptureReco
         b.addEventListener('click', function() {
           vscode.postMessage({ type: 'reclassify', source: b.getAttribute('data-src') });
         });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('.rbtn'), function(b) {
+        b.addEventListener('click', function() {
+          var note = document.getElementById('reviewNote');
+          vscode.postMessage({ type: 'review', state: b.getAttribute('data-review'), note: note ? note.value : '' });
+        });
+      });
+      on('saveNote', function() {
+        var note = document.getElementById('reviewNote');
+        vscode.postMessage({ type: 'review', note: note ? note.value : '' });
       });
     })();
   </script>

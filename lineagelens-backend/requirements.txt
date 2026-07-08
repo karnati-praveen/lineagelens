@@ -12,6 +12,9 @@ pydantic-settings==2.7.0
 python-dotenv>=1.2.2
 httpx>=0.27.0
 pyarrow>=14.0.0
+# Required by FastAPI to parse multipart/form-data uploads (Agent Trace JSONL upload).
+# Without it, the upload route raises a runtime error on first request.
+python-multipart>=0.0.18
 
 # Lite mode (SQLite) — zero external DB deps
 aiosqlite>=0.20.0

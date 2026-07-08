@@ -3,7 +3,7 @@
   "displayName": "LineageLens Base",
   "description": "Lightweight AI code provenance \u2014 capture and review every AI-generated insertion locally, no server required.",
   "_extensionRole": "BASE \u2014 zero-server standalone edition. Install for local-only capture with no backend, no proxy, and no account required. The full server-connected edition (Lite/Plus/Max) lives in the repo root package.json.",
-  "version": "1.3.0",
+  "version": "1.3.3",
   "publisher": "karnatipraveen",
   "license": "MIT",
   "repository": {
@@ -93,6 +93,36 @@
       {
         "command": "lineagelens.exportAgentTrace",
         "title": "LineageLens: Export Agent Trace"
+      },
+      {
+        "command": "lineagelens.showFileTimeline",
+        "title": "LineageLens: Show AI Timeline for This File",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.toggleFocusMode",
+        "title": "LineageLens: Toggle AI Focus Mode",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.checkBeforeCommit",
+        "title": "LineageLens: Check AI Changes Before Commit",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.exportPrSummary",
+        "title": "LineageLens: Generate PR Summary of AI Changes",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.verifyEvidence",
+        "title": "LineageLens: Verify Local Evidence Store",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.exportCapsule",
+        "title": "LineageLens: Export Evidence Capsule",
+        "category": "LineageLens"
       },
       {
         "command": "lineagelens.openWelcome",
@@ -204,6 +234,16 @@
           "type": "boolean",
           "default": true,
           "description": "Read the clipboard to detect whether a large insertion was pasted rather than AI-generated (reduces false positives). The clipboard is read locally on this machine and is never stored or transmitted. Disable if you do not want any clipboard access."
+        },
+        "lineagelensBase.showCodeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show an 'AI capture' CodeLens above each captured range in the editor. The lens follows the code as it moves and opens the full receipt on click."
+        },
+        "lineagelensBase.showGutter": {
+          "type": "boolean",
+          "default": true,
+          "description": "Highlight captured AI ranges with a subtle line tint and overview-ruler mark. Use 'Toggle AI Focus Mode' to narrow this to only blocks that drifted or need changes."
         }
       }
     }

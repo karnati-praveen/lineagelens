@@ -167,6 +167,14 @@ class Settings(BaseSettings):
     # When false (default), unknown review status causes ineligibility for indemnity.
     indemnity_unknown_review_pass: bool = Field(default=False, alias="INDEMNITY_UNKNOWN_REVIEW_PASS")
 
+    # PART 5 #53 — external witness / split-trust anchoring. All optional; a
+    # backend with none of these set still functions (witness_service reports
+    # `not_configured` for every backend rather than silently skipping them).
+    tsa_url: str | None = Field(default=None, alias="TSA_URL")
+    witness_git_repo_path: str | None = Field(default=None, alias="WITNESS_GIT_REPO_PATH")
+    rekor_url: str | None = Field(default=None, alias="REKOR_URL")
+    witness_object_store_url: str | None = Field(default=None, alias="WITNESS_OBJECT_STORE_URL")
+
     # Tighter per-IP rate limit applied exclusively to authentication endpoints.
     # This is separate from the global HTTP rate limit so that login brute-force
     # attempts are throttled independently of normal API traffic.

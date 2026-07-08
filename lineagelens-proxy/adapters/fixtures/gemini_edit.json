@@ -1,0 +1,49 @@
+{
+  "provider": "gemini",
+  "note": "Synthetic fixtures — not real captured data (PART 5 #54 golden redacted fixtures).",
+  "cases": [
+    {
+      "name": "write_file_new_content",
+      "input": {
+        "name": "write_file",
+        "id": "fixture_call_0001",
+        "args": {
+          "file_path": "src/example.py",
+          "content": "REDACTED_FILE_CONTENT"
+        }
+      },
+      "expectedEditCount": 1
+    },
+    {
+      "name": "replace_tool_old_new",
+      "input": {
+        "name": "replace",
+        "id": "fixture_call_0002",
+        "args": {
+          "file_path": "src/example.py",
+          "old_string": "REDACTED_OLD_LINE",
+          "new_string": "REDACTED_NEW_LINE"
+        }
+      },
+      "expectedEditCount": 1
+    },
+    {
+      "name": "unrelated_tool_is_not_captured",
+      "input": {
+        "name": "list_files",
+        "id": "fixture_call_0003",
+        "args": {"directory": "src/"}
+      },
+      "expectedEditCount": 0
+    },
+    {
+      "name": "write_file_missing_path",
+      "input": {
+        "name": "write_file",
+        "id": "fixture_call_0004",
+        "args": {"content": "REDACTED_FILE_CONTENT"}
+      },
+      "expectedEditCount": 0
+    }
+  ]
+}

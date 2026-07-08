@@ -2,8 +2,39 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID, randomBytes, createCipheriv, createDecipheriv } from 'crypto';
+import { rangeContentHash } from './evidence/hash';
+import { applyReview } from './review/reviewState';
+import { GENESIS_HASH, eventHashFor, sealMissing } from './evidence/hashChain';
+import { evaluateRisk } from './risk/rules';
 
 export type CaptureSource = 'ai' | 'paste' | 'unknown';
+
+/** Human review lifecycle for an AI-origin capture (Phase 2 populates beyond default). */
+export type ReviewState = 'unreviewed' | 'reviewed' | 'needs_changes' | 'rejected' | 'accepted';
+
+/** Where the captured block sits now relative to where it was inserted (Phase 1). */
+export type LineageState = 'original' | 'modified' | 'moved' | 'deleted' | 'unknown';
+
+/** Severity of a local risk signal. */
+export type RiskSeverity = 'low' | 'medium' | 'high';
+
+/**
+ * A deterministic local risk signal attached to a capture (see risk/rules.ts).
+ * These are heuristic "signals", not a security scan / SAST result.
+ */
+export interface RiskSignal {
+  /** Stable rule id, e.g. 'generated-auth-code'. */
+  id: string;
+  /** Short display word, e.g. 'auth', 'secrets'. */
+  label: string;
+  /** Review-checklist category key (see review/checklist.ts). */
+  category: string;
+  severity: RiskSeverity;
+  message: string;
+}
+
+/** Current evidence schema version written by this build. */
+export const CAPTURE_SCHEMA_VERSION = 2;
 
 export interface CaptureRecord {
   id: string;
@@ -18,6 +49,34 @@ export interface CaptureRecord {
   confidence: number;
   /** best-guess origin of the insertion */
   source: CaptureSource;
+
+  // ── v2 evidence layer (all optional for back-compat; see schema migration) ──
+  /** Evidence schema version; absent on legacy (v1) records. */
+  schemaVersion?: number;
+  /** Zero-based line of the first inserted line at capture time. */
+  startLine?: number;
+  /** Zero-based line of the last inserted line at capture time. */
+  endLine?: number;
+  /** Whitespace-tolerant hash of the inserted block, for relocation/tamper checks. */
+  rangeContentHash?: string;
+  /** Current position of the block relative to capture (resolved lazily). */
+  lineageState?: LineageState;
+  /** Human review lifecycle state. */
+  reviewState?: ReviewState;
+  /** Optional free-text review note. */
+  reviewNote?: string;
+  /** ISO timestamp of the last review-state change. */
+  reviewedAt?: string;
+  /** Branch HEAD was on at capture time (best-effort; null if git unavailable). */
+  gitBranch?: string | null;
+  /** Commit HEAD pointed at during capture (best-effort; null if git unavailable). */
+  gitCommit?: string | null;
+  /** Tamper-evident hash of this record's immutable core, chained to {@link prevHash}. */
+  eventHash?: string;
+  /** eventHash of the previously-added record (genesis sentinel for the first). */
+  prevHash?: string;
+  /** Local risk signals derived from the captured code/path (Phase 4). */
+  riskSignals?: RiskSignal[];
 }
 
 const STORE_FILE = 'captures.json';
@@ -53,6 +112,9 @@ export class CaptureStore {
   private maxCaptures: number;
   private key: Buffer | null;
   private _saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  // Tail of the serialized write chain. flush() awaits this so callers (and
+  // tests) can deterministically wait for persistence to settle.
+  private _pendingWrite: Promise<void> = Promise.resolve();
 
   /**
    * Construct a store. `key` enables at-rest encryption; when omitted the store
@@ -115,14 +177,29 @@ export class CaptureStore {
         const wasEncrypted = raw.startsWith(ENC_PREFIX);
         const json = wasEncrypted ? this.decrypt(raw) : raw;
         const parsed = JSON.parse(json) as CaptureRecord[];
-        // Backfill fields added in v1.2.3 so older stored records stay valid.
+        // Backfill fields so older stored records stay valid:
+        //  – confidence/source landed in v1.2.3
+        //  – the v2 evidence layer (schemaVersion, reviewState, lineageState,
+        //    rangeContentHash) lands here. One bump carries all later-phase
+        //    fields; they remain optional until a phase populates them.
         this.records = parsed.map(r => ({
           ...r,
           confidence: r.confidence ?? 0.5,
           source: (r.source ?? 'unknown') as CaptureSource,
+          schemaVersion: r.schemaVersion ?? CAPTURE_SCHEMA_VERSION,
+          reviewState: (r.reviewState ?? 'unreviewed') as ReviewState,
+          lineageState: (r.lineageState ?? 'unknown') as LineageState,
+          rangeContentHash: r.rangeContentHash ?? rangeContentHash(r.insertedCode ?? ''),
+          riskSignals: r.riskSignals ?? evaluateRisk({
+            filePath: r.filePath,
+            language: r.language,
+            insertedCode: r.insertedCode ?? '',
+          }),
         }));
-        // Transparently migrate a legacy plaintext store to encrypted at rest.
-        if (!wasEncrypted && this.key) {
+        // Seal any records that predate the evidence chain (one-time on upgrade).
+        const sealed = sealMissing(this.records);
+        // Persist if we migrated plaintext→encrypted and/or sealed the chain.
+        if ((!wasEncrypted && this.key) || sealed) {
           this.save();
         }
       }
@@ -132,18 +209,54 @@ export class CaptureStore {
   }
 
   private save(): void {
-    this._saveAsync().catch(err =>
-      console.error('LineageLens Base: failed to persist captures:', err),
-    );
+    // Serialize writes onto a single chain so a debounced flush and an explicit
+    // save can never race into a half-written file. flush() awaits the tail.
+    this._pendingWrite = this._pendingWrite
+      .catch(() => {})
+      .then(() => this._saveAsync())
+      .catch((err: NodeJS.ErrnoException) => {
+        // Background persistence is best-effort (the in-memory copy is source of
+        // truth and the next save retries). Stay quiet on environmental write
+        // failures — a vanished storage dir (ENOENT) or a transient OS lock on
+        // the temp file (EPERM, common on Windows with AV/indexers/OneDrive).
+        if (err && err.code !== 'ENOENT' && err.code !== 'EPERM') {
+          console.error('LineageLens Base: failed to persist captures:', err);
+        }
+      });
   }
 
   // Used by add() to coalesce rapid consecutive captures into one write.
   private saveDebounced(): void {
     if (this._saveDebounceTimer !== null) { return; }
-    this._saveDebounceTimer = setTimeout(() => {
+    const timer = setTimeout(() => {
       this._saveDebounceTimer = null;
       this.save();
     }, 500);
+    // Don't let a pending capture-store flush keep the host (or a test runner)
+    // process alive on its own.
+    timer.unref?.();
+    this._saveDebounceTimer = timer;
+  }
+
+  /**
+   * Flush any pending write to disk and resolve once it has settled. Cancels a
+   * debounced save and forces it through. Safe to call when nothing is pending.
+   */
+  async flush(): Promise<void> {
+    if (this._saveDebounceTimer !== null) {
+      clearTimeout(this._saveDebounceTimer);
+      this._saveDebounceTimer = null;
+      this.save();
+    }
+    await this._pendingWrite;
+  }
+
+  /** Cancel any pending debounced save. Call on extension deactivate. */
+  dispose(): void {
+    if (this._saveDebounceTimer !== null) {
+      clearTimeout(this._saveDebounceTimer);
+      this._saveDebounceTimer = null;
+    }
   }
 
   private async _saveAsync(): Promise<void> {
@@ -168,10 +281,31 @@ export class CaptureStore {
     const record: CaptureRecord = {
       confidence: 0.5,
       source: 'unknown',
+      schemaVersion: CAPTURE_SCHEMA_VERSION,
+      reviewState: 'unreviewed',
+      // A freshly captured insertion is, by definition, at its original spot.
+      lineageState: 'original',
       id: randomUUID(),
       timestamp: new Date().toISOString(),
       ...data,
     };
+    // Compute the content hash from the inserted code when the caller didn't
+    // supply one, so every record is relocatable/tamper-checkable.
+    if (!record.rangeContentHash) {
+      record.rangeContentHash = rangeContentHash(record.insertedCode);
+    }
+    // Attach local risk signals (derived; not part of the chain core).
+    if (!record.riskSignals) {
+      record.riskSignals = evaluateRisk({
+        filePath: record.filePath,
+        language: record.language,
+        insertedCode: record.insertedCode,
+      });
+    }
+    // Seal into the tamper-evident chain: link to the current head's hash.
+    const prevHash = this.records[0]?.eventHash ?? GENESIS_HASH;
+    record.prevHash = prevHash;
+    record.eventHash = eventHashFor(record, prevHash);
     this.records.unshift(record);
     // Re-read the cap on each insert so a user changing the setting takes
     // effect immediately instead of requiring an extension reload.
@@ -250,6 +384,23 @@ export class CaptureStore {
     rec.confidence = confidence ?? (source === 'ai' ? 0.99 : source === 'paste' ? 0.95 : 0.5);
     this.save();
     return rec;
+  }
+
+  /**
+   * Move a record through the human review lifecycle. Returns the (possibly
+   * updated) record, or `undefined` if the id is unknown. An illegal transition
+   * leaves the record unchanged and is not persisted.
+   */
+  setReviewState(id: string, state: ReviewState, note?: string): CaptureRecord | undefined {
+    const idx = this.records.findIndex(r => r.id === id);
+    if (idx === -1) { return undefined; }
+    const updated = applyReview(this.records[idx], state, note);
+    if (updated === this.records[idx]) {
+      return this.records[idx]; // no-op (illegal transition or nothing changed)
+    }
+    this.records[idx] = updated;
+    this.save();
+    return updated;
   }
 
   clear(): void {

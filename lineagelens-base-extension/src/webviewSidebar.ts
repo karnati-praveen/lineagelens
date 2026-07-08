@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { CaptureStore, CaptureSource } from './store';
+import { CaptureStore, CaptureSource, ReviewState } from './store';
 
 /** Lightweight per-card payload sent to the webview (no full code body). */
 interface CardData {
@@ -10,10 +10,27 @@ interface CardData {
   timestamp: string;
   confidence: number;
   source: CaptureSource;
+  reviewState: ReviewState;
+  /** Highest-severity risk signal, if any (for the row badge). */
+  risk: { label: string; severity: string } | null;
   filePath: string;
   workspaceFolder: string | null;
   preview: string;
 }
+
+// Commands the sidebar toolbar may invoke. Allowlisted so the webview can never
+// execute an arbitrary command id.
+const SIDEBAR_COMMANDS = new Set<string>([
+  'lineagelens.openWelcome',
+  'lineagelens.verifyEvidence',
+  'lineagelens.exportCapsule',
+  'lineagelens.exportPrSummary',
+  'lineagelens.checkBeforeCommit',
+  'lineagelens.showFileTimeline',
+  'lineagelens.toggleFocusMode',
+  'lineagelens.exportJson',
+  'lineagelens.exportAgentTrace',
+]);
 
 function firstMeaningfulLine(code: string): string {
   for (const line of code.split('\n')) {
@@ -51,7 +68,7 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.options = { enableScripts: true };
     webviewView.webview.html = this.html(webviewView.webview);
 
-    webviewView.webview.onDidReceiveMessage((msg: { type: string; id?: string; source?: string }) => {
+    webviewView.webview.onDidReceiveMessage((msg: { type: string; id?: string; source?: string; command?: string }) => {
       switch (msg.type) {
         case 'ready':   this.postRecords(); break;
         case 'open':    if (msg.id) { vscode.commands.executeCommand('lineagelens.openCapture', msg.id); } break;
@@ -60,6 +77,7 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
         case 'reveal':  if (msg.id) { vscode.commands.executeCommand('lineagelens.revealInFile', msg.id); } break;
         case 'delete':  if (msg.id) { vscode.commands.executeCommand('lineagelens.deleteCapture', msg.id); } break;
         case 'clearAll': vscode.commands.executeCommand('lineagelens.clearAll'); break;
+        case 'cmd':     if (msg.command && SIDEBAR_COMMANDS.has(msg.command)) { vscode.commands.executeCommand(msg.command); } break;
         case 'reclassify': {
           const src = msg.source as CaptureSource;
           if (msg.id && (src === 'ai' || src === 'paste' || src === 'unknown')) {
@@ -87,6 +105,10 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
       timestamp: r.timestamp,
       confidence: r.confidence ?? 0.5,
       source: r.source ?? 'unknown',
+      reviewState: r.reviewState ?? 'unreviewed',
+      risk: r.riskSignals && r.riskSignals.length
+        ? { label: r.riskSignals[0].label, severity: r.riskSignals[0].severity }
+        : null,
       filePath: r.filePath,
       workspaceFolder: r.workspaceFolder,
       preview: firstMeaningfulLine(r.insertedCode ?? ''),
@@ -163,10 +185,21 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
   }
   .clear-btn:hover { color: var(--vscode-errorForeground); border-color: var(--vscode-errorForeground); }
 
+  /* ── Actions bar ────────────────────────────────────────────────────────── */
+  .actions-bar { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+  .tool-btn {
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    border: 1px solid var(--vscode-widget-border, transparent);
+    border-radius: 6px; padding: 3px 8px; font-size: 10.5px; cursor: pointer;
+    font-family: inherit; white-space: nowrap;
+  }
+  .tool-btn:hover { background: var(--vscode-button-secondaryHoverBackground); }
+
   /* ── Group header ───────────────────────────────────────────────────────── */
   .group-head {
     display: flex; align-items: center; gap: 6px;
-    margin: 12px 2px 6px; font-size: 10px; font-weight: 700;
+    margin: 14px 0 4px; padding: 0 14px; font-size: 10px; font-weight: 700;
     letter-spacing: .07em; text-transform: uppercase;
     color: var(--vscode-descriptionForeground); cursor: pointer; user-select: none;
   }
@@ -178,65 +211,69 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
     border-radius: 9px; padding: 1px 7px;
   }
 
-  /* ── Card ───────────────────────────────────────────────────────────────── */
-  .card {
+  /* ── Row (compact list) ─────────────────────────────────────────────────── */
+  #list { margin: 0 -10px; }
+  .row {
     position: relative;
-    background: var(--vscode-editorWidget-background, rgba(255,255,255,.035));
-    border: 1px solid var(--vscode-widget-border, rgba(255,255,255,.07));
-    border-radius: 11px; padding: 11px 12px 11px 15px;
-    margin-bottom: 9px; cursor: pointer;
-    box-shadow: 0 1px 2px rgba(0,0,0,.18);
-    transition: transform .1s ease, box-shadow .12s ease, border-color .12s ease;
-    overflow: hidden;
+    padding: 7px 12px 7px 14px;
+    border-bottom: 1px solid var(--vscode-widget-border, rgba(255,255,255,.05));
+    cursor: pointer;
+    transition: background .1s ease;
   }
-  .card::before {
-    content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+  .row::before {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
     background: var(--accent-unknown);
   }
-  .card.s-ai::before    { background: var(--accent-ai); }
-  .card.s-paste::before { background: var(--accent-paste); }
-  .card:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 14px rgba(0,0,0,.28);
-    border-color: var(--vscode-focusBorder);
-  }
-  .card-top { display: flex; align-items: center; gap: 7px; }
-  .src-emoji { font-size: 13px; flex: none; }
+  .row.s-ai::before    { background: var(--accent-ai); }
+  .row.s-paste::before { background: var(--accent-paste); }
+  .row:hover { background: var(--vscode-list-hoverBackground); }
+
+  .row-top { display: flex; align-items: center; gap: 8px; }
   .fname {
     font-weight: 600; font-size: 12.5px; flex: 1;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .chip {
-    flex: none; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 20px;
-    border: 1px solid transparent;
+  .badges { display: flex; align-items: center; gap: 5px; flex: none; }
+  .b {
+    font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 9px;
+    white-space: nowrap; border: 1px solid transparent; letter-spacing: .01em;
   }
-  .chip.hi  { background: rgba(34,197,94,.15);  color: #34d058; border-color: rgba(34,197,94,.3); }
-  .chip.mid { background: rgba(245,166,35,.15); color: #f5a623; border-color: rgba(245,166,35,.3); }
-  .chip.lo  { background: rgba(244,71,71,.15);  color: #f44747; border-color: rgba(244,71,71,.3); }
-  .meta { margin-top: 5px; font-size: 11px; color: var(--vscode-descriptionForeground); }
-  .meta .dot { opacity: .5; margin: 0 5px; }
-  .lines { color: #34d058; font-weight: 600; }
+  .b-rev-ok   { color: #34d058; border-color: rgba(52,208,88,.4); }
+  .b-rev-warn { color: #f44747; border-color: rgba(244,71,71,.4); }
+  .b-rev-new  { color: var(--vscode-descriptionForeground); border-color: var(--vscode-panel-border); opacity: .8; }
+  .b-risk-high { color: #f44747; background: rgba(244,71,71,.12); border-color: rgba(244,71,71,.4); }
+  .b-risk-med  { color: #f5a623; background: rgba(245,166,35,.12); border-color: rgba(245,166,35,.4); }
+  .b-risk-low  { color: var(--vscode-descriptionForeground); border-color: var(--vscode-panel-border); }
+
+  .row-sub { display: flex; align-items: center; margin-top: 3px; font-size: 10.5px; color: var(--vscode-descriptionForeground); }
+  .row-sub .dot { opacity: .45; margin: 0 5px; }
+  .row-sub .lines { color: #34d058; font-weight: 600; }
+  .conf { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; opacity: .9; }
+  .conf .cdot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-unknown); }
+  .conf.hi .cdot  { background: #34d058; }
+  .conf.mid .cdot { background: #f5a623; }
+  .conf.lo .cdot  { background: #f44747; }
+
+  /* Preview + actions reveal on hover only — keeps the list quiet by default. */
+  .reveal { max-height: 0; opacity: 0; overflow: hidden; transition: max-height .16s ease, opacity .16s ease; }
+  .row:hover .reveal { max-height: 90px; opacity: 1; margin-top: 7px; }
   .preview {
-    margin-top: 7px; font-family: var(--vscode-editor-font-family, monospace);
-    font-size: 11px; color: var(--vscode-descriptionForeground);
+    font-family: var(--vscode-editor-font-family, monospace); font-size: 10.5px;
+    color: var(--vscode-descriptionForeground);
     background: var(--vscode-textCodeBlock-background, rgba(0,0,0,.18));
-    border-radius: 6px; padding: 4px 8px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .85;
+    border-radius: 5px; padding: 3px 8px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .actions {
-    display: flex; gap: 5px; margin-top: 9px;
-    max-height: 0; opacity: 0; overflow: hidden;
-    transition: max-height .16s ease, opacity .16s ease;
-  }
-  .card:hover .actions { max-height: 40px; opacity: 1; }
+  .row-actions { display: flex; gap: 4px; margin-top: 6px; }
   .act {
     flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
     background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground);
-    border: none; border-radius: 6px; padding: 5px 6px; font-size: 11px; cursor: pointer; font-family: inherit;
+    border: none; border-radius: 5px; padding: 4px 6px; font-size: 10.5px; cursor: pointer; font-family: inherit;
   }
   .act:hover { background: var(--vscode-button-secondaryHoverBackground); }
   .act.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
   .act.primary:hover { background: var(--vscode-button-hoverBackground); }
+  .act.del { flex: 0 0 30px; }
   .act.del:hover { background: var(--vscode-errorForeground); color: var(--vscode-editor-background); }
 
   /* ── Empty state ────────────────────────────────────────────────────────── */
@@ -265,6 +302,16 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
       <span class="count" id="count">0</span>
       <button class="clear-btn" id="clearAll" type="button">Clear all</button>
     </div>
+    <div class="actions-bar">
+      <button class="tool-btn" data-cmd="lineagelens.verifyEvidence" type="button" title="Verify Local Evidence Store">✓ Verify</button>
+      <button class="tool-btn" data-cmd="lineagelens.exportCapsule" type="button" title="Export Evidence Capsule">📦 Capsule</button>
+      <button class="tool-btn" data-cmd="lineagelens.exportPrSummary" type="button" title="Generate PR Summary of AI Changes">📝 PR summary</button>
+      <button class="tool-btn" data-cmd="lineagelens.checkBeforeCommit" type="button" title="Check AI Changes Before Commit">⎇ Pre-commit</button>
+      <button class="tool-btn" data-cmd="lineagelens.showFileTimeline" type="button" title="Show AI Timeline for This File">🕓 Timeline</button>
+      <button class="tool-btn" data-cmd="lineagelens.toggleFocusMode" type="button" title="Toggle AI Focus Mode">👁 Focus</button>
+      <button class="tool-btn" data-cmd="lineagelens.exportJson" type="button" title="Export Captures as JSON">⬇ JSON</button>
+      <button class="tool-btn" data-cmd="lineagelens.exportAgentTrace" type="button" title="Export Agent Trace">⬇ Trace</button>
+    </div>
   </div>
 
   <div id="list"></div>
@@ -272,6 +319,7 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
     <div class="big">⚡</div>
     <div class="t">No captures yet</div>
     <div class="s">LineageLens records AI insertions of 4+ lines automatically.<br>Use Copilot, Cursor, or Claude and they'll appear here.</div>
+    <button class="tool-btn" data-cmd="lineagelens.openWelcome" type="button" style="margin-top:14px">❔ Open the guide</button>
   </div>
 
   <script nonce="${nonce}">
@@ -296,9 +344,19 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
         if (d < 172800) return 'yesterday';
         return new Date(iso).toLocaleDateString([], { month:'short', day:'numeric' });
       }
-      function badge(s) { return s === 'ai' ? '🤖' : s === 'paste' ? '📋' : '❓'; }
       function srcLabel(s) { return s === 'ai' ? '🤖 AI' : s === 'paste' ? '📋 Paste' : '❓ Unknown'; }
-      function chipCls(p) { return p >= 70 ? 'hi' : p >= 45 ? 'mid' : 'lo'; }
+      function confCls(p) { return p >= 70 ? 'hi' : p >= 45 ? 'mid' : 'lo'; }
+      function reviewBadge(s) {
+        if (s === 'reviewed' || s === 'accepted') return '<span class="b b-rev-ok">✓ reviewed</span>';
+        if (s === 'needs_changes') return '<span class="b b-rev-warn">✎ changes</span>';
+        if (s === 'rejected') return '<span class="b b-rev-warn">✕ rejected</span>';
+        return '<span class="b b-rev-new">new</span>';
+      }
+      function riskBadge(r) {
+        if (!r) return '';
+        var cls = r.severity === 'high' ? 'b-risk-high' : r.severity === 'medium' ? 'b-risk-med' : 'b-risk-low';
+        return '<span class="b ' + cls + '" title="local risk signal">⚠ ' + esc(r.label) + '</span>';
+      }
 
       function matches(r, q) {
         return (r.fileName||'').toLowerCase().includes(q)
@@ -322,21 +380,25 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
       function cardHtml(r) {
         const pct = Math.round((r.confidence ?? 0.5) * 100);
         const preview = r.preview ? '<div class="preview">' + esc(r.preview) + '</div>' : '';
-        return '<div class="card s-' + esc(r.source) + '" data-id="' + esc(r.id) + '">'
-          + '<div class="card-top">'
-          +   '<span class="src-emoji">' + badge(r.source) + '</span>'
+        return '<div class="row s-' + esc(r.source) + '" data-id="' + esc(r.id) + '" title="' + esc(srcLabel(r.source)) + '">'
+          + '<div class="row-top">'
           +   '<span class="fname" title="' + esc(r.filePath) + '">' + esc(r.fileName) + '</span>'
-          +   '<span class="chip ' + chipCls(pct) + '">' + pct + '%</span>'
+          +   '<span class="badges">' + riskBadge(r.risk) + reviewBadge(r.reviewState) + '</span>'
           + '</div>'
-          + '<div class="meta"><span>' + esc(r.language || 'text') + '</span>'
+          + '<div class="row-sub">'
+          +   '<span>' + esc(r.language || 'text') + '</span>'
           +   '<span class="dot">·</span><span class="lines">+' + r.linesAdded + '</span>'
-          +   '<span class="dot">·</span><span>' + rel(r.timestamp) + '</span></div>'
-          + preview
-          + '<div class="actions">'
-          +   '<button class="act primary" data-act="insert">⤵ Insert</button>'
-          +   '<button class="act" data-act="copy">⧉ Copy</button>'
-          +   '<button class="act" data-act="reveal">↗ File</button>'
-          +   '<button class="act del" data-act="delete">🗑</button>'
+          +   '<span class="dot">·</span><span>' + rel(r.timestamp) + '</span>'
+          +   '<span class="conf ' + confCls(pct) + '" title="AI confidence"><span class="cdot"></span>' + pct + '%</span>'
+          + '</div>'
+          + '<div class="reveal">'
+          +   preview
+          +   '<div class="row-actions">'
+          +     '<button class="act primary" data-act="insert">⤵ Insert</button>'
+          +     '<button class="act" data-act="copy">⧉ Copy</button>'
+          +     '<button class="act" data-act="reveal">↗ File</button>'
+          +     '<button class="act del" data-act="delete">🗑</button>'
+          +   '</div>'
           + '</div>'
           + '</div>';
       }
@@ -385,6 +447,11 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
       $('search').addEventListener('input', (e) => { filter = e.target.value; render(); });
       $('group').addEventListener('change', (e) => { group = e.target.value; render(); });
       $('clearAll').addEventListener('click', () => vscode.postMessage({ type: 'clearAll' }));
+      Array.prototype.forEach.call(document.querySelectorAll('.tool-btn'), function (b) {
+        b.addEventListener('click', function () {
+          vscode.postMessage({ type: 'cmd', command: b.getAttribute('data-cmd') });
+        });
+      });
 
       $('list').addEventListener('click', (e) => {
         const head = e.target.closest('.group-head');
@@ -393,7 +460,7 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
           if (collapsed.has(k)) collapsed.delete(k); else collapsed.add(k);
           render(); return;
         }
-        const card = e.target.closest('.card');
+        const card = e.target.closest('.row');
         if (!card) return;
         const id = card.getAttribute('data-id');
         const actBtn = e.target.closest('.act');

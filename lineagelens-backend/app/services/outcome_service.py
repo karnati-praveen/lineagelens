@@ -382,6 +382,40 @@ async def ingest_git_outcome(
     )
 
 
+async def list_outcomes_for_workspace(
+    session: AsyncSession,
+    workspace_id: str,
+    *,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Raw outcome events for a workspace (not the aggregated leaderboard).
+
+    Used by the evidence capsule (PART 5 #51) to bundle outcome evidence
+    alongside the records/policies it relates to.
+    """
+    filters: list[Any] = [RecordOutcome.workspace_id == workspace_id]
+    if date_from:
+        filters.append(RecordOutcome.observed_at >= date_from)
+    if date_to:
+        filters.append(RecordOutcome.observed_at <= date_to)
+    result = await session.execute(
+        select(RecordOutcome).where(and_(*filters)).order_by(RecordOutcome.observed_at.asc())
+    )
+    return [
+        {
+            "id": o.id,
+            "recordUuid": o.record_uuid,
+            "outcomeType": o.outcome_type,
+            "source": o.source,
+            "sourceTrust": source_trust(o.source),
+            "observedAt": o.observed_at.isoformat(),
+            "detailJson": o.detail_json,
+        }
+        for o in result.scalars().all()
+    ]
+
+
 async def get_record_outcome_timeline(
     session: AsyncSession,
     workspace_id: str,

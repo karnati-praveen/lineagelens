@@ -862,7 +862,7 @@ def _extract_file_path(payload: dict[str, Any]) -> str:
         ["source", "filePath"],
         ["diff", "filePath"],
     ):
-        value = _first_string(payload, path)
+        value = _first_strict_string(payload, path)
         if value:
             return value
 
@@ -893,7 +893,7 @@ def _extract_inserted_text(payload: dict[str, Any]) -> str:
         ["diff", "text"],
         ["diff", "body"],
     ):
-        value = _first_string(payload, path)
+        value = _first_strict_string(payload, path)
         if value is not None:
             return value
 
@@ -1213,6 +1213,20 @@ def _first_string(payload: dict[str, Any], path: list[str]) -> str | None:
 
     text = str(value).strip()
     return text if text else None
+
+
+def _first_strict_string(payload: dict[str, Any], path: list[str]) -> str | None:
+    """Like _first_string but only accepts a genuine ``str`` value.
+
+    Used for the user-controlled ``filePath`` and ``insertedText`` fields so a
+    type-confused array/dict/bool is ignored rather than silently coerced via
+    ``str(value)`` into a poisoned path like ``"['../a', '../b']"`` (ATK-05).
+    """
+    value = _get_path(payload, path)
+    if isinstance(value, str):
+        text = value.strip()
+        return text if text else None
+    return None
 
 
 def _first_string_from_keys(payload: dict[str, Any], keys: list[str]) -> str | None:

@@ -242,16 +242,24 @@ async def detect_anomalies(
         except ValueError:
             pass
 
-    # Get mean and stddev of risk scores
+    # Get mean and population stddev of risk scores.
+    # NOTE: avoid func.stddev_pop here — it is a PostgreSQL aggregate that SQLite
+    # (aiosqlite, used by the Lite tier) does not provide, which previously made
+    # this endpoint 500 on Lite (BUG-2). Compute the population stddev portably
+    # from avg(x) and avg(x*x): stddev = sqrt(E[x^2] - E[x]^2). avg() and
+    # multiplication exist on every supported backend.
     stats_result = await session.execute(
         select(
             func.avg(ProvenanceRecord.risk_score).label("mean_risk"),
-            func.stddev_pop(ProvenanceRecord.risk_score).label("stddev_risk"),
+            func.avg(ProvenanceRecord.risk_score * ProvenanceRecord.risk_score).label("mean_sq_risk"),
         ).where(and_(*filters))
     )
     stats_row = stats_result.one_or_none()
     mean_risk = float(stats_row.mean_risk or 0) if stats_row else 0.0
-    stddev_risk = float(stats_row.stddev_risk or 0) if stats_row else 0.0
+    mean_sq_risk = float(stats_row.mean_sq_risk or 0) if stats_row else 0.0
+    # Clamp tiny negative values that can arise from floating-point rounding.
+    variance_risk = max(0.0, mean_sq_risk - mean_risk * mean_risk)
+    stddev_risk = variance_risk ** 0.5
     threshold_risk = mean_risk + z_threshold * stddev_risk
 
     # Find records with risk_score above threshold

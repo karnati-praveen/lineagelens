@@ -8,6 +8,7 @@
 import * as vscode from 'vscode';
 import { CaptureService } from '../capture';
 import { CaptureStore } from '../store';
+import { rangeContentHash } from '../evidence/hash';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -65,7 +66,9 @@ describe('outbox retry path', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'll-capture-test-'));
   });
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    // Tolerate the Windows teardown race where a debounced background save
+    // re-creates the store file in this dir as rmSync removes it.
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best-effort */ }
     jest.restoreAllMocks();
   });
 
@@ -197,7 +200,9 @@ describe('undo/redo guard', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'll-capture-test-'));
   });
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    // Tolerate the Windows teardown race where a debounced background save
+    // re-creates the store file in this dir as rmSync removes it.
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best-effort */ }
     jest.restoreAllMocks();
   });
 
@@ -280,6 +285,23 @@ describe('undo/redo guard', () => {
     await (svc as any).handleChange(normalEvent);
 
     expect(captured).toBe(1);
+    svc.dispose();
+  });
+
+  it('records the inserted range and a content hash on capture', async () => {
+    const ctx = makeContext();
+    const store = makeStore(ctx);
+    const bar = makeStatusBar();
+    const svc = new CaptureService(store, bar, ctx, () => {});
+
+    const text = 'const x = 1;\n'.repeat(6); // 6 newlines → spans lines 0..6
+    await (svc as any).handleChange(makeEvent(text, undefined));
+
+    const rec = store.getAll()[0];
+    expect(rec).toBeDefined();
+    expect(rec.startLine).toBe(0);
+    expect(rec.endLine).toBe(6);
+    expect(rec.rangeContentHash).toBe(rangeContentHash(text));
     svc.dispose();
   });
 });

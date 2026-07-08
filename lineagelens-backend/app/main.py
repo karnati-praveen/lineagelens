@@ -60,6 +60,10 @@ from app.api.routes.indemnity import router as indemnity_router
 from app.api.routes.license_scan import router as license_scan_router
 from app.api.routes.human_review import router as human_review_router
 from app.api.routes.leads import router as leads_router
+from app.api.routes.key_registry import router as key_registry_router
+from app.api.routes.capsule import router as capsule_router
+from app.api.routes.continuity_drill import router as continuity_drill_router
+from app.api.routes.witness import router as witness_router
 from app.core.config import Settings, get_settings
 from app.core.rate_limit import InMemoryRateLimiter
 from app.db.session import create_engine_from_settings, create_session_factory, initialize_database
@@ -207,8 +211,20 @@ class SetupGuardMiddleware:
 
 
 class RequestGuardsMiddleware(BaseHTTPMiddleware):
+    # Upper bound on the number of query-string parameters accepted on any
+    # request. An oversized query string (hundreds of params) previously raised
+    # an unhandled exception deeper in the stack and surfaced as a 500 on the Max
+    # tier (SEC-QS-01); reject it cleanly with a 422 instead.
+    MAX_QUERY_PARAMS = 100
+
     async def dispatch(self, request: Request, call_next):
         current_settings = get_runtime_settings(request)
+
+        if len(request.query_params.multi_items()) > self.MAX_QUERY_PARAMS:
+            return JSONResponse(
+                status_code=422,
+                content={"detail": "Too many query parameters."},
+            )
 
         if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
             max_bytes = current_settings.http_max_body_bytes
@@ -555,6 +571,10 @@ app.include_router(indemnity_router)
 app.include_router(license_scan_router)
 app.include_router(human_review_router)
 app.include_router(leads_router)
+app.include_router(key_registry_router)
+app.include_router(capsule_router)
+app.include_router(continuity_drill_router)
+app.include_router(witness_router)
 
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 

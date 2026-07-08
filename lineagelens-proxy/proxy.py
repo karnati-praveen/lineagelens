@@ -84,6 +84,7 @@ from adapters.common import (
 )
 
 from adapters.anthropic import (
+    CAPABILITY as _ANTHROPIC_CAPABILITY,
     _FILE_MUTATING_TOOLS,
     _session_key,
     _parse_anthropic_tool_use_to_edits,
@@ -100,6 +101,7 @@ from adapters.anthropic import (
 )
 
 from adapters.codex import (
+    CAPABILITY as _CODEX_CAPABILITY,
     _is_codex_responses_path,
     _codex_session_key,
     _parse_apply_patch_dsl,
@@ -114,6 +116,7 @@ from adapters.codex import (
 )
 
 from adapters.openai_chat import (
+    CAPABILITY as _OPENAI_CHAT_CAPABILITY,
     _is_openai_chat_path,
     _openai_chat_session_key,
     _extract_openai_chat_prompt_context,
@@ -134,6 +137,7 @@ from adapters.openai_chat import (
 )
 
 from adapters.gemini import (
+    CAPABILITY as _GEMINI_CAPABILITY,
     _GEMINI_FILE_MUTATING_TOOLS,
     _gemini_session_key,
     _parse_gemini_function_call_to_edits,
@@ -642,7 +646,7 @@ async def proxy_request(request: Request, path: str) -> Response:
     if provider == "unknown":
         provider = detect_provider_and_format(url, dict(request.headers))
 
-    logger.debug("provider routing: inbound=/%s → provider=%s upstream=%s", safe_path, provider, url)
+    logger.debug("provider routing: inbound=/%s -> provider=%s upstream=%s", safe_path, provider, url)
 
     try:
         req_body_dict: dict | None = json.loads(body) if body else None
@@ -726,7 +730,7 @@ async def proxy_request(request: Request, path: str) -> Response:
                         "savings_estimate_usd": 0.0,
                     }
                     logger.info(
-                        "routing: %s → %s (tier=%s workspace=%s)",
+                        "routing: %s -> %s (tier=%s workspace=%s)",
                         current_model, target_model, tier, WORKSPACE_ID,
                     )
     except Exception as _routing_err:
@@ -805,6 +809,15 @@ if __name__ == "__main__":
         logger.info("Token    : %s", "configured" if INGEST_TOKEN else "NOT SET — captures will be skipped")
         logger.info("CONNECT  : port %d (%s)", PROXY_CONNECT_PORT,
                     "auth enabled" if PROXY_CONNECT_TOKEN else "no auth — set PROXY_CONNECT_TOKEN for production")
+
+        # PART 5 #54 — surface each adapter's declared capability/fidelity at
+        # boot so operators can see what's actually supported without reading
+        # the source.
+        for cap in (_ANTHROPIC_CAPABILITY, _CODEX_CAPABILITY, _GEMINI_CAPABILITY, _OPENAI_CHAT_CAPABILITY):
+            logger.info(
+                "Adapter  : %-12s fidelity=%-8s multiEdit=%-5s streaming=%-5s toolResults=%-5s",
+                cap.provider, cap.fidelity, cap.supports_multi_edit, cap.supports_streaming, cap.supports_tool_results,
+            )
 
         _warn_if_unusual_upstream(UPSTREAM_URL, "UPSTREAM_URL")
         _warn_if_unusual_upstream(_ANTHROPIC_UPSTREAM_URL, "ANTHROPIC_UPSTREAM_URL")

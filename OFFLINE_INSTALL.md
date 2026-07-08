@@ -14,14 +14,28 @@ Each tagged release publishes (see `.github/workflows/release.yml`):
 - **Lite / Plus / Max bundles** (`.zip`) — each contains the full backend + proxy
   **source**, compose files, and quickstart scripts. This *is* the customer source
   export: you can run, rebuild, and audit from the bundle alone.
+- **Standalone offline verifier** (`lineagelens-verifier-<ver>.zip`, PART 5 #52) —
+  the `lineagelens-verify` CLI that checks an Evidence Capsule with no backend,
+  network, database, or license. `pip install .` from the extracted zip.
+- **Python wheelhouse** (`lineagelens-wheelhouse-<ver>.zip`, PART 5 #59) — every
+  backend dependency pre-downloaded; `pip install --no-index --find-links
+  wheelhouse/ -r requirements.txt` on the air-gapped host. Built by CI now, not
+  just documented below.
+- **Release key registry export** (`lineagelens-release-keys-<ver>.json`, PART 5
+  #57/#59) — the attestation key registry (active/retired/compromised) at
+  release time, so historical attestations can be verified offline. Optional:
+  only published when the release job has `DATABASE_URL` configured; absent
+  otherwise (never silently faked).
 - **`SHA256SUMS.txt`** — verify every asset: `sha256sum -c SHA256SUMS.txt`.
-- **`*.spdx.json` SBOM** — full dependency inventory (SPDX).
+- **`*.spdx.json` and `*.cdx.json` SBOMs** — full dependency inventory in both
+  SPDX and CycloneDX formats.
 - **SLSA build-provenance attestation** — verify with
   `gh attestation verify <asset> --owner <org>`.
 
 ## 1. Build an offline dependency kit
 
-Run these once on a machine **with** network; carry the outputs to the air-gapped host.
+Every release already ships a wheelhouse zip (see above) — the steps below are
+for building your own pinned/hashed variant, or for a commit that isn't tagged.
 
 ### Python wheelhouse (pinned, hashed)
 

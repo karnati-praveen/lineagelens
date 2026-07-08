@@ -12,6 +12,7 @@ import sys
 
 sys.path.insert(0, ".")
 import proxy  # noqa: E402
+from adapters.contract import RESULT_CAPTURE_UNAVAILABLE, classify_capture_result  # noqa: E402
 
 
 # ── path detection ─────────────────────────────────────────────────────────────
@@ -399,6 +400,31 @@ def test_malformed_search_replace_no_raise():
 def test_empty_body_no_raise():
     assert proxy._extract_openai_choices_from_body(b"not json") == []
     assert proxy._extract_openai_tool_results(b"not json") == []
+
+
+def test_capability_is_declared():
+    """PART 5 #54 — the adapter must declare its capability/fidelity.
+
+    Unlike the other three adapters, openai_chat has no fixed mutating-tool
+    name set (it infers mutation from argument shape, see module docstring
+    strategy B), so classify_capture_result's name-based RESULT_UNKNOWN vs
+    RESULT_CAPTURE_UNAVAILABLE distinction is exercised generically here
+    rather than against a specific tool-name allowlist.
+    """
+    assert proxy._OPENAI_CHAT_CAPABILITY.provider == "openai_chat"
+    assert proxy._OPENAI_CHAT_CAPABILITY.fidelity == "partial"
+
+
+def test_capture_unavailable_for_malformed_tool_call_arguments():
+    status = classify_capture_result(
+        tool_name="edit_file",
+        mutating_tool_names={"edit_file"},
+        edits=proxy._parse_openai_tool_call_to_edits(
+            {"id": "t1", "name": "edit_file", "arguments": "{not valid json"}
+        ),
+        input_was_dict=False,
+    )
+    assert status == RESULT_CAPTURE_UNAVAILABLE
 
 
 if __name__ == "__main__":

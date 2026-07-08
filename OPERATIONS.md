@@ -274,6 +274,31 @@ The in-memory limiter remains the default — zero dependencies for a single-rep
 | `PROXY_CA_CERT_PATH` | _(empty)_ | Path to CA certificate PEM file for HTTPS CONNECT MITM. If unset, CONNECT falls back to transparent TCP relay. |
 | `PROXY_CA_KEY_PATH` | _(empty)_ | Path to CA private key PEM file (paired with `PROXY_CA_CERT_PATH`) |
 
+## Provenance Continuity Drill (PART 5 #55)
+
+`POST /continuity-drills?workspace_id=...` runs six checks in one call: capsule
+export, offline verification, key rotation/revocation, embedding-provider
+fallback, and vendor-key fallback always run; Neo4j graph rebuild runs only
+when Neo4j is configured (`skipped_not_configured` otherwise — never a fake
+`passed`). The response's `overallStatus` is `green` / `amber` / `red`, never
+a bare boolean, and the whole result is Ed25519-signed.
+
+**"Clean machine" drill (recommended quarterly, not automated in-process):**
+the in-process drill above proves the *running* deployment's capabilities
+work; it does not prove a capsule survives on a machine that has never run
+LineageLens. To close that gap, periodically:
+
+1. Build a capsule via `POST /capsules` on the live deployment.
+2. Copy only the capsule `.zip` (nothing else) to a machine with no
+   LineageLens backend, database, or network access to one.
+3. `pip install lineagelens-verifier/` (or unzip the capsule's own vendored
+   `verifier/` directory and `pip install` that) and run
+   `lineagelens-verify <capsule>.zip`. Expect `valid` or
+   `valid_with_redactions`.
+4. Record the result (pass/fail + verifier version) alongside the drill
+   history — this is a CI/ops runbook step, not a backend API, since it
+   requires an actually-separate machine to mean anything.
+
 ### Backend
 
 | Variable | Default | Description |

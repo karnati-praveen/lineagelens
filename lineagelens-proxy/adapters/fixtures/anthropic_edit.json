@@ -1,0 +1,69 @@
+{
+  "provider": "anthropic",
+  "note": "Synthetic fixtures — not real captured data (PART 5 #54 golden redacted fixtures).",
+  "cases": [
+    {
+      "name": "edit_tool_single_replace",
+      "input": {
+        "type": "tool_use",
+        "id": "toolu_fixture_0001",
+        "name": "Edit",
+        "input": {
+          "file_path": "src/example.py",
+          "old_string": "REDACTED_OLD_LINE",
+          "new_string": "REDACTED_NEW_LINE"
+        }
+      },
+      "expectedEditCount": 1
+    },
+    {
+      "name": "write_tool_new_file",
+      "input": {
+        "type": "tool_use",
+        "id": "toolu_fixture_0002",
+        "name": "Write",
+        "input": {
+          "file_path": "src/new_file.py",
+          "content": "REDACTED_FILE_CONTENT"
+        }
+      },
+      "expectedEditCount": 1
+    },
+    {
+      "name": "multi_edit_two_hunks",
+      "input": {
+        "type": "tool_use",
+        "id": "toolu_fixture_0003",
+        "name": "MultiEdit",
+        "input": {
+          "file_path": "src/multi.py",
+          "edits": [
+            {"old_string": "REDACTED_A_OLD", "new_string": "REDACTED_A_NEW"},
+            {"old_string": "REDACTED_B_OLD", "new_string": "REDACTED_B_NEW"}
+          ]
+        }
+      },
+      "expectedEditCount": 2
+    },
+    {
+      "name": "read_only_tool_is_not_captured",
+      "input": {
+        "type": "tool_use",
+        "id": "toolu_fixture_0004",
+        "name": "Read",
+        "input": {"file_path": "src/example.py"}
+      },
+      "expectedEditCount": 0
+    },
+    {
+      "name": "malformed_input_not_a_dict",
+      "input": {
+        "type": "tool_use",
+        "id": "toolu_fixture_0005",
+        "name": "Edit",
+        "input": "not-a-dict-string"
+      },
+      "expectedEditCount": 0
+    }
+  ]
+}

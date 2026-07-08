@@ -33,6 +33,30 @@ On wind-down, LineageLens commits to:
   neutral steward.
 - Charging **no** fee for export or verification, ever.
 
+### What "final release kit" now actually means
+
+As of the Part 5 evidence/continuity build-out, the artifacts a wind-down
+would publish are no longer aspirational — they exist and are exercised by
+the continuity drill (`POST /continuity-drills`, PART 5 #55):
+
+- **Key registry export** (`lineagelens-release-keys-<ver>.json`, PART 5
+  #57/#59) — the exact key-history handoff a neutral steward would receive.
+- **Evidence Capsule format** (PART 5 #51) — the versioned, signed bundle
+  format every customer's evidence already exports into; a steward inherits
+  a known schema, not a bespoke one invented at wind-down time.
+- **Standalone offline verifier** (`lineagelens-verifier/`, PART 5 #52) —
+  ships in every release and inside every capsule; it has no dependency on
+  LineageLens infrastructure, so it keeps working after every other service
+  (and the company) is gone.
+- **SBOMs + SLSA provenance** (PART 5 #59) — published with every release,
+  so a steward (or a customer's own auditor) can verify exactly what was
+  shipped.
+
+This does not automate the shutdown *trigger* itself — deciding to wind down,
+and executing the legal/operational handoff to mirrors and a steward, stays a
+manual process. What changes is that the artifacts that process would publish
+already exist and are tested, not something to invent under pressure.
+
 ## 4. License keys are offline and customer-verifiable
 
 - A license is an Ed25519-signed statement verified locally against the vendor

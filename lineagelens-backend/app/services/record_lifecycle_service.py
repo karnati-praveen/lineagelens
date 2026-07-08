@@ -182,6 +182,29 @@ def verify_event_signature(event: RecordLifecycleEvent) -> bool:
     )
 
 
+async def list_events_for_workspace(
+    session: AsyncSession,
+    workspace_id: str,
+    *,
+    date_from=None,
+    date_to=None,
+) -> list[RecordLifecycleEvent]:
+    """All lifecycle (redaction/deletion) events for a workspace, optionally date-bounded.
+
+    Used by the evidence capsule (PART 5 #51) to bundle the privacy lifecycle
+    alongside the records it acted on.
+    """
+    filters = [RecordLifecycleEvent.workspace_id == workspace_id]
+    if date_from is not None:
+        filters.append(RecordLifecycleEvent.created_at >= date_from)
+    if date_to is not None:
+        filters.append(RecordLifecycleEvent.created_at <= date_to)
+    result = await session.execute(
+        select(RecordLifecycleEvent).where(*filters).order_by(RecordLifecycleEvent.id.asc())
+    )
+    return list(result.scalars().all())
+
+
 def commitment_matches_record(event: RecordLifecycleEvent, record: ProvenanceRecord) -> bool:
     """Confirm the event's committed digests match the record's stored commitments.
 

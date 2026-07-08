@@ -17,8 +17,22 @@ from adapters.common import (
     _SSE_DATA_PREFIX,
     _SSE_DONE_MARKER,
 )
+from adapters.contract import AdapterCapability
 
 logger = logging.getLogger("lineagelens-proxy")
+
+# PART 5 #54 — each Gemini functionCall maps to exactly one edit (no
+# multi-file batch tool exists in _GEMINI_FILE_MUTATING_TOOLS), so
+# supports_multi_edit=False, unlike anthropic/codex. SSE assembly and
+# functionResponse resolution both exist. Structured args (not text-
+# heuristic), hence "full" fidelity.
+CAPABILITY = AdapterCapability(
+    provider="gemini",
+    supports_multi_edit=False,
+    supports_streaming=True,
+    supports_tool_results=True,
+    fidelity="full",
+)
 
 # Gemini file-mutating tool names. Both snake_case (current Gemini CLI) and
 # PascalCase (older variants) are accepted.
@@ -370,13 +384,25 @@ async def _resolve_gemini_pending_edits(
                     matched_key = candidate
 
             if matched_key is None:
-                for key in _pending_edits.keys():
-                    if key[0] != session_key:
-                        continue
-                    edits = _pending_edits[key]
-                    if edits and edits[0].get("tool_name") == response_name:
-                        matched_key = key
-                        break
+                name_matches = [
+                    key
+                    for key in _pending_edits.keys()
+                    if key[0] == session_key
+                    and _pending_edits[key]
+                    and _pending_edits[key][0].get("tool_name") == response_name
+                ]
+                if len(name_matches) > 1:
+                    # Ambiguous: two+ pending calls share this tool name and the
+                    # functionResponse carried no `id`, so FIFO may attribute the
+                    # status to the wrong pending call (CODE-03). Pick FIFO
+                    # (oldest) but log so the mis-attribution is observable.
+                    logger.warning(
+                        "gemini: %d pending edits match tool=%s without a response id; "
+                        "resolving FIFO (status may be mis-attributed)",
+                        len(name_matches), response_name,
+                    )
+                if name_matches:
+                    matched_key = name_matches[0]
 
             if matched_key is None:
                 continue

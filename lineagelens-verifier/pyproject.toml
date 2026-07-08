@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lineagelens-verifier"
+version = "1.0.0"
+description = "Standalone offline verifier for LineageLens Evidence Capsules — no backend, network, database, or license required."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "cryptography>=41.0",
+]
+
+[project.scripts]
+lineagelens-verify = "lineagelens_verifier.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["lineagelens_verifier*"]

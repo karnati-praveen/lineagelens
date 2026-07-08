@@ -17,16 +17,24 @@ from app.db.models import ProvenanceRecord, RecallCampaign
 
 _VALID_QUARANTINE_STATUSES = {"active", "flagged", "quarantined", "cleared"}
 
+# Cap on descendants returned per blast-radius query. Hitting the cap means the
+# graph was reachable and queried but the result was truncated — that must be
+# reported as blast_radius_partial, never silently folded into "checked" as if
+# the full descendant set were returned (PART 5 #58).
+_MAX_BLAST_RADIUS_RESULTS = 5000
+
 
 @dataclass
 class BlastRadiusResult:
     """Descendant set plus an explicit coverage state (PART 2 #14).
 
     A missing Neo4j must not look like "zero descendants". coverage_status:
-      checked        — graph was queried and returned descendants.
-      checked_empty  — graph was queried; there genuinely are none.
-      unavailable    — no graph configured; descendants were NOT checked.
-      failed         — the graph query errored; descendants are unknown.
+      checked                — graph was queried and returned descendants.
+      checked_empty          — graph was queried; there genuinely are none.
+      blast_radius_partial   — graph was queried but the result was truncated
+                               at _MAX_BLAST_RADIUS_RESULTS; more may exist.
+      unavailable            — no graph configured; descendants were NOT checked.
+      failed                 — the graph query errored; descendants are unknown.
     """
     descendant_uuids: list[str]
     coverage_status: str
@@ -152,21 +160,41 @@ async def compute_blast_radius(
     WHERE desc.workspaceId = $workspaceId
       AND NOT desc.versionId IN $seedIds
     RETURN DISTINCT desc.versionId AS versionId
+    LIMIT $limit
     """
     checkpoint = datetime.now(UTC).isoformat()
     try:
         async with neo4j_service._driver.session(database=neo4j_service._database) as neo_session:
             result = await neo_session.run(
                 query,
-                {"seedIds": list(record_uuids), "workspaceId": workspace_id},
+                {
+                    "seedIds": list(record_uuids),
+                    "workspaceId": workspace_id,
+                    # Ask for one more than the cap so a full page can be told
+                    # apart from a truncated one.
+                    "limit": _MAX_BLAST_RADIUS_RESULTS + 1,
+                },
             )
             rows = await result.data()
         descendants = [r["versionId"] for r in rows if r.get("versionId")]
+        truncated = len(descendants) > _MAX_BLAST_RADIUS_RESULTS
+        if truncated:
+            descendants = descendants[:_MAX_BLAST_RADIUS_RESULTS]
+        if truncated:
+            coverage_status = "blast_radius_partial"
+        elif descendants:
+            coverage_status = "checked"
+        else:
+            coverage_status = "checked_empty"
         return BlastRadiusResult(
             descendant_uuids=descendants,
-            coverage_status="checked" if descendants else "checked_empty",
+            coverage_status=coverage_status,
             sources_checked=["neo4j"],
             graph_checkpoint=checkpoint,
+            limitations=(
+                [f"result truncated at {_MAX_BLAST_RADIUS_RESULTS} descendants"]
+                if truncated else []
+            ),
         )
     except Exception as exc:
         return BlastRadiusResult(
@@ -381,6 +409,19 @@ async def close_recall(
     await session.commit()
     await session.refresh(campaign)
     return campaign
+
+
+async def list_campaigns_for_workspace(session: AsyncSession, workspace_id: str) -> list[dict]:
+    """All recall campaigns for a workspace, serialized. Used by the evidence
+    capsule (PART 5 #51)."""
+    from sqlalchemy import desc
+
+    result = await session.execute(
+        select(RecallCampaign)
+        .where(RecallCampaign.workspace_id == workspace_id)
+        .order_by(desc(RecallCampaign.created_at))
+    )
+    return [_campaign_to_dict(c) for c in result.scalars().all()]
 
 
 def _campaign_to_dict(c: RecallCampaign) -> dict:

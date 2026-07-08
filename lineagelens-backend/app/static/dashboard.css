@@ -511,7 +511,10 @@ button:disabled { opacity: .4; cursor: not-allowed; transform: none !important; 
 .view.on { display: block; }
 
 /* ── 13. Upgrade / gate panel ── */
-.upgrade-panel {
+/* Only lay out as a centered card when actually toggled on (.on).
+   Without the .on scope this rule overrides `.view { display:none }`
+   and the lock card leaks onto every view. */
+.upgrade-panel.on {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -531,6 +534,22 @@ button:disabled { opacity: .4; cursor: not-allowed; transform: none !important; 
 .upgrade-card h2 { font-size: 20px; font-weight: 700; margin-bottom: 10px; }
 .upgrade-card p { font-size: 14px; color: var(--text2); margin-bottom: 20px; line-height: 1.6; }
 .upgrade-badge { display: inline-flex; margin-bottom: 8px; }
+.upgrade-features { list-style: none; margin: 0; padding: 0; }
+.upgrade-features li {
+  position: relative;
+  padding: 4px 0 4px 22px;
+  font-size: 13px;
+  color: var(--text2);
+  line-height: 1.45;
+}
+.upgrade-features li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  top: 4px;
+  color: var(--ok);
+  font-weight: 700;
+}
 
 /* ── 14. Section title ── */
 .stitle {

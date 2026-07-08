@@ -227,13 +227,58 @@ jobs:
             "${GITHUB_WORKSPACE}/lineagelens-releases/max/lineagelens-max-${VERSION}.zip" \
             "lineagelens-max-${VERSION}")
 
-      # ── Supply-chain: checksums, SBOM, provenance (PART 3 #22) ─────────
+      # ── Standalone offline verifier (PART 5 #52) ───────────────────────
+      - name: Package standalone verifier source
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          mkdir -p lineagelens-releases/verifier
+          # Plain source zip — reproducible via `pip install .` + a checksum of
+          # the sdist. A frozen single-binary build is a documented follow-up
+          # (see lineagelens-verifier/README.md); this is the real, working
+          # artifact, not a placeholder.
+          zip -r "lineagelens-releases/verifier/lineagelens-verifier-${VERSION}.zip" \
+            lineagelens-verifier \
+            -x 'lineagelens-verifier/*.egg-info/*' \
+            -x '*__pycache__*' \
+            -x '*.pytest_cache*'
+
+      # ── Python wheelhouse (PART 5 #59) ─────────────────────────────────
+      # Previously documented in OFFLINE_INSTALL.md as a manual step; now an
+      # actual release artifact so an air-gapped install doesn't depend on an
+      # operator running it correctly by hand.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build Python wheelhouse
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          mkdir -p /tmp/wheelhouse
+          pip download -r lineagelens-backend/requirements.txt -d /tmp/wheelhouse
+          mkdir -p lineagelens-releases/wheelhouse
+          (cd /tmp && zip -r "${GITHUB_WORKSPACE}/lineagelens-releases/wheelhouse/lineagelens-wheelhouse-${VERSION}.zip" wheelhouse)
+
+      # ── Release key registry export (PART 5 #57/#59) ───────────────────
+      # Optional: requires DATABASE_URL pointed at the production key registry.
+      # If not configured, the script prints why and exits 0 — the asset is
+      # skipped with an explanation, never silently omitted (PART 5 #58).
+      - name: Export release key registry
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          pip install -r lineagelens-backend/requirements.txt -q
+          python lineagelens-scripts/export_key_registry.py \
+            --out "lineagelens-releases/lineagelens-release-keys-${VERSION}.json" || true
+
+      # ── Supply-chain: checksums, SBOM, provenance (PART 3 #22, PART 5 #59) ─
       - name: Generate SHA-256 checksums
         run: |
           cd lineagelens-releases
           # Relative paths so the published SHA256SUMS.txt verifies with a plain
           #   `sha256sum -c SHA256SUMS.txt` from the download directory layout.
-          find . -type f \( -name '*.vsix' -o -name '*.zip' \) | sort \
+          find . -type f \( -name '*.vsix' -o -name '*.zip' -o -name '*.json' \) | sort \
             | xargs sha256sum > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
@@ -245,6 +290,14 @@ jobs:
           output-file: lineagelens-releases/lineagelens-sbom-${{ steps.version.outputs.VERSION }}.spdx.json
           artifact-name: lineagelens-sbom-${{ steps.version.outputs.VERSION }}.spdx.json
 
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: lineagelens-releases/lineagelens-sbom-${{ steps.version.outputs.VERSION }}.cdx.json
+          artifact-name: lineagelens-sbom-${{ steps.version.outputs.VERSION }}.cdx.json
+
       - name: Attest build provenance (SLSA)
         uses: actions/attest-build-provenance@v2
         with:
@@ -253,6 +306,17 @@ jobs:
             lineagelens-releases/lite/*.zip
             lineagelens-releases/plus/*.zip
             lineagelens-releases/max/*.zip
+            lineagelens-releases/verifier/*.zip
+            lineagelens-releases/wheelhouse/*.zip
+
+      # ── Scoped follow-ups (not built here — see OFFLINE_INSTALL.md) ────
+      # Signed VSIX:            needs a code-signing certificate a solo
+      #                         developer doesn't have yet.
+      # Pinned image digests:   compose files reference floating tags today,
+      #                         not `@sha256:<digest>`, in this workflow.
+      # Vendored npm packages:  needs a per-package licensing review before
+      #                         vendoring; `npm ci` + lockfile is the current
+      #                         mitigation.
 
       # ── GitHub Release ─────────────────────────────────────────────────
       - name: Create GitHub Release
@@ -263,12 +327,25 @@ jobs:
           # Delete any existing release for this tag (e.g. created manually)
           # so CI artifacts are always the canonical published build.
           gh release delete "v${VERSION}" --yes 2>/dev/null || true
+
+          ASSETS=(
+            "lineagelens-releases/base/lineagelens-base-${VERSION}.vsix#Base VS Code Extension (.vsix)"
+            "lineagelens-releases/lite/lineagelens-lite-${VERSION}.zip#Lite Bundle — SQLite, single container (.zip)"
+            "lineagelens-releases/plus/lineagelens-plus-${VERSION}.zip#Plus Bundle — PostgreSQL, full governance (.zip)"
+            "lineagelens-releases/max/lineagelens-max-${VERSION}.zip#Max Bundle — PostgreSQL + Neo4j, graph lineage (.zip)"
+            "lineagelens-releases/verifier/lineagelens-verifier-${VERSION}.zip#Standalone offline Evidence Capsule verifier (.zip)"
+            "lineagelens-releases/wheelhouse/lineagelens-wheelhouse-${VERSION}.zip#Python wheelhouse — offline pip install (.zip)"
+            "lineagelens-releases/SHA256SUMS.txt#SHA-256 checksums"
+            "lineagelens-releases/lineagelens-sbom-${VERSION}.spdx.json#SPDX SBOM"
+            "lineagelens-releases/lineagelens-sbom-${VERSION}.cdx.json#CycloneDX SBOM"
+          )
+          # Release key registry export is optional (DATABASE_URL-gated) —
+          # only attach it if the earlier step actually produced it.
+          if [ -f "lineagelens-releases/lineagelens-release-keys-${VERSION}.json" ]; then
+            ASSETS+=("lineagelens-releases/lineagelens-release-keys-${VERSION}.json#Release attestation key registry export")
+          fi
+
           gh release create "v${VERSION}" \
             --title "LineageLens v${VERSION}" \
             --generate-notes \
-            "lineagelens-releases/base/lineagelens-base-${VERSION}.vsix#Base VS Code Extension (.vsix)" \
-            "lineagelens-releases/lite/lineagelens-lite-${VERSION}.zip#Lite Bundle — SQLite, single container (.zip)" \
-            "lineagelens-releases/plus/lineagelens-plus-${VERSION}.zip#Plus Bundle — PostgreSQL, full governance (.zip)" \
-            "lineagelens-releases/max/lineagelens-max-${VERSION}.zip#Max Bundle — PostgreSQL + Neo4j, graph lineage (.zip)" \
-            "lineagelens-releases/SHA256SUMS.txt#SHA-256 checksums" \
-            "lineagelens-releases/lineagelens-sbom-${VERSION}.spdx.json#SPDX SBOM"
+            "${ASSETS[@]}"

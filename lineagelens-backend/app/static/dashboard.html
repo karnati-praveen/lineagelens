@@ -117,6 +117,12 @@
         <span class="nav-label">Quality</span>
       </button>
 
+      <button class="nav-item adm-nav" data-t="retention" data-requires="max" style="display:none">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+        <span class="nav-label">Retention</span>
+        <span class="tier-pill max">Max</span>
+      </button>
+
       <!-- Analytics -->
       <div class="nav-section-title">Analytics</div>
 
@@ -215,6 +221,10 @@
           <h2 id="upgrade-title">Feature Locked</h2>
           <p id="upgrade-body">This feature requires a higher tier.</p>
           <span id="upgrade-tier-needed" class="tier-badge" style="margin:0 auto 16px"></span>
+          <div id="upgrade-features-wrap" style="text-align:left;margin:0 auto 18px;max-width:340px;display:none">
+            <p id="upgrade-features-head" style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin:0 0 8px"></p>
+            <ul id="upgrade-features" class="upgrade-features"></ul>
+          </div>
           <p style="font-size:12px;color:var(--text2)">Contact your admin or upgrade your LineageLens plan to unlock this section.</p>
         </div>
       </div>
@@ -766,6 +776,29 @@
       <div id="t-workspace" class="view">
         <div class="stitle" style="margin-bottom:18px">Workspace</div>
         <div id="workspace-body"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
+
+        <!-- Account / change password -->
+        <div class="card" style="max-width:480px;margin-top:22px">
+          <h4 style="margin:0 0 14px">Change Password</h4>
+          <label style="display:block;margin-bottom:10px;font-size:13px">Current Password
+            <input id="pw-current" type="password" autocomplete="current-password" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
+          </label>
+          <label style="display:block;margin-bottom:10px;font-size:13px">New Password
+            <input id="pw-new" type="password" autocomplete="new-password" placeholder="min 8 chars, upper, lower, digit, symbol" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
+          </label>
+          <label style="display:block;margin-bottom:14px;font-size:13px">Confirm New Password
+            <input id="pw-confirm" type="password" autocomplete="new-password" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
+          </label>
+          <button class="p" data-action="change-password">Update Password</button>
+          <div id="pw-msg" style="margin-top:10px;font-size:13px" role="status" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <!-- ════ RETENTION & REDACTION (Max) ════ -->
+      <div id="t-retention" class="view">
+        <div class="stitle" style="margin-bottom:4px">Retention &amp; Redaction</div>
+        <p style="color:var(--text2);font-size:13px;margin:0 0 20px">Automatically redact prompt contents and purge old provenance records on a per-workspace schedule. Admin only.</p>
+        <div id="retention-body"><div class="loading"><div class="spin" aria-hidden="true"></div> Loading…</div></div>
       </div>
 
     </main><!-- /content -->

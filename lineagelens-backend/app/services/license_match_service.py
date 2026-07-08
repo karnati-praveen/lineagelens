@@ -179,6 +179,25 @@ def _is_corpus_configured() -> bool:
     return bool(os.environ.get("LICENSE_FINGERPRINT_PATH", "").strip())
 
 
+def corpus_summary() -> dict:
+    """Current corpus identity/coverage, independent of any single record.
+
+    Used by the evidence capsule (PART 5 #51) to state exactly what license
+    corpus was in effect, without having to re-derive it from a per-record
+    MatchResult.
+    """
+    configured = _is_corpus_configured()
+    corpus = _load_corpus() if configured else []
+    return {
+        "configured": configured,
+        "corpusDigest": _corpus_digest(corpus),
+        "corpusSize": len(corpus),
+        "scannerVersion": _SCANNER_VERSION,
+        "matchThreshold": _MATCH_THRESHOLD,
+        "reviewThreshold": _CLEAN_THRESHOLD,
+    }
+
+
 def _best_match(code_shingles: set[int], corpus: list[dict]) -> tuple[float, str | None]:
     best_sim = 0.0
     best_id: str | None = None

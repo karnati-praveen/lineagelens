@@ -167,13 +167,33 @@ const _VIEW_LABELS = {
   search: 'Search', record: 'Record Viewer', reviews: 'Reviews', quality: 'Quality',
   developers: 'Developer Activity', team: 'Team', workspace: 'Workspace',
   github: 'GitHub CI', mcp: 'MCP Server', export: 'Export', 'scheduled-reports': 'Digests',
-  sso: 'SSO / OIDC', routing: 'Model Routing'
+  sso: 'SSO / OIDC', routing: 'Model Routing', retention: 'Retention & Redaction'
 };
 
 function _setTopbarBreadcrumb(name) {
   const el = document.getElementById('topbar-breadcrumb');
   if (el) el.textContent = _VIEW_LABELS[name] || name;
 }
+
+// What each tier unlocks — shown in the lock panel so a single locked door
+// reveals the whole upgrade value, not just the one feature you clicked.
+const _TIER_BENEFITS = {
+  plus: [
+    'Team workspaces with admin / member roles (RBAC)',
+    'Review queue, comments & full audit log',
+    'Reports, webhooks & scoped API keys',
+    'MCP server for Claude Code / Cursor / Continue',
+    'GitHub CI gate to block high-risk AI code',
+  ],
+  max: [
+    'SSO / OIDC single sign-on (Okta, Auth0, Azure AD)',
+    'Retention & redaction policies (auto-purge old prompts)',
+    'Semantic / vector search across AI-generated code',
+    'Neo4j graph lineage — track how code blocks evolve',
+    'Org-wide policy enforcement & larger audit exports',
+    'Kubernetes / Helm deployment',
+  ],
+};
 
 function showUpgradePanel(name, required) {
   document.querySelectorAll('.nav-item').forEach(t => t.classList.toggle('on', t.dataset.t === name));
@@ -189,6 +209,18 @@ function showUpgradePanel(name, required) {
   if (badgeEl) {
     badgeEl.textContent  = tierName;
     badgeEl.className    = `tier-badge ${required}`;
+  }
+  // List the full set of benefits for the required tier.
+  const wrap = document.getElementById('upgrade-features-wrap');
+  const head = document.getElementById('upgrade-features-head');
+  const list = document.getElementById('upgrade-features');
+  const benefits = _TIER_BENEFITS[required];
+  if (wrap && head && list && benefits) {
+    head.textContent = `Everything in ${tierName}:`;
+    list.innerHTML = benefits.map(b => `<li>${esc(b)}</li>`).join('');
+    wrap.style.display = 'block';
+  } else if (wrap) {
+    wrap.style.display = 'none';
   }
   _setTopbarBreadcrumb(name);
 }
@@ -214,6 +246,7 @@ function go(name) {
   if (name==='sso') loadSsoProviders();
   if (name==='workspace') loadWorkspace();
   if (name==='routing') loadRouting();
+  if (name==='retention') loadRetention();
 }
 
 // ── DATA SOURCE BADGE ────────────────────────────────────────────────────────
@@ -2042,6 +2075,73 @@ async function createWorkspace() {
   } catch(e) { msg.textContent = e.message || 'Create failed.'; msg.style.color = 'var(--err)'; }
 }
 
+async function changePassword() {
+  const cur = g('pw-current'), nw = g('pw-new'), cf = g('pw-confirm');
+  const msg = document.getElementById('pw-msg');
+  if (!cur || !nw) { msg.textContent = 'Current and new password are required.'; msg.style.color = 'var(--err)'; return; }
+  if (nw !== cf) { msg.textContent = 'New passwords do not match.'; msg.style.color = 'var(--err)'; return; }
+  try {
+    // Returns fresh tokens — the old ones are revoked server-side via token_version.
+    const d = await req('POST', '/auth/change-password', {currentPassword: cur, newPassword: nw});
+    if (d?.accessToken) setTok(d.accessToken, d.refreshToken, d.expiresInSeconds);
+    document.getElementById('pw-current').value = '';
+    document.getElementById('pw-new').value = '';
+    document.getElementById('pw-confirm').value = '';
+    msg.textContent = 'Password updated.'; msg.style.color = 'var(--ok)';
+  } catch(e) { msg.textContent = e.message || 'Update failed.'; msg.style.color = 'var(--err)'; }
+}
+
+// ── RETENTION & REDACTION (Max) ───────────────────────────────────────────────
+async function loadRetention() {
+  const out = document.getElementById('retention-body');
+  try {
+    const d = await req('GET', '/retention');
+    const redact = d.redact_after_days ?? '';
+    out.innerHTML = `<div class="card" style="max-width:480px">
+      <label style="display:block;margin-bottom:12px;font-size:13px;display:flex;align-items:center;gap:8px">
+        <input id="ret-enabled" type="checkbox" ${d.enabled ? 'checked' : ''} style="width:auto;margin:0">
+        <span>Enable automatic retention &amp; redaction</span>
+      </label>
+      <label style="display:block;margin-bottom:10px;font-size:13px">Retain records for (days)
+        <input id="ret-retain" type="number" min="1" max="3650" value="${esc(String(d.retain_days ?? 365))}" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
+      </label>
+      <label style="display:block;margin-bottom:14px;font-size:13px">Redact prompt contents after (days, optional)
+        <input id="ret-redact" type="number" min="1" max="3650" value="${esc(String(redact))}" placeholder="leave blank to disable redaction" style="display:block;margin-top:4px;width:100%;padding:7px 10px;font-size:13px;box-sizing:border-box">
+      </label>
+      <p style="font-size:12px;color:var(--text2);margin:0 0 14px">Redaction must happen before purge — keep this smaller than the retain window.</p>
+      <button class="p" data-action="save-retention">Save Policy</button>
+      <button class="s" data-action="run-retention" style="margin-left:8px">Run Cleanup Now</button>
+      <div id="ret-msg" style="margin-top:10px;font-size:13px" role="status" aria-live="polite"></div>
+    </div>`;
+  } catch(e) {
+    const forbidden = (e.message || '').includes('403') || (e.message || '').toLowerCase().includes('forbidden');
+    out.innerHTML = `<div class="al err">${forbidden ? 'Retention settings are admin only.' : 'Failed to load retention policy: ' + esc(e.message || 'Server error')}</div>`;
+  }
+}
+async function saveRetention() {
+  const enabled = document.getElementById('ret-enabled').checked;
+  const retain = parseInt(g('ret-retain'), 10);
+  const redactRaw = g('ret-redact');
+  const msg = document.getElementById('ret-msg');
+  if (!retain || retain < 1) { msg.textContent = 'Retain days must be at least 1.'; msg.style.color = 'var(--err)'; return; }
+  const body = {retain_days: retain, enabled};
+  if (redactRaw) body.redact_after_days = parseInt(redactRaw, 10);
+  try {
+    await req('PUT', '/retention', body);
+    msg.textContent = 'Retention policy saved.'; msg.style.color = 'var(--ok)';
+  } catch(e) { msg.textContent = e.message || 'Save failed.'; msg.style.color = 'var(--err)'; }
+}
+async function runRetention() {
+  const msg = document.getElementById('ret-msg');
+  if (!confirm('Run retention cleanup now? This permanently redacts/purges records past their window.')) return;
+  msg.textContent = 'Running cleanup…'; msg.style.color = 'var(--text2)';
+  try {
+    const d = await req('POST', '/retention/run', {});
+    msg.textContent = `Cleanup complete: ${d.redacted ?? 0} redacted, ${d.deleted ?? 0} purged.`;
+    msg.style.color = 'var(--ok)';
+  } catch(e) { msg.textContent = e.message || 'Cleanup failed.'; msg.style.color = 'var(--err)'; }
+}
+
 // ── EVENT DELEGATION — dynamic content ──────────────────────────────────────
 // All onclick/onkeydown that live in JS-generated innerHTML are routed here.
 // Static button wiring is in _wireStaticHandlers() at the bottom.
@@ -2095,6 +2195,15 @@ document.addEventListener('click', function(e) {
       break;
     case 'create-workspace':
       createWorkspace();
+      break;
+    case 'change-password':
+      changePassword();
+      break;
+    case 'save-retention':
+      saveRetention();
+      break;
+    case 'run-retention':
+      runRetention();
       break;
     case 'go-quality-llm':
       go('quality');

@@ -4,6 +4,7 @@ import sys
 
 sys.path.insert(0, ".")
 import proxy  # noqa: E402
+from adapters.contract import RESULT_CAPTURE_UNAVAILABLE, RESULT_UNKNOWN, classify_capture_result  # noqa: E402
 
 
 def test_edit_tool_parse():
@@ -263,6 +264,32 @@ def test_prompt_context_extracted_and_attached_to_ingest():
         asyncio.run(run())
     finally:
         proxy._ingest_edit = original
+
+
+def test_capability_is_declared():
+    """PART 5 #54 — the adapter must declare its capability/fidelity."""
+    assert proxy._ANTHROPIC_CAPABILITY.provider == "anthropic"
+    assert proxy._ANTHROPIC_CAPABILITY.supports_multi_edit is True
+
+
+def test_capture_unavailable_for_malformed_input_on_mutating_tool():
+    """A mutating tool with unparseable input is capture_unavailable, not unknown."""
+    status = classify_capture_result(
+        tool_name="Edit",
+        mutating_tool_names=proxy._FILE_MUTATING_TOOLS,
+        edits=proxy._parse_anthropic_tool_use_to_edits(
+            {"type": "tool_use", "id": "t1", "name": "Edit", "input": "not-a-dict"}
+        ),
+        input_was_dict=False,
+    )
+    assert status == RESULT_CAPTURE_UNAVAILABLE
+
+
+def test_unknown_for_read_only_tool():
+    status = classify_capture_result(
+        tool_name="Read", mutating_tool_names=proxy._FILE_MUTATING_TOOLS, edits=[], input_was_dict=True
+    )
+    assert status == RESULT_UNKNOWN
 
 
 if __name__ == "__main__":

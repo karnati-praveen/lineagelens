@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from app.db.session import _CURRENT_ALEMBIC_HEAD
 
-_REVISION = "202606260005"
+_REVISION = "202606260009"
 
 
 # ─── Migration sanity ─────────────────────────────────────────────────────────
@@ -300,6 +300,72 @@ def test_blast_radius_includes_descendants(client, make_user, monkeypatch):
         assert body["blastRadius"]["coverageStatus"] == "checked"
     finally:
         fastapi_app.state.neo4j_service = original
+
+
+class _FakeNeoResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def data(self):
+        return self._rows
+
+
+class _FakeNeoSession:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def run(self, query, params):
+        return _FakeNeoResult(self._rows)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+
+class _FakeDriver:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def session(self, database=None):
+        return _FakeNeoSession(self._rows)
+
+
+class _FakeNeo4jService:
+    def __init__(self, rows):
+        self._driver = _FakeDriver(rows)
+        self._database = "neo4j"
+
+
+def test_blast_radius_partial_when_truncated(monkeypatch):
+    """A result that hits the cap must report blast_radius_partial, not 'checked' (PART 5 #58)."""
+    import app.services.recall_service as recall_svc
+
+    monkeypatch.setattr(recall_svc, "_MAX_BLAST_RADIUS_RESULTS", 2)
+    rows = [{"versionId": f"v{i}"} for i in range(3)]  # one more than the (patched) cap
+    fake_service = _FakeNeo4jService(rows)
+
+    result = asyncio.run(
+        recall_svc.compute_blast_radius(fake_service, ["seed1"], "ws-truncate")
+    )
+    assert result.coverage_status == "blast_radius_partial"
+    assert len(result.descendant_uuids) == 2
+    assert any("truncated" in lim for lim in result.limitations)
+
+
+def test_blast_radius_not_partial_when_under_cap(monkeypatch):
+    import app.services.recall_service as recall_svc
+
+    monkeypatch.setattr(recall_svc, "_MAX_BLAST_RADIUS_RESULTS", 10)
+    rows = [{"versionId": "v0"}]
+    fake_service = _FakeNeo4jService(rows)
+
+    result = asyncio.run(
+        recall_svc.compute_blast_radius(fake_service, ["seed1"], "ws-full")
+    )
+    assert result.coverage_status == "checked"
+    assert result.limitations == []
 
 
 def test_blast_radius_unavailable_not_zero(client, make_user):

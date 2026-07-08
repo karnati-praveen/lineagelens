@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import and_, asc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.assurance_states import ChainState
 from app.core.audit import log_audit_event
 from app.core.mode_guard import require_non_solo, require_plan
 from app.core.security import (
@@ -62,6 +63,7 @@ async def verify_chain(
             "ok": True,
             "records_checked": 0,
             "first_break_uuid": None,
+            "chainState": ChainState.UNVERIFIABLE.value,
             "message": (
                 "No hash-chained records found. Records written before the chain "
                 "was enabled are skipped."
@@ -103,6 +105,7 @@ async def verify_chain(
                     "records_checked": records_checked,
                     "first_break_uuid": str(record.uuid),
                     "states": states,
+                    "chainState": ChainState.TAMPERED.value,
                     "message": (
                         f"Record {record.uuid} has scrubbed content but no valid signed "
                         f"{expected_type} event — possible tampering."
@@ -138,6 +141,7 @@ async def verify_chain(
                     "records_checked": records_checked,
                     "first_break_uuid": str(record.uuid),
                     "states": states,
+                    "chainState": ChainState.TAMPERED.value,
                     "message": (
                         f"Hash mismatch at record {record.uuid}: stored hash does not match "
                         "recomputed value — record may have been tampered with."
@@ -159,6 +163,7 @@ async def verify_chain(
                 "records_checked": records_checked,
                 "first_break_uuid": str(record.uuid),
                 "states": states,
+                "chainState": ChainState.TAMPERED.value,
                 "message": (
                     f"Chain break at record {record.uuid}: prev_hash does not link "
                     "to the preceding record."
@@ -167,11 +172,22 @@ async def verify_chain(
 
         prev_hash = record.record_hash
 
+    # A chain that is entirely active records has no scrubbed content to
+    # distinguish; a chain containing redacted/deleted records is intact but
+    # only "tamper-evident" in the general sense described in the README —
+    # never claim more than that (PART 1 #8 / PART 5 #58).
+    chain_state = (
+        ChainState.FULLY_AVAILABLE.value
+        if states["validly_redacted"] == 0 and states["validly_deleted"] == 0
+        else ChainState.LOCALLY_TAMPER_EVIDENT.value
+    )
+
     return {
         "ok": True,
         "records_checked": records_checked,
         "first_break_uuid": None,
         "states": states,
+        "chainState": chain_state,
         "message": (
             f"Chain verified across {records_checked} record(s) — no tampering detected "
             f"({states['active']} active, {states['validly_redacted']} validly redacted, "

@@ -19,6 +19,10 @@ trust-relevant fact is tagged with a claim class:
 
 Consumers MUST render these distinctly and never show a single aggregate
 "verified" state.
+
+See app.core.assurance_states for the companion catalogue of named
+capability-level states (chain/blast-radius/prompt/license/embedding) that
+sit alongside these per-field claims.
 """
 
 import hashlib
