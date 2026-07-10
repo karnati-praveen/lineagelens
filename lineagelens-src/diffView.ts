@@ -41,11 +41,11 @@ export class DiffViewPanel {
 
     private _buildHtml(filePath: string, records: DiffRecord[]): string {
         const rows = records.map((r, i) => `
-            <tr class="rec-row" data-uuid="${r.uuid}">
+            <tr class="rec-row" data-uuid="${this._escHtml(r.uuid ?? '')}">
                 <td>${i + 1}</td>
                 <td>${this._escHtml(r.timestampIso ?? '')}</td>
                 <td>${this._escHtml(r.modelName ?? '—')}</td>
-                <td><span class="risk risk-${r.riskScore != null && r.riskScore >= 80 ? 'high' : r.riskScore != null && r.riskScore >= 50 ? 'med' : 'low'}">${r.riskScore ?? '—'}</span></td>
+                <td><span class="risk risk-${this._riskClass(r.riskScore)}">${r.riskScore ?? '—'}</span></td>
                 <td class="snippet">${this._escHtml((r.insertedCodeSnippet ?? '').substring(0, 80))}</td>
             </tr>
         `).join('');
@@ -108,6 +108,12 @@ body{font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);bac
             if (line.startsWith('@@')) return `<span class="hunk">${escaped}</span>`;
             return escaped;
         }).join('\n');
+    }
+
+    private _riskClass(score: number | null | undefined): 'high' | 'med' | 'low' {
+        if (score != null && score >= 80) return 'high';
+        if (score != null && score >= 50) return 'med';
+        return 'low';
     }
 
     private _escHtml(s: string): string {
