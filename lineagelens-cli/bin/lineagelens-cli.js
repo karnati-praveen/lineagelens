@@ -14,6 +14,7 @@ const { rollback } = require('../src/commands/lineagelens-cli-rollback');
 const { configCmd } = require('../src/commands/lineagelens-cli-config-cmd');
 const { blame } = require('../src/commands/lineagelens-cli-blame');
 const { report } = require('../src/commands/lineagelens-cli-report');
+const { scan } = require('../src/commands/lineagelens-cli-scan');
 const { setJsonMode, isJsonMode } = require('../src/utils/lineagelens-cli-output');
 const { getActiveMode } = require('../src/utils/lineagelens-cli-config');
 const pkg = require('../package.json');
@@ -55,13 +56,86 @@ const program = new Command();
 
 program
   .name('lineagelens')
-  .description('Manage LineageLens Plus and Max backends')
+  .description(
+    'Provenance for AI-generated code.\n\n' +
+    'New here? Run `lineagelens scan .` — it needs no install, no backend and no\n' +
+    'account, and reports the AI-written code already living in your repo.',
+  )
   .version(pkg.version)
   .option('--json', 'Output results as JSON', false)
   .option('-y, --yes', 'Non-interactive mode: answer all prompts with defaults', false)
   .hook('preAction', (thisCommand) => {
     const opts = thisCommand.opts();
     setJsonMode(!!opts.json);
+  });
+
+// Commands are grouped in help by the order they are registered above: the three
+// read-only reporting commands first (nothing to set up), then backend
+// operations, which only apply once you are self-hosting Plus or Max.
+program.addHelpText(
+  'after',
+  `
+Start here (no setup required)
+  lineagelens scan .                    what AI code is already in this repo?
+  lineagelens scan . --category auth    ...and which of it touches auth
+  lineagelens scan . --md                paste-ready inventory for a PR
+
+Once capture is running (extension or proxy)
+  lineagelens blame src/auth.py -i captures.json    which AI wrote each line
+  lineagelens report . -i captures.json             per-file attribution
+
+Self-hosting a backend
+  lineagelens start --mode plus          the commands below this line need Docker
+
+Docs: https://github.com/karnati-praveen/lineagelens#readme
+`,
+);
+
+program
+  .command('scan [dir]')
+  .description('Retroactive AI attribution from git history — works on any repo, no install, no backend')
+  .option('--since <date>', 'Only examine commits after this git date expression (e.g. "2026-01-01", "90 days ago")')
+  .option('--max-commits <n>', 'Examine at most n commits (newest first)')
+  .option('--tool <name>', 'Only attribute one tool, e.g. "Claude Code"')
+  .option('--category <slug>', 'Only show files whose AI code hits this risk surface: auth | secrets | sql | shell | dom | payments | eval | ci | infra | large-block')
+  .option('--md', 'Output a paste-ready markdown inventory (for PRs and write-ups)', false)
+  .option('--top <n>', 'Show at most n files in the table', '15')
+  .option('--no-color', 'Disable ANSI colors')
+  .action(async (dir, opts) => {
+    await scan(dir, opts);
+  });
+
+program
+  .command('blame <file>')
+  .description('Per-line AI attribution for a file — git blame, but it tells you which AI')
+  .option('-i, --input <records>', 'Record source: extension captures.json, agent-trace .jsonl, or saved /search response')
+  .option('-u, --url <backendUrl>', 'LineageLens backend URL (or env LINEAGELENS_URL)')
+  .option('-t, --token <jwt>', 'Backend access token (or env LINEAGELENS_TOKEN)')
+  .option('-w, --workspace <id>', 'Workspace id for backend mode (or env LINEAGELENS_WORKSPACE)')
+  .option('--review-status <status>', 'Filter by review status: unreviewed | pending | reviewed (backend mode only)')
+  .option('--category <slug>', 'Filter by risk category: auth | secrets | sql | shell | dom | payments | eval | large-block (backend mode only)')
+  .option('--stats', 'Print only the summary, not the annotated file', false)
+  .option('--min-confidence <n>', 'Ignore records below this confidence (0–1)', parseFloat)
+  .option('--no-color', 'Disable ANSI colors')
+  .action(async (file, opts) => {
+    await blame(file, opts);
+  });
+
+program
+  .command('report [dir]')
+  .description('Repo-wide AI attribution report — how much of this codebase did AI write?')
+  .option('-i, --input <records>', 'Record source: extension captures.json, agent-trace .jsonl, or saved /search response')
+  .option('-u, --url <backendUrl>', 'LineageLens backend URL (or env LINEAGELENS_URL)')
+  .option('-t, --token <jwt>', 'Backend access token (or env LINEAGELENS_TOKEN)')
+  .option('-w, --workspace <id>', 'Workspace id for backend mode (or env LINEAGELENS_WORKSPACE)')
+  .option('--review-status <status>', 'Filter by review status: unreviewed | pending | reviewed (backend mode only)')
+  .option('--category <slug>', 'Filter by risk category: auth | secrets | sql | shell | dom | payments | eval | large-block (backend mode only)')
+  .option('--md', 'Output a paste-ready markdown report (for READMEs and PRs)', false)
+  .option('--top <n>', 'Show at most n files in the table', '25')
+  .option('--min-confidence <n>', 'Ignore records below this confidence (0–1)', parseFloat)
+  .option('--no-color', 'Disable ANSI colors')
+  .action(async (dir, opts) => {
+    await report(dir, opts);
   });
 
 program
@@ -160,39 +234,6 @@ program
     const mode = resolveMode(opts.mode, 'plus');
     assertMode(mode);
     await rollback(mode, opts);
-  });
-
-program
-  .command('blame <file>')
-  .description('Per-line AI attribution for a file — git blame, but it tells you which AI')
-  .option('-i, --input <records>', 'Record source: extension captures.json, agent-trace .jsonl, or saved /search response')
-  .option('-u, --url <backendUrl>', 'LineageLens backend URL (or env LINEAGELENS_URL)')
-  .option('-t, --token <jwt>', 'Backend access token (or env LINEAGELENS_TOKEN)')
-  .option('-w, --workspace <id>', 'Workspace id for backend mode (or env LINEAGELENS_WORKSPACE)')
-  .option('--review-status <status>', 'Filter by review status: unreviewed | pending | reviewed (backend mode only)')
-  .option('--category <slug>', 'Filter by risk category: auth | secrets | sql | shell | dom | payments | eval | large-block (backend mode only)')
-  .option('--stats', 'Print only the summary, not the annotated file', false)
-  .option('--min-confidence <n>', 'Ignore records below this confidence (0–1)', parseFloat)
-  .option('--no-color', 'Disable ANSI colors')
-  .action(async (file, opts) => {
-    await blame(file, opts);
-  });
-
-program
-  .command('report [dir]')
-  .description('Repo-wide AI attribution report — how much of this codebase did AI write?')
-  .option('-i, --input <records>', 'Record source: extension captures.json, agent-trace .jsonl, or saved /search response')
-  .option('-u, --url <backendUrl>', 'LineageLens backend URL (or env LINEAGELENS_URL)')
-  .option('-t, --token <jwt>', 'Backend access token (or env LINEAGELENS_TOKEN)')
-  .option('-w, --workspace <id>', 'Workspace id for backend mode (or env LINEAGELENS_WORKSPACE)')
-  .option('--review-status <status>', 'Filter by review status: unreviewed | pending | reviewed (backend mode only)')
-  .option('--category <slug>', 'Filter by risk category: auth | secrets | sql | shell | dom | payments | eval | large-block (backend mode only)')
-  .option('--md', 'Output a paste-ready markdown report (for READMEs and PRs)', false)
-  .option('--top <n>', 'Show at most n files in the table', '25')
-  .option('--min-confidence <n>', 'Ignore records below this confidence (0–1)', parseFloat)
-  .option('--no-color', 'Disable ANSI colors')
-  .action(async (dir, opts) => {
-    await report(dir, opts);
   });
 
 program

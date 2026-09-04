@@ -75,6 +75,12 @@ def _derive_hmac_key() -> bytes:
 
     Uses a different salt from encryption.py's Fernet derivation so
     AIBOM signing and field encryption are independent.
+
+    The salt here is a fixed domain-separation constant, not a password salt —
+    it derives from an already-high-entropy secret (JWT_SECRET_KEY), and
+    sign_aibom()/verify_aibom_signature() must stay deterministic (a tested
+    contract: see test_sign_aibom_is_deterministic) so a random per-call salt
+    isn't compatible with this derivation the way it is for encrypt_field().
     """
     seed = os.environ.get("JWT_SECRET_KEY", "").strip()
     if not seed:

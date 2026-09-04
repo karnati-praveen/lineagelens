@@ -364,6 +364,110 @@ async def download_export_job(
 # ── Agent Trace export ─────────────────────────────────────────────────────────
 
 
+def _agent_trace_date_filters(
+    workspace_id: str, date_from: str | None, date_to: str | None
+) -> list:
+    filters = [ProvenanceRecord.workspace_id == workspace_id]
+    dt_from = _parse_dt(date_from) if date_from else None
+    if dt_from:
+        filters.append(ProvenanceRecord.timestamp_iso >= dt_from)
+    dt_to = _parse_dt(date_to) if date_to else None
+    if dt_to:
+        filters.append(ProvenanceRecord.timestamp_iso <= dt_to)
+    return filters
+
+
+def _filter_agent_traces(
+    traces: list[AgentTraceRecord], tool_name: str | None, min_confidence: float | None
+) -> list[AgentTraceRecord]:
+    """Post-filter by tool name / confidence (can't do in SQL easily)."""
+    if tool_name:
+        tl = tool_name.lower()
+        traces = [t for t in traces if (t.tool.name or "").lower() == tl or (t.tool.adapter or "").lower() == tl]
+    if min_confidence is not None:
+        traces = [t for t in traces if (t.confidence.score or 0.0) >= min_confidence]
+    return traces
+
+
+def _build_agent_trace_csv_row(t: AgentTraceRecord) -> list:
+    first_file = t.files[0] if t.files else None
+    first_conv = first_file.conversations[0] if (first_file and first_file.conversations) else None
+    contributor = first_conv.contributor if first_conv else None
+    first_range = first_conv.ranges[0] if (first_conv and first_conv.ranges) else None
+    meta = t.metadata or {}
+    ll_tool = meta.get("lineagelens.tool") or {}
+    ll_conf = meta.get("lineagelens.confidence") or {}
+    return [
+        _safe_csv_value(t.id),
+        _safe_csv_value(t.timestamp),
+        _safe_csv_value(first_file.path if first_file else ""),
+        _safe_csv_value(t.tool.name if t.tool else ""),
+        _safe_csv_value(ll_tool.get("adapter") or ""),
+        _safe_csv_value(ll_tool.get("provider") or ""),
+        _safe_csv_value(ll_tool.get("sessionId") or ""),
+        _safe_csv_value(ll_tool.get("operationType") or ""),
+        _safe_csv_value(ll_tool.get("sessionKind") or ""),
+        _safe_csv_value(contributor.model_id if contributor else ""),
+        _safe_csv_value(contributor.type if contributor else ""),
+        _safe_csv_value(str(ll_conf.get("score") or "")),
+        _safe_csv_value(ll_conf.get("level") or ""),
+        _safe_csv_value(str(first_range.start_line if first_range else "")),
+        _safe_csv_value(str(first_range.end_line if first_range else "")),
+        _safe_csv_value(str(meta.get("lineagelens.netAddedLines") or "")),
+        _safe_csv_value(meta.get("lineagelens.insertedCodePreview") or ""),
+    ]
+
+
+def _render_agent_trace_json(traces: list[AgentTraceRecord], record_count: int) -> JSONResponse:
+    data = [t.model_dump(exclude_none=True) for t in traces]
+    return JSONResponse(
+        content={"version": SCHEMA_VERSION, "count": record_count, "records": data},
+        headers={"X-Record-Count": str(record_count)},
+    )
+
+
+def _render_agent_trace_csv(
+    traces: list[AgentTraceRecord], record_count: int, ws_slug: str, timestamp_tag: str
+) -> StreamingResponse:
+    output = io.StringIO()
+    writer = csv.writer(output, quoting=csv.QUOTE_ALL)
+    writer.writerow([
+        "id", "timestamp", "file_path", "tool_name", "adapter", "provider",
+        "session_id", "operation_type", "session_kind", "model_id",
+        "contributor_type", "confidence_score", "confidence_level",
+        "start_line", "end_line", "net_added_lines", "inserted_code_preview",
+    ])
+    for t in traces:
+        writer.writerow(_build_agent_trace_csv_row(t))
+    filename = f"lineagelens-agent-trace-{ws_slug}-{timestamp_tag}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Record-Count": str(record_count),
+        },
+    )
+
+
+def _render_agent_trace_jsonl(
+    traces: list[AgentTraceRecord], record_count: int, ws_slug: str, timestamp_tag: str
+) -> StreamingResponse:
+    # exclude_none so optional spec fields like vcs/tool that are null are
+    # omitted, keeping output valid per schema.
+    lines = [json.dumps(t.model_dump(exclude_none=True), separators=(",", ":")) for t in traces]
+    content = "\n".join(lines) + ("\n" if lines else "")
+    filename = f"lineagelens-agent-trace-{ws_slug}-{timestamp_tag}.jsonl"
+    return StreamingResponse(
+        iter([content]),
+        media_type="application/x-ndjson",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Record-Count": str(record_count),
+        },
+    )
+
+
 @router.get("/export/agent-trace", response_model=None)
 async def export_agent_trace(
     session: Annotated[AsyncSession, Depends(get_db_session)],
@@ -390,16 +494,7 @@ async def export_agent_trace(
     if role_result.scalar_one_or_none() != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Agent Trace export requires admin role.")
 
-    filters = [ProvenanceRecord.workspace_id == auth.workspace_id]
-    if date_from:
-        dt = _parse_dt(date_from)
-        if dt:
-            filters.append(ProvenanceRecord.timestamp_iso >= dt)
-    if date_to:
-        dt = _parse_dt(date_to)
-        if dt:
-            filters.append(ProvenanceRecord.timestamp_iso <= dt)
-
+    filters = _agent_trace_date_filters(auth.workspace_id, date_from, date_to)
     stmt = (
         select(ProvenanceRecord)
         .where(and_(*filters))
@@ -409,15 +504,7 @@ async def export_agent_trace(
     result = await session.execute(stmt)
     rows = result.scalars().all()
 
-    traces = [record_to_agent_trace(r) for r in rows]
-
-    # Optional post-filter by tool name / confidence (can't do in SQL easily)
-    if tool_name:
-        tl = tool_name.lower()
-        traces = [t for t in traces if (t.tool.name or "").lower() == tl or (t.tool.adapter or "").lower() == tl]
-    if min_confidence is not None:
-        traces = [t for t in traces if (t.confidence.score or 0.0) >= min_confidence]
-
+    traces = _filter_agent_traces([record_to_agent_trace(r) for r in rows], tool_name, min_confidence)
     record_count = len(traces)
 
     await log_audit_event(
@@ -434,68 +521,7 @@ async def export_agent_trace(
     ws_slug = auth.workspace_id[:8]
 
     if fmt == "json":
-        data = [t.model_dump(exclude_none=True) for t in traces]
-        return JSONResponse(
-            content={"version": SCHEMA_VERSION, "count": record_count, "records": data},
-            headers={"X-Record-Count": str(record_count)},
-        )
-
+        return _render_agent_trace_json(traces, record_count)
     if fmt == "csv":
-        output = io.StringIO()
-        writer = csv.writer(output, quoting=csv.QUOTE_ALL)
-        writer.writerow([
-            "id", "timestamp", "file_path", "tool_name", "adapter", "provider",
-            "session_id", "operation_type", "session_kind", "model_id",
-            "contributor_type", "confidence_score", "confidence_level",
-            "start_line", "end_line", "net_added_lines", "inserted_code_preview",
-        ])
-        for t in traces:
-            first_file = t.files[0] if t.files else None
-            first_conv = first_file.conversations[0] if (first_file and first_file.conversations) else None
-            contributor = first_conv.contributor if first_conv else None
-            first_range = first_conv.ranges[0] if (first_conv and first_conv.ranges) else None
-            meta = t.metadata or {}
-            ll_tool = meta.get("lineagelens.tool") or {}
-            ll_conf = meta.get("lineagelens.confidence") or {}
-            writer.writerow([
-                _safe_csv_value(t.id),
-                _safe_csv_value(t.timestamp),
-                _safe_csv_value(first_file.path if first_file else ""),
-                _safe_csv_value(t.tool.name if t.tool else ""),
-                _safe_csv_value(ll_tool.get("adapter") or ""),
-                _safe_csv_value(ll_tool.get("provider") or ""),
-                _safe_csv_value(ll_tool.get("sessionId") or ""),
-                _safe_csv_value(ll_tool.get("operationType") or ""),
-                _safe_csv_value(ll_tool.get("sessionKind") or ""),
-                _safe_csv_value(contributor.model_id if contributor else ""),
-                _safe_csv_value(contributor.type if contributor else ""),
-                _safe_csv_value(str(ll_conf.get("score") or "")),
-                _safe_csv_value(ll_conf.get("level") or ""),
-                _safe_csv_value(str(first_range.start_line if first_range else "")),
-                _safe_csv_value(str(first_range.end_line if first_range else "")),
-                _safe_csv_value(str(meta.get("lineagelens.netAddedLines") or "")),
-                _safe_csv_value(meta.get("lineagelens.insertedCodePreview") or ""),
-            ])
-        filename = f"lineagelens-agent-trace-{ws_slug}-{timestamp_tag}.csv"
-        return StreamingResponse(
-            iter([output.getvalue()]),
-            media_type="text/csv",
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "X-Record-Count": str(record_count),
-            },
-        )
-
-    # Default: JSONL (newline-delimited JSON) — exclude_none so optional spec
-    # fields like vcs/tool that are null are omitted, keeping output valid per schema.
-    lines = [json.dumps(t.model_dump(exclude_none=True), separators=(",", ":")) for t in traces]
-    content = "\n".join(lines) + ("\n" if lines else "")
-    filename = f"lineagelens-agent-trace-{ws_slug}-{timestamp_tag}.jsonl"
-    return StreamingResponse(
-        iter([content]),
-        media_type="application/x-ndjson",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-            "X-Record-Count": str(record_count),
-        },
-    )
+        return _render_agent_trace_csv(traces, record_count, ws_slug, timestamp_tag)
+    return _render_agent_trace_jsonl(traces, record_count, ws_slug, timestamp_tag)

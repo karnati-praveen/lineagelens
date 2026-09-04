@@ -10,6 +10,12 @@ const {
 } = require('../blame/lineagelens-cli-blame-engine');
 const { loadRecords } = require('../blame/lineagelens-cli-record-source');
 const { isJsonMode, out, err } = require('../utils/lineagelens-cli-output');
+const {
+  MAX_FILE_BYTES,
+  makePalette,
+  bar,
+  looksBinary,
+} = require('../utils/lineagelens-cli-render');
 
 // Directories that never contain first-party source worth attributing.
 const SKIP_DIRS = new Set([
@@ -17,14 +23,6 @@ const SKIP_DIRS = new Set([
   '__pycache__', '.venv', 'venv', '.tox', '.mypy_cache', '.pytest_cache',
   '.next', '.nuxt', 'target', 'vendor', '.idea', '.vscode',
 ]);
-
-const MAX_FILE_BYTES = 1024 * 1024; // skip files over 1 MB
-
-/** Cheap binary check: NUL byte in the first 8 KB. */
-function looksBinary(buf) {
-  const probe = buf.subarray(0, 8192);
-  return probe.includes(0);
-}
 
 /** Recursively collect candidate source files under root. */
 function walkFiles(root) {
@@ -66,16 +64,6 @@ function recordsByBasename(records) {
     map.get(base).push(r);
   }
   return map;
-}
-
-function makePalette(useColor) {
-  const wrap = (code) => (s) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
-  return { green: wrap('32'), cyan: wrap('36'), dim: wrap('2'), bold: wrap('1') };
-}
-
-function bar(percent, width = 20) {
-  const filled = Math.round((percent / 100) * width);
-  return '█'.repeat(filled) + '░'.repeat(width - filled);
 }
 
 function renderTerminal(rootLabel, rows, totals, palette, topN, activeFilters) {

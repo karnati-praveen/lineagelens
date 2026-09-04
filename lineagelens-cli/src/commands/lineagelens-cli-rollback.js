@@ -55,50 +55,44 @@ async function waitForBackend(timeoutMs = 30000) {
   return false;
 }
 
-async function rollback(mode, opts = {}) {
-  checkDocker();
+/** Report an error (JSON or text, matching the active output mode) and exit. */
+function failAndExit(jsonPayload, textMessage, exitCode = 1) {
+  if (isJsonMode()) {
+    err(jsonPayload);
+  } else {
+    console.error(textMessage);
+  }
+  process.exit(exitCode);
+}
 
-  const dumpFile = opts.file;
+function validateRollbackInputs(mode, dumpFile) {
   if (!dumpFile) {
-    if (isJsonMode()) {
-      err({ error: 'A dump file is required. Use --file <path>' });
-    } else {
-      console.error('Error: A dump file is required. Use  --file <path>');
-    }
-    process.exit(1);
+    failAndExit({ error: 'A dump file is required. Use --file <path>' }, 'Error: A dump file is required. Use  --file <path>');
   }
-
   if (!fs.existsSync(dumpFile)) {
-    if (isJsonMode()) {
-      err({ error: `Dump file not found: ${dumpFile}` });
-    } else {
-      console.error(`Error: Dump file not found: ${dumpFile}`);
-    }
-    process.exit(1);
+    failAndExit({ error: `Dump file not found: ${dumpFile}` }, `Error: Dump file not found: ${dumpFile}`);
   }
-
   const composeFile = path.join(COMPOSE_DIR, `lineagelens-cli-docker-compose.${mode}.yml`);
   const envFile = envFilePath(mode);
-
   if (!fs.existsSync(envFile)) {
-    if (isJsonMode()) {
-      err({ error: `No config found for ${mode} mode. Run lineagelens start --mode ${mode} first.` });
-    } else {
-      console.error(`No config found for ${mode} mode. Run  lineagelens start --mode ${mode}  first.`);
-    }
-    process.exit(1);
+    failAndExit(
+      { error: `No config found for ${mode} mode. Run lineagelens start --mode ${mode} first.` },
+      `No config found for ${mode} mode. Run  lineagelens start --mode ${mode}  first.`
+    );
   }
+  return { composeFile, envFile };
+}
 
-  if (!opts.nonInteractive && !isJsonMode()) {
-    const ans = await promptConfirm('This will overwrite the current database. Continue? [y/N] ');
-    if (ans !== 'y' && ans !== 'yes') {
-      console.log('Rollback cancelled.');
-      process.exit(0);
-    }
+async function confirmRollback(opts) {
+  if (opts.nonInteractive || isJsonMode()) return;
+  const ans = await promptConfirm('This will overwrite the current database. Continue? [y/N] ');
+  if (ans !== 'y' && ans !== 'yes') {
+    console.log('Rollback cancelled.');
+    process.exit(0);
   }
+}
 
-  const postgresContainer = `lineagelens-${mode}-postgres`;
-  const backendService = 'backend';
+function createSafetyBackup(mode, postgresContainer) {
   const safetyBackupDir = path.join(os.tmpdir(), 'lineagelens');
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const safetyBackupFile = path.join(safetyBackupDir, `lineagelens-rollback-safety-${mode}-${timestamp}.dump`);
@@ -110,72 +104,73 @@ async function rollback(mode, opts = {}) {
   if (!isJsonMode()) console.log(`Creating safety backup → ${safetyBackupFile}`);
   const safetyBackupResult = dumpDatabase(postgresContainer);
   if (safetyBackupResult.status !== 0) {
-    if (isJsonMode()) {
-      err({ error: 'Failed to create safety backup', mode });
-    } else {
-      console.error('Failed to create safety backup. Aborting rollback.');
-    }
-    process.exit(safetyBackupResult.status ?? 1);
+    failAndExit(
+      { error: 'Failed to create safety backup', mode },
+      'Failed to create safety backup. Aborting rollback.',
+      safetyBackupResult.status ?? 1
+    );
   }
 
   fs.writeFileSync(safetyBackupFile, safetyBackupResult.stdout);
+  return safetyBackupFile;
+}
+
+/** Restore `dumpData`; on failure, roll back to the pre-restore safety backup. */
+function restoreWithSafetyFallback(postgresContainer, dumpFile, dumpData, safetyBackupFile) {
+  const dropResult = recreateDatabase(postgresContainer);
+  if (dropResult.status !== 0) {
+    const errMsg = (dropResult.stderr || '').toString().slice(0, 300);
+    failAndExit({ error: 'Failed to recreate database', detail: errMsg }, `Failed to recreate database: ${errMsg}`);
+  }
+
+  const restoreResult = restoreDatabase(postgresContainer, dumpData);
+  if (restoreResult.status === 0) {
+    return;
+  }
+
+  const errMsg = (restoreResult.stderr || '').toString().slice(0, 300);
+  if (isJsonMode()) {
+    err({ error: 'pg_restore failed', detail: errMsg });
+  } else {
+    console.error('pg_restore failed:', errMsg);
+  }
+
+  const safetyDump = fs.readFileSync(safetyBackupFile);
+  recreateDatabase(postgresContainer);
+  const safetyRestoreResult = restoreDatabase(postgresContainer, safetyDump);
+  if (safetyRestoreResult.status !== 0) {
+    const safetyErr = (safetyRestoreResult.stderr || '').toString().slice(0, 300);
+    failAndExit({ error: 'Safety restore failed', detail: safetyErr }, `Safety restore failed: ${safetyErr}`);
+  }
+
+  if (!isJsonMode()) {
+    console.warn('Original database restored from safety backup after rollback failure.');
+  }
+}
+
+async function rollback(mode, opts = {}) {
+  checkDocker();
+
+  const dumpFile = opts.file;
+  const { composeFile, envFile } = validateRollbackInputs(mode, dumpFile);
+  await confirmRollback(opts);
+
+  const postgresContainer = `lineagelens-${mode}-postgres`;
+  const backendService = 'backend';
+
+  const safetyBackupFile = createSafetyBackup(mode, postgresContainer);
 
   // Step 1: Stop backend service (not postgres)
   if (!isJsonMode()) console.log(`Stopping backend service for ${mode.toUpperCase()}...`);
   const stopResult = runComposeSync(composeFile, envFile, ['stop', backendService], { mode });
   if (stopResult.status !== 0) {
-    if (isJsonMode()) {
-      err({ error: 'Failed to stop backend service', mode });
-    } else {
-      console.error('Failed to stop backend service.');
-    }
-    process.exit(stopResult.status ?? 1);
+    failAndExit({ error: 'Failed to stop backend service', mode }, 'Failed to stop backend service.', stopResult.status ?? 1);
   }
 
   // Step 2: Run pg_restore inside the postgres container
   if (!isJsonMode()) console.log(`\nRestoring database from ${dumpFile}...`);
-
-  // Read dump file and pipe to docker exec
   const dumpData = fs.readFileSync(dumpFile);
-
-  // Drop and recreate the database, then restore
-  const dropResult = recreateDatabase(postgresContainer);
-  if (dropResult.status !== 0) {
-    const errMsg = (dropResult.stderr || '').toString().slice(0, 300);
-    if (isJsonMode()) {
-      err({ error: 'Failed to recreate database', detail: errMsg });
-    } else {
-      console.error('Failed to recreate database:', errMsg);
-    }
-    process.exit(1);
-  }
-
-  const restoreResult = restoreDatabase(postgresContainer, dumpData);
-  if (restoreResult.status !== 0) {
-    const errMsg = (restoreResult.stderr || '').toString().slice(0, 300);
-    if (isJsonMode()) {
-      err({ error: 'pg_restore failed', detail: errMsg });
-    } else {
-      console.error('pg_restore failed:', errMsg);
-    }
-
-    const safetyDump = fs.readFileSync(safetyBackupFile);
-    recreateDatabase(postgresContainer);
-    const safetyRestoreResult = restoreDatabase(postgresContainer, safetyDump);
-    if (safetyRestoreResult.status !== 0) {
-      const safetyErr = (safetyRestoreResult.stderr || '').toString().slice(0, 300);
-      if (isJsonMode()) {
-        err({ error: 'Safety restore failed', detail: safetyErr });
-      } else {
-        console.error('Safety restore failed:', safetyErr);
-      }
-      process.exit(1);
-    }
-
-    if (!isJsonMode()) {
-      console.warn('Original database restored from safety backup after rollback failure.');
-    }
-  }
+  restoreWithSafetyFallback(postgresContainer, dumpFile, dumpData, safetyBackupFile);
 
   if (!isJsonMode()) console.log('Database restored successfully.');
 
@@ -183,12 +178,7 @@ async function rollback(mode, opts = {}) {
   if (!isJsonMode()) console.log('\nRestarting backend service...');
   const startResult = runComposeSync(composeFile, envFile, ['start', backendService], { mode });
   if (startResult.status !== 0) {
-    if (isJsonMode()) {
-      err({ error: 'Failed to restart backend service', mode });
-    } else {
-      console.error('Failed to restart backend service.');
-    }
-    process.exit(startResult.status ?? 1);
+    failAndExit({ error: 'Failed to restart backend service', mode }, 'Failed to restart backend service.', startResult.status ?? 1);
   }
 
   // Step 4: Health check

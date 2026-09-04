@@ -371,7 +371,9 @@ function warnIfInsecureRemoteBackend(baseUrl: string, log: (message: string) => 
         host +
         '). Access tokens and captured code will be sent unencrypted. Use https:// instead.';
       log(message);
-      void vscode.window.showWarningMessage(message);
+      vscode.window.showWarningMessage(message).then(undefined, () => {
+        log('Insecure backend warning message failed to display.');
+      });
     }
   } catch {
     // Malformed URL — handled elsewhere; nothing to warn about here.

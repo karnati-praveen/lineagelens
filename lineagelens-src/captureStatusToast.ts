@@ -58,9 +58,9 @@ export class CaptureStatusToastManager {
                         'Dismiss'
                     ).then(action => {
                         if (action === 'View Record' && event.uuid) {
-                            void vscode.commands.executeCommand('lineagelens.showProvenance', event.uuid);
+                            vscode.commands.executeCommand('lineagelens.showProvenance', event.uuid).then(undefined, () => {});
                         }
-                    });
+                    }, () => {});
                 }
 
                 this._pendingTimer = setTimeout(() => this._updateIdle(), 8000);
@@ -90,9 +90,9 @@ export class CaptureStatusToastManager {
                     'View Policies'
                 ).then(action => {
                     if (action === 'View Policies') {
-                        void vscode.commands.executeCommand('aiInsertionDetector.openInsightsDashboard');
+                        vscode.commands.executeCommand('aiInsertionDetector.openInsightsDashboard').then(undefined, () => {});
                     }
-                });
+                }, () => {});
                 this._pendingTimer = setTimeout(() => this._updateIdle(), 8000);
                 break;
         }

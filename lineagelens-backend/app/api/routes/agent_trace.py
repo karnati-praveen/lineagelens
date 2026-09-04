@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import AuthContext, get_current_auth_context, require_role
 from app.db.models import ProvenanceRecord
 from app.db.session import get_db_session
-from app.schemas.agent_trace import AgentTraceDocument, SPEC_VERSION, SCHEMA_VERSION
+from app.schemas.agent_trace import AgentTraceDocument, AgentTraceFile, SPEC_VERSION, SCHEMA_VERSION
 from app.services.agent_trace_service import agent_trace_to_provenance_payload, compute_import_hash
 
 logger = logging.getLogger(__name__)
@@ -55,6 +55,111 @@ def _record_uuid_for(doc_id: str, file_idx: int, conv_idx: int) -> str:
         uuid_module.NAMESPACE_OID,
         f"{doc_id}|{file_idx}|{conv_idx}",
     ))
+
+
+def _parse_agent_trace_line(line: str, line_num: int) -> tuple["AgentTraceDocument | None", dict | None]:
+    """Parse and validate one JSONL line. Returns (doc, None) or (None, error)."""
+    try:
+        raw_obj = json.loads(line)
+    except json.JSONDecodeError as exc:
+        return None, {"line": line_num, "error": f"JSON parse error: {exc}"}
+
+    # Accept the new spec format (version: semver) and gracefully reject
+    # the legacy LineageLens-internal format (schemaVersion).
+    spec_ver = raw_obj.get("version", "")
+    legacy_ver = raw_obj.get("schemaVersion") or raw_obj.get("schema_version", "")
+
+    if spec_ver:
+        if not _SEMVER_RE.match(str(spec_ver)):
+            return None, {
+                "line": line_num,
+                "error": f"Invalid spec version '{spec_ver}'; expected semver like '{SPEC_VERSION}'.",
+            }
+    elif legacy_ver:
+        # Old LineageLens-internal format — no longer supported; advise re-export.
+        return None, {
+            "line": line_num,
+            "error": (
+                f"Legacy LineageLens format (schemaVersion='{legacy_ver}') is no longer supported. "
+                "Re-export with GET /export/agent-trace to get the cursor/agent-trace 0.1.0 format."
+            ),
+        }
+    # If neither version field is present, attempt parsing anyway.
+
+    try:
+        doc = AgentTraceDocument.model_validate(raw_obj)
+    except ValidationError as exc:
+        return None, {"line": line_num, "error": f"Validation error: {exc.error_count()} field(s) invalid"}
+
+    return doc, None
+
+
+def _build_provenance_record_for_conversation(
+    doc: "AgentTraceDocument",
+    afile,
+    conv,
+    rec_uuid_str: str,
+    fi: int,
+    ci: int,
+    line_num: int,
+    workspace_id: str,
+    now_utc: datetime,
+    prev_import_hash: str | None,
+) -> tuple["ProvenanceRecord | None", str | None, dict | None]:
+    """Build one ProvenanceRecord for a (file, conversation) pair.
+
+    Returns (record, record_hash, error) — record and record_hash are None
+    together when the UUID is invalid (error set).
+    """
+    try:
+        ts = datetime.fromisoformat(doc.timestamp.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        ts = now_utc
+
+    try:
+        record_uuid = uuid_module.UUID(rec_uuid_str)
+    except ValueError:
+        return None, None, {
+            "line": line_num,
+            "error": f"Invalid UUID '{rec_uuid_str}' for file[{fi}] conv[{ci}]",
+        }
+
+    # Build a per-(file, conversation) view of the document for the payload
+    # builder, so agent_trace_to_provenance_payload reads the right file/conv.
+    narrow_file = AgentTraceFile(path=afile.path, conversations=[conv])
+    narrow = AgentTraceDocument(
+        version=doc.version,
+        id=rec_uuid_str,
+        timestamp=doc.timestamp,
+        vcs=doc.vcs,
+        tool=doc.tool,
+        files=[narrow_file],
+        metadata=doc.metadata,
+    )
+
+    provenance_payload = agent_trace_to_provenance_payload(narrow, workspace_id, now_utc.isoformat())
+    _prompt_sha256, record_hash = compute_import_hash(narrow, prev_hash=prev_import_hash)
+
+    contributor = conv.contributor
+    model_name = contributor.model_id if contributor else None
+
+    ll_meta = doc.metadata or {}
+    inserted_code = ll_meta.get("lineagelens.insertedCodePreview") or "[imported]"
+    is_redacted = "lineagelens.insertedCodePreview" not in ll_meta
+
+    record = ProvenanceRecord(
+        uuid=record_uuid,
+        workspace_id=workspace_id,
+        file_path=afile.path,
+        timestamp_iso=ts,
+        inserted_code=inserted_code,
+        model_name=model_name,
+        is_redacted=is_redacted,
+        provenance_payload=provenance_payload,
+        record_hash=record_hash,
+        prev_hash=prev_import_hash,
+    )
+    return record, record_hash, None
 
 
 @router.post(
@@ -107,43 +212,9 @@ async def import_agent_trace(
     now_utc = datetime.now(tz=UTC)
 
     for line_num, line in enumerate(lines, start=1):
-        try:
-            raw_obj = json.loads(line)
-        except json.JSONDecodeError as exc:
-            errors.append({"line": line_num, "error": f"JSON parse error: {exc}"})
-            continue
-
-        # Accept the new spec format (version: semver) and gracefully reject
-        # the legacy LineageLens-internal format (schemaVersion).
-        spec_ver = raw_obj.get("version", "")
-        legacy_ver = raw_obj.get("schemaVersion") or raw_obj.get("schema_version", "")
-
-        if spec_ver:
-            if not _SEMVER_RE.match(str(spec_ver)):
-                errors.append({
-                    "line": line_num,
-                    "error": f"Invalid spec version '{spec_ver}'; expected semver like '{SPEC_VERSION}'.",
-                })
-                continue
-        elif legacy_ver:
-            # Old LineageLens-internal format — no longer supported; advise re-export.
-            errors.append({
-                "line": line_num,
-                "error": (
-                    f"Legacy LineageLens format (schemaVersion='{legacy_ver}') is no longer supported. "
-                    "Re-export with GET /export/agent-trace to get the cursor/agent-trace 0.1.0 format."
-                ),
-            })
-            continue
-        # If neither version field is present, attempt parsing anyway.
-
-        try:
-            doc = AgentTraceDocument.model_validate(raw_obj)
-        except ValidationError as exc:
-            errors.append({
-                "line": line_num,
-                "error": f"Validation error: {exc.error_count()} field(s) invalid",
-            })
+        doc, error = _parse_agent_trace_line(line, line_num)
+        if error:
+            errors.append(error)
             continue
 
         # Each (file, conversation) pair in the document becomes one ProvenanceRecord.
@@ -155,75 +226,14 @@ async def import_agent_trace(
                     skipped += 1
                     continue
 
-                try:
-                    ts = datetime.fromisoformat(doc.timestamp.replace("Z", "+00:00"))
-                except (ValueError, AttributeError):
-                    ts = now_utc
-
-                try:
-                    record_uuid = uuid_module.UUID(rec_uuid_str)
-                except ValueError:
-                    errors.append({
-                        "line": line_num,
-                        "error": f"Invalid UUID '{rec_uuid_str}' for file[{fi}] conv[{ci}]",
-                    })
+                record, record_hash, error = _build_provenance_record_for_conversation(
+                    doc, afile, conv, rec_uuid_str, fi, ci, line_num,
+                    auth.workspace_id, now_utc, prev_import_hash,
+                )
+                if error:
+                    errors.append(error)
                     continue
 
-                # Build a per-(file, conversation) view of the document for the
-                # payload builder.  We temporarily narrow doc.files so that
-                # agent_trace_to_provenance_payload reads the right file/conv.
-                from dataclasses import replace as _dc_replace
-                from copy import copy as _copy
-                narrow = AgentTraceDocument(
-                    version=doc.version,
-                    id=rec_uuid_str,
-                    timestamp=doc.timestamp,
-                    vcs=doc.vcs,
-                    tool=doc.tool,
-                    files=[afile],
-                    metadata=doc.metadata,
-                )
-                # Override first conversation to point at the right one.
-                from app.schemas.agent_trace import AgentTraceFile as _ATF
-                narrow_file = _ATF(path=afile.path, conversations=[conv])
-                narrow = AgentTraceDocument(
-                    version=doc.version,
-                    id=rec_uuid_str,
-                    timestamp=doc.timestamp,
-                    vcs=doc.vcs,
-                    tool=doc.tool,
-                    files=[narrow_file],
-                    metadata=doc.metadata,
-                )
-
-                provenance_payload = agent_trace_to_provenance_payload(
-                    narrow, auth.workspace_id, now_utc.isoformat()
-                )
-
-                _prompt_sha256, record_hash = compute_import_hash(
-                    narrow, prev_hash=prev_import_hash
-                )
-
-                contributor = conv.contributor
-                model_name = contributor.model_id if contributor else None
-                first_range = conv.ranges[0] if conv.ranges else None
-
-                ll_meta = doc.metadata or {}
-                inserted_code = ll_meta.get("lineagelens.insertedCodePreview") or "[imported]"
-                is_redacted = "lineagelens.insertedCodePreview" not in ll_meta
-
-                record = ProvenanceRecord(
-                    uuid=record_uuid,
-                    workspace_id=auth.workspace_id,
-                    file_path=afile.path,
-                    timestamp_iso=ts,
-                    inserted_code=inserted_code,
-                    model_name=model_name,
-                    is_redacted=is_redacted,
-                    provenance_payload=provenance_payload,
-                    record_hash=record_hash,
-                    prev_hash=prev_import_hash,
-                )
                 prev_import_hash = record_hash
                 session.add(record)
                 existing_uuids.add(rec_uuid_str)

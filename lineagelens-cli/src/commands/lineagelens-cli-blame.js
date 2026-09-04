@@ -10,19 +10,7 @@ const {
 } = require('../blame/lineagelens-cli-blame-engine');
 const { loadRecords } = require('../blame/lineagelens-cli-record-source');
 const { isJsonMode, out, err } = require('../utils/lineagelens-cli-output');
-
-// ── ANSI helpers (no dependency; disabled with --no-color or non-TTY) ─────────
-
-function makePalette(useColor) {
-  const wrap = (code) => (s) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
-  return {
-    green: wrap('32'),
-    yellow: wrap('33'),
-    cyan: wrap('36'),
-    dim: wrap('2'),
-    bold: wrap('1'),
-  };
-}
+const { makePalette } = require('../utils/lineagelens-cli-render');
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
 

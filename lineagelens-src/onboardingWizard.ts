@@ -69,7 +69,9 @@ export async function runOnboardingWizard(
             'Skip (already set up)'
         );
         if (setupStep === 'Open Setup Page') {
-            void vscode.env.openExternal(vscode.Uri.parse(`${backendUrl}/setup`));
+            // Best-effort: opening the external browser has no useful recovery path here.
+            vscode.env.openExternal(vscode.Uri.parse(`${backendUrl}/setup`))
+                .then(undefined, () => {});
         }
     }
 
@@ -80,21 +82,23 @@ export async function runOnboardingWizard(
         'Done'
     );
     if (proxyStep === 'Open Docs') {
-        void vscode.env.openExternal(vscode.Uri.parse('https://github.com/lineagelens/lineagelens#proxy-setup'));
+        // Best-effort: opening the external browser has no useful recovery path here.
+        vscode.env.openExternal(vscode.Uri.parse('https://github.com/lineagelens/lineagelens#proxy-setup'))
+            .then(undefined, () => {});
     }
 
     // Mark onboarding complete
     await context.globalState.update('lineagelens.hasRunBefore', true);
     await context.globalState.update('lineagelens.onboardingVersion', 1);
 
-    void vscode.window.showInformationMessage(
+    vscode.window.showInformationMessage(
         'LineageLens is ready! AI insertions will now be tracked automatically.',
         'Open Dashboard'
     ).then(action => {
         if (action === 'Open Dashboard') {
-            void vscode.commands.executeCommand('aiInsertionDetector.openInsightsDashboard');
+            vscode.commands.executeCommand('aiInsertionDetector.openInsightsDashboard').then(undefined, () => {});
         }
-    });
+    }, () => {});
 
     return { completed: true, backendUrl, storageMode };
 }

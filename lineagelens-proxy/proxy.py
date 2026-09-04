@@ -373,6 +373,47 @@ async def proxy_health() -> dict:
     return {"status": "ok"}
 
 
+async def _capture_structured_streaming_result(
+    provider: str,
+    session_key: str,
+    codex_session_key: str,
+    gemini_session_key: str,
+    is_codex: bool,
+    is_openai_chat: bool,
+    openai_chat_session_key: str,
+    collected: list[bytes],
+    anthropic_prompt_context: dict | None,
+    codex_prompt_context: dict | None,
+    gemini_prompt_context: dict | None,
+    openai_chat_prompt_context: dict | None,
+    routing_info: dict | None,
+) -> bool:
+    """Try each provider's structured (tool-call) capture path against the
+    collected SSE stream. Returns True if one of them found and stored edits."""
+    if provider == "anthropic" and session_key:
+        tool_uses = _extract_anthropic_tool_uses_from_sse(collected)
+        if tool_uses:
+            await _store_pending_edits(session_key, tool_uses, anthropic_prompt_context, routing_info)
+            return True
+    elif is_codex and codex_session_key:
+        function_calls = _extract_codex_function_calls_from_sse(collected)
+        if function_calls:
+            await _store_codex_pending_edits(codex_session_key, function_calls, codex_prompt_context, routing_info)
+            return True
+    elif provider == "gemini" and gemini_session_key:
+        function_calls = _extract_gemini_function_calls_from_sse(collected)
+        if function_calls:
+            await _store_gemini_pending_edits(gemini_session_key, function_calls, gemini_prompt_context, routing_info)
+            return True
+    elif is_openai_chat and openai_chat_session_key:
+        if await _capture_openai_chat_from_sse(
+            openai_chat_session_key, collected,
+            openai_chat_prompt_context, routing_info, provider,
+        ):
+            return True
+    return False
+
+
 async def _handle_streaming(
     method: str,
     url: str,
@@ -444,28 +485,12 @@ async def _handle_streaming(
             elif upstream.status_code >= 400:
                 logger.debug("skipping capture: upstream status %d", upstream.status_code)
             elif not _capture_overflow:
-                structured_captured = False
-                if provider == "anthropic" and session_key:
-                    tool_uses = _extract_anthropic_tool_uses_from_sse(collected)
-                    if tool_uses:
-                        await _store_pending_edits(session_key, tool_uses, anthropic_prompt_context, routing_info)
-                        structured_captured = True
-                elif is_codex and codex_session_key:
-                    function_calls = _extract_codex_function_calls_from_sse(collected)
-                    if function_calls:
-                        await _store_codex_pending_edits(codex_session_key, function_calls, codex_prompt_context, routing_info)
-                        structured_captured = True
-                elif provider == "gemini" and gemini_session_key:
-                    function_calls = _extract_gemini_function_calls_from_sse(collected)
-                    if function_calls:
-                        await _store_gemini_pending_edits(gemini_session_key, function_calls, gemini_prompt_context, routing_info)
-                        structured_captured = True
-                elif is_openai_chat and openai_chat_session_key:
-                    if await _capture_openai_chat_from_sse(
-                        openai_chat_session_key, collected,
-                        openai_chat_prompt_context, routing_info, provider,
-                    ):
-                        structured_captured = True
+                structured_captured = await _capture_structured_streaming_result(
+                    provider, session_key, codex_session_key, gemini_session_key,
+                    is_codex, is_openai_chat, openai_chat_session_key,
+                    collected, anthropic_prompt_context, codex_prompt_context,
+                    gemini_prompt_context, openai_chat_prompt_context, routing_info,
+                )
 
                 if not structured_captured:
                     text = _text_from_sse(collected, provider)
@@ -487,6 +512,70 @@ async def _handle_streaming(
         headers=_resp_headers(upstream.headers),
         media_type=upstream.headers.get("content-type", "text/event-stream"),
     )
+
+
+def _apply_savings_estimate(routing_info: dict | None, upstream: httpx.Response) -> None:
+    """Fill in routing_info["savings_estimate_usd"] from the upstream usage block, if present.
+
+    Best-effort — any parse failure just leaves the estimate at its default.
+    """
+    if not (routing_info and routing_info.get("savings_estimate_usd") == 0.0):
+        return
+    try:
+        resp_json = upstream.json()
+        usage = resp_json.get("usage") or {}
+        input_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+        output_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+        if input_tokens or output_tokens:
+            routing_info["savings_estimate_usd"] = estimate_savings(
+                routing_info["originalModel"],
+                routing_info["routedModel"],
+                input_tokens,
+                output_tokens,
+            )
+    except Exception:
+        pass
+
+
+async def _capture_structured_non_streaming_result(
+    provider: str,
+    session_key: str,
+    codex_session_key: str,
+    gemini_session_key: str,
+    is_codex: bool,
+    is_openai_chat: bool,
+    openai_chat_session_key: str,
+    upstream_content: bytes,
+    anthropic_prompt_context: dict | None,
+    codex_prompt_context: dict | None,
+    gemini_prompt_context: dict | None,
+    openai_chat_prompt_context: dict | None,
+    routing_info: dict | None,
+) -> bool:
+    """Try each provider's structured (tool-call) capture path against the
+    upstream response body. Returns True if one of them found and stored edits."""
+    if provider == "anthropic" and session_key:
+        tool_uses = _extract_anthropic_tool_uses_from_body(upstream_content)
+        if tool_uses:
+            await _store_pending_edits(session_key, tool_uses, anthropic_prompt_context, routing_info)
+            return True
+    elif is_codex and codex_session_key:
+        function_calls = _extract_codex_function_calls_from_body(upstream_content)
+        if function_calls:
+            await _store_codex_pending_edits(codex_session_key, function_calls, codex_prompt_context, routing_info)
+            return True
+    elif provider == "gemini" and gemini_session_key:
+        function_calls = _extract_gemini_function_calls_from_body(upstream_content)
+        if function_calls:
+            await _store_gemini_pending_edits(gemini_session_key, function_calls, gemini_prompt_context, routing_info)
+            return True
+    elif is_openai_chat and openai_chat_session_key:
+        if await _capture_openai_chat_from_body(
+            openai_chat_session_key, upstream_content,
+            openai_chat_prompt_context, routing_info, provider,
+        ):
+            return True
+    return False
 
 
 async def _handle_non_streaming(
@@ -537,44 +626,14 @@ async def _handle_non_streaming(
 
     if not skip_capture and upstream.status_code < 400:
         if len(upstream.content) <= MAX_BODY_BYTES:
-            if routing_info and routing_info.get("savings_estimate_usd") == 0.0:
-                try:
-                    resp_json = upstream.json()
-                    usage = resp_json.get("usage") or {}
-                    input_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
-                    output_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
-                    if input_tokens or output_tokens:
-                        routing_info["savings_estimate_usd"] = estimate_savings(
-                            routing_info["originalModel"],
-                            routing_info["routedModel"],
-                            input_tokens,
-                            output_tokens,
-                        )
-                except Exception:
-                    pass
+            _apply_savings_estimate(routing_info, upstream)
 
-            structured_captured = False
-            if provider == "anthropic" and session_key:
-                tool_uses = _extract_anthropic_tool_uses_from_body(upstream.content)
-                if tool_uses:
-                    await _store_pending_edits(session_key, tool_uses, anthropic_prompt_context, routing_info)
-                    structured_captured = True
-            elif is_codex and codex_session_key:
-                function_calls = _extract_codex_function_calls_from_body(upstream.content)
-                if function_calls:
-                    await _store_codex_pending_edits(codex_session_key, function_calls, codex_prompt_context, routing_info)
-                    structured_captured = True
-            elif provider == "gemini" and gemini_session_key:
-                function_calls = _extract_gemini_function_calls_from_body(upstream.content)
-                if function_calls:
-                    await _store_gemini_pending_edits(gemini_session_key, function_calls, gemini_prompt_context, routing_info)
-                    structured_captured = True
-            elif is_openai_chat and openai_chat_session_key:
-                if await _capture_openai_chat_from_body(
-                    openai_chat_session_key, upstream.content,
-                    openai_chat_prompt_context, routing_info, provider,
-                ):
-                    structured_captured = True
+            structured_captured = await _capture_structured_non_streaming_result(
+                provider, session_key, codex_session_key, gemini_session_key,
+                is_codex, is_openai_chat, openai_chat_session_key,
+                upstream.content, anthropic_prompt_context, codex_prompt_context,
+                gemini_prompt_context, openai_chat_prompt_context, routing_info,
+            )
 
             if not structured_captured:
                 text = _text_from_body(upstream.content, provider=provider)
@@ -602,6 +661,9 @@ async def _handle_non_streaming(
     )
 
 
+_BODY_TOO_LARGE_MSG = "Request body too large"
+
+
 async def _read_request_body(request: Request) -> "Response | bytes":
     """Read and size-limit the request body.
 
@@ -612,7 +674,7 @@ async def _read_request_body(request: Request) -> "Response | bytes":
     if content_length:
         try:
             if int(content_length) > MAX_BODY_BYTES:
-                return Response(content="Request body too large", status_code=413)
+                return Response(content=_BODY_TOO_LARGE_MSG, status_code=413)
         except ValueError:
             return Response(content="Invalid Content-Length header", status_code=400)
 
@@ -621,7 +683,7 @@ async def _read_request_body(request: Request) -> "Response | bytes":
     async for chunk in request.stream():
         seen_bytes += len(chunk)
         if seen_bytes > MAX_BODY_BYTES:
-            return Response(content="Request body too large", status_code=413)
+            return Response(content=_BODY_TOO_LARGE_MSG, status_code=413)
         body_parts.append(chunk)
     return b"".join(body_parts)
 
@@ -630,6 +692,113 @@ async def _read_request_body(request: Request) -> "Response | bytes":
     "/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
 )
+async def _process_anthropic_body(
+    req_body_dict: "dict | None", headers: dict, body: bytes, provider: str
+) -> tuple[str, dict]:
+    session_key = ""
+    prompt_context: dict = {}
+    try:
+        if isinstance(req_body_dict, dict):
+            session_key = _session_key(req_body_dict, headers)
+            prompt_context = _extract_anthropic_prompt_context(req_body_dict)
+            tool_results = _extract_anthropic_tool_results(body)
+            if tool_results:
+                await _resolve_pending_edits(session_key, tool_results, provider)
+    except Exception:
+        logger.debug("anthropic adapter: request body parse failed", exc_info=True)
+    return session_key, prompt_context
+
+
+async def _process_codex_body(
+    req_body_dict: "dict | None", headers: dict, body: bytes, provider: str
+) -> tuple[str, dict]:
+    session_key = ""
+    prompt_context: dict = {}
+    try:
+        if isinstance(req_body_dict, dict):
+            session_key = _codex_session_key(req_body_dict, headers)
+            prompt_context = _extract_codex_prompt_context(req_body_dict)
+            fc_outputs = _extract_codex_function_call_outputs(body)
+            if fc_outputs:
+                await _resolve_codex_pending_edits(session_key, fc_outputs, provider)
+    except Exception:
+        logger.debug("codex adapter: request body parse failed", exc_info=True)
+    return session_key, prompt_context
+
+
+async def _process_openai_chat_body(
+    req_body_dict: "dict | None", headers: dict, body: bytes, provider: str
+) -> tuple[str, dict]:
+    session_key = ""
+    prompt_context: dict = {}
+    try:
+        if isinstance(req_body_dict, dict):
+            session_key = _openai_chat_session_key(req_body_dict, headers)
+            prompt_context = _extract_openai_chat_prompt_context(req_body_dict)
+            oai_tool_results = _extract_openai_tool_results(body)
+            if oai_tool_results:
+                await _resolve_openai_pending_edits(session_key, oai_tool_results, provider)
+    except Exception:
+        logger.debug("openai chat adapter: request body parse failed", exc_info=True)
+    return session_key, prompt_context
+
+
+async def _process_gemini_body(
+    req_body_dict: "dict | None", headers: dict, body: bytes, url: str, provider: str
+) -> tuple[str, dict]:
+    session_key = ""
+    prompt_context: dict = {}
+    try:
+        if isinstance(req_body_dict, dict):
+            session_key = _gemini_session_key(req_body_dict, headers)
+            prompt_context = _extract_gemini_prompt_context(req_body_dict, url)
+            fn_responses = _extract_gemini_function_responses(body)
+            if fn_responses:
+                await _resolve_gemini_pending_edits(session_key, fn_responses, provider)
+    except Exception:
+        logger.debug("gemini adapter: request body parse failed", exc_info=True)
+    return session_key, prompt_context
+
+
+def _build_routing_info(current_model: str, target_model: str, tier: str, policy: dict) -> dict:
+    return {
+        "originalModel": current_model,
+        "routedModel": target_model,
+        "tier": tier,
+        "policyId": str(policy.get("id", "")),
+        "savings_estimate_usd": 0.0,
+    }
+
+
+async def _apply_routing_policy(
+    req_body_dict: "dict | None", provider: str, body: bytes
+) -> tuple[bytes, "dict | None"]:
+    """Rewrite the request model per the workspace's routing policy, if any.
+
+    Returns the (possibly rewritten) body and routing metadata for logging.
+    Errors are swallowed — a routing failure must never block the request.
+    """
+    routing_info: dict | None = None
+    try:
+        if req_body_dict and provider in ("anthropic", "openai", "gemini"):
+            tier = classify_request(req_body_dict)
+            policy = await get_policy(WORKSPACE_ID, provider)
+            if policy:
+                target_model = policy.get("mappings", {}).get(tier)
+                current_model = req_body_dict.get("model", "")
+                if target_model and target_model != current_model and current_model:
+                    req_body_dict["model"] = target_model
+                    body = json.dumps(req_body_dict).encode()
+                    routing_info = _build_routing_info(current_model, target_model, tier, policy)
+                    logger.info(
+                        "routing: %s -> %s (tier=%s workspace=%s)",
+                        current_model, target_model, tier, WORKSPACE_ID,
+                    )
+    except Exception as _routing_err:
+        logger.warning("routing error (request forwarded unchanged): %s", _routing_err)
+    return body, routing_info
+
+
 async def proxy_request(request: Request, path: str) -> Response:
     safe_path = _sanitize_path(path)
 
@@ -655,86 +824,41 @@ async def proxy_request(request: Request, path: str) -> Response:
     except Exception:
         req_body_dict = None
 
+    req_headers = dict(request.headers)
+
     anthropic_session_key = ""
     anthropic_prompt_context: dict = {}
     if provider == "anthropic" and body:
-        try:
-            if isinstance(req_body_dict, dict):
-                anthropic_session_key = _session_key(req_body_dict, dict(request.headers))
-                anthropic_prompt_context = _extract_anthropic_prompt_context(req_body_dict)
-                tool_results = _extract_anthropic_tool_results(body)
-                if tool_results:
-                    await _resolve_pending_edits(anthropic_session_key, tool_results, provider)
-        except Exception:
-            logger.debug("anthropic adapter: request body parse failed", exc_info=True)
+        anthropic_session_key, anthropic_prompt_context = await _process_anthropic_body(
+            req_body_dict, req_headers, body, provider
+        )
 
     is_codex = provider == "openai" and _is_codex_responses_path(url)
     codex_session_key = ""
     codex_prompt_context: dict = {}
     if is_codex and body:
-        try:
-            if isinstance(req_body_dict, dict):
-                codex_session_key = _codex_session_key(req_body_dict, dict(request.headers))
-                codex_prompt_context = _extract_codex_prompt_context(req_body_dict)
-                fc_outputs = _extract_codex_function_call_outputs(body)
-                if fc_outputs:
-                    await _resolve_codex_pending_edits(codex_session_key, fc_outputs, provider)
-        except Exception:
-            logger.debug("codex adapter: request body parse failed", exc_info=True)
+        codex_session_key, codex_prompt_context = await _process_codex_body(
+            req_body_dict, req_headers, body, provider
+        )
 
     is_openai_chat = provider == "openai" and not is_codex and _is_openai_chat_path(url)
     openai_chat_session_key = ""
     openai_chat_prompt_context: dict = {}
     if is_openai_chat and body:
-        try:
-            if isinstance(req_body_dict, dict):
-                openai_chat_session_key = _openai_chat_session_key(req_body_dict, dict(request.headers))
-                openai_chat_prompt_context = _extract_openai_chat_prompt_context(req_body_dict)
-                oai_tool_results = _extract_openai_tool_results(body)
-                if oai_tool_results:
-                    await _resolve_openai_pending_edits(openai_chat_session_key, oai_tool_results, provider)
-        except Exception:
-            logger.debug("openai chat adapter: request body parse failed", exc_info=True)
+        openai_chat_session_key, openai_chat_prompt_context = await _process_openai_chat_body(
+            req_body_dict, req_headers, body, provider
+        )
 
     gemini_session_key = ""
     gemini_prompt_context: dict = {}
     if provider == "gemini" and body:
-        try:
-            if isinstance(req_body_dict, dict):
-                gemini_session_key = _gemini_session_key(req_body_dict, dict(request.headers))
-                gemini_prompt_context = _extract_gemini_prompt_context(req_body_dict, url)
-                fn_responses = _extract_gemini_function_responses(body)
-                if fn_responses:
-                    await _resolve_gemini_pending_edits(gemini_session_key, fn_responses, provider)
-        except Exception:
-            logger.debug("gemini adapter: request body parse failed", exc_info=True)
+        gemini_session_key, gemini_prompt_context = await _process_gemini_body(
+            req_body_dict, req_headers, body, url, provider
+        )
 
-    file_path = extract_file_path(dict(request.headers), req_body_dict)
+    file_path = extract_file_path(req_headers, req_body_dict)
 
-    routing_info: dict | None = None
-    try:
-        if req_body_dict and provider in ("anthropic", "openai", "gemini"):
-            tier = classify_request(req_body_dict)
-            policy = await get_policy(WORKSPACE_ID, provider)
-            if policy:
-                target_model = policy.get("mappings", {}).get(tier)
-                current_model = req_body_dict.get("model", "")
-                if target_model and target_model != current_model and current_model:
-                    req_body_dict["model"] = target_model
-                    body = json.dumps(req_body_dict).encode()
-                    routing_info = {
-                        "originalModel": current_model,
-                        "routedModel": target_model,
-                        "tier": tier,
-                        "policyId": str(policy.get("id", "")),
-                        "savings_estimate_usd": 0.0,
-                    }
-                    logger.info(
-                        "routing: %s -> %s (tier=%s workspace=%s)",
-                        current_model, target_model, tier, WORKSPACE_ID,
-                    )
-    except Exception as _routing_err:
-        logger.warning("routing error (request forwarded unchanged): %s", _routing_err)
+    body, routing_info = await _apply_routing_policy(req_body_dict, provider, body)
 
     _shared_client: httpx.AsyncClient | None = getattr(request.app.state, "proxy_http_client", None)
 

@@ -35,6 +35,70 @@ With LineageLens:     prompt="add rate limiting…" model=claude-opus-4-5 file=a
 
 ---
 
+## Start here: scan a repo you have never instrumented
+
+Every other capture path describes code written *after* you install something. If
+your team already shipped a year of AI-assisted code, that is the code you most
+need to account for — and it is exactly the code an install cannot reach.
+
+`lineagelens scan` reads it out of git history instead. No install, no backend, no
+prior capture, read-only:
+
+```bash
+npx lineagelens scan .
+```
+
+> **Not on npm yet.** The `npx` form above is what ships once
+> [`lineagelens-cli/`](lineagelens-cli/) is published. Until then, run it from a clone —
+> one dependency, a few seconds:
+>
+> ```bash
+> git clone https://github.com/karnati-praveen/lineagelens
+> cd lineagelens/lineagelens-cli && npm install
+> node bin/lineagelens-cli.js scan /path/to/your-repo
+> ```
+>
+> Requires Node ≥ 18.17 and `git` on `PATH`. Nothing else — no Docker, no database,
+> no account.
+
+It finds the commits in which an AI tool declared its own authorship (Claude Code,
+Copilot, Cursor, Codex, Gemini CLI, Aider, Devin, Windsurf, Jules and others — see
+[`lineagelens-cli/src/scan/lineagelens-cli-scan-signatures.js`](lineagelens-cli/src/scan/lineagelens-cli-scan-signatures.js)),
+blames HEAD to count only the lines that actually **survived** to today, and reports
+which risk surfaces those lines sit on.
+
+```
+── lineagelens scan ─ acme-api @ main
+
+  AI-written code live in this repo right now — at least
+
+    ██████████░░░░░░░░░░░░░░  ≥41.8%  12,447 of 29,780 surviving lines
+    across 214 of 1,102 tracked files · 1,204 AI commits · 2025-11-02 → 2026-07-19
+
+  ⚠ This number is a floor, not a measurement.
+    · only 1,204 of 4,182 commits (28.8%) declare an AI tool, so any AI work
+      committed without a trailer is invisible to this scan
+
+  Who wrote it
+    Claude Code       9,802 lines   1,204 commits · 188 files  claude-opus-4-5
+    GitHub Copilot    1,930 lines     311 commits ·  52 files
+
+  Risk surfaces this AI code sits on  (local signals, not SAST)
+    auth              1,204 lines   9 files
+    secrets             318 lines   4 files
+```
+
+**What it deliberately does not do.** It never reports unattributed lines as
+human-written — only as carrying no AI signal. When AI tooling is configured in the
+repo but few commits declare it, the scan labels its own headline a **floor, not a
+measurement** rather than letting a reassuring low percentage stand. And it states
+plainly what a retroactive read can never recover: the prompt, the model reasoning,
+whether the edit was accepted or rejected, and any review state. Those require the
+extension or the proxy, running at the time the code was written.
+
+`--md` emits a paste-ready inventory for a PR or write-up; the global `--json` flag
+emits the full result including the `assurance` and `coverage` blocks.
+
 ## Operating modes
 
 | Mode | Who it's for | Storage | Captures prompt + model | Start command |

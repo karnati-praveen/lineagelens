@@ -16,9 +16,10 @@
   "exclude": [
     "node_modules",
     ".vscode-test",
-    "lineagelens-ad",
     "lineagelens-base-extension",
+    "lineagelens-demo",
     "lineagelens-src/test",
-    "__mocks__"
+    "__mocks__",
+    "reproduction_tests"
   ]
 }

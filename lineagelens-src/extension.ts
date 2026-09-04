@@ -1,4 +1,4 @@
-﻿import * as http from 'node:http';
+import * as http from 'node:http';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { TraceLinePanelManager } from './traceLinePanel';
@@ -513,7 +513,9 @@ export function activate(context: vscode.ExtensionContext): void {
       const targetUuid = uuid ?? await vscode.window.showInputBox({ prompt: 'Enter record UUID to explain' });
       if (!targetUuid) { return; }
       // Route to existing showProvenance or explain flow
-      void vscode.commands.executeCommand('lineagelens.showProvenance', targetUuid);
+      vscode.commands.executeCommand('lineagelens.showProvenance', targetUuid).then(undefined, (error: unknown) => {
+        log('Explain record navigation failed: ' + toErrorMessage(error));
+      });
     }),
     // lineagelens.runOnboarding — re-run the setup wizard
     vscode.commands.registerCommand('lineagelens.runOnboarding', async () => {
@@ -552,13 +554,17 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!seenWelcome) {
         await runWelcomeFlow(context);
       } else {
-        void vscode.window.showInformationMessage(
+        vscode.window.showInformationMessage(
           'LineageLens tracks AI-generated code — model, prompt, and timestamp. All features work locally with no account required.',
           'Show my AI code'
         ).then(action => {
           if (action === 'Show my AI code') {
-            void vscode.commands.executeCommand('aiInsertionDetector.openInsightsDashboard');
+            vscode.commands.executeCommand('aiInsertionDetector.openInsightsDashboard').then(undefined, (error: unknown) => {
+              log('Opening insights dashboard failed: ' + toErrorMessage(error));
+            });
           }
+        }, (error: unknown) => {
+          log('Welcome info message failed: ' + toErrorMessage(error));
         });
       }
     }),
@@ -577,7 +583,9 @@ export function activate(context: vscode.ExtensionContext): void {
         event.affectsConfiguration(CONFIG_SECTION + '.localProxy.retentionMs')
       ) {
         if (runtimeInitialized) {
-          void syncLocalProxyLifecycle();
+          syncLocalProxyLifecycle().catch((error: unknown) => {
+            log('Local proxy lifecycle sync failed: ' + toErrorMessage(error));
+          });
         } else {
           log('Local proxy configuration updated. Changes will apply when runtime initializes.');
         }
@@ -585,9 +593,13 @@ export function activate(context: vscode.ExtensionContext): void {
 
       if (event.affectsConfiguration(MODE_CONFIG_SECTION + '.mode')) {
         if (runtimeInitialized) {
-          void initializeStorageService(context, activeUri, true);
+          initializeStorageService(context, activeUri, true).catch((error: unknown) => {
+            log('Storage service initialization failed: ' + toErrorMessage(error));
+          });
         } else {
-          void prepareStorageService(context, activeUri, true);
+          prepareStorageService(context, activeUri, true).catch((error: unknown) => {
+            log('Storage service preparation failed: ' + toErrorMessage(error));
+          });
         }
 
         updateStatusBarIndicator(activeUri);
@@ -598,13 +610,17 @@ export function activate(context: vscode.ExtensionContext): void {
         const startupMode = getDetectorConfig(activeUri).startupMode;
 
         if (startupMode === 'eager' && !runtimeInitialized) {
-          void ensureRuntimeInitialized(activeUri);
+          ensureRuntimeInitialized(activeUri).catch((error: unknown) => {
+            log('Runtime initialization failed: ' + toErrorMessage(error));
+          });
         }
       }
 
       if (isStorageConfigurationChange(event)) {
         if (runtimeInitialized) {
-          void activeStorageService?.handleConfigurationChanged(activeUri);
+          activeStorageService?.handleConfigurationChanged(activeUri)?.catch((error: unknown) => {
+            log('Storage configuration change handling failed: ' + toErrorMessage(error));
+          });
         }
       }
 
@@ -613,15 +629,21 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   const activeUri = vscode.window.activeTextEditor?.document.uri;
-  void prepareStorageService(context, activeUri, true);
+  prepareStorageService(context, activeUri, true).catch((error: unknown) => {
+    log('Storage service preparation failed: ' + toErrorMessage(error));
+  });
 
   const startupMode = getDetectorConfig(activeUri).startupMode;
   if (startupMode === 'eager') {
-    void ensureRuntimeInitialized(activeUri);
+    ensureRuntimeInitialized(activeUri).catch((error: unknown) => {
+      log('Runtime initialization failed: ' + toErrorMessage(error));
+    });
   }
 
   // First-run welcome + optional email capture (once per install, non-blocking)
-  void runWelcomeFlow(context);
+  runWelcomeFlow(context).catch((error: unknown) => {
+    log('Welcome flow failed: ' + toErrorMessage(error));
+  });
 
   log('AI Insertion Detector activated in ' + startupMode + ' startup mode.');
 }
@@ -1309,11 +1331,14 @@ function queueDocumentChangeProcessing(event: vscode.TextDocumentChangeEvent): P
 
   documentChangeQueues.set(key, nextWork);
 
-  void nextWork.finally(() => {
+  // Rejection is already handled by the .catch() the caller attaches to the
+  // returned nextWork below; this derived promise just needs its own no-op
+  // catch so it doesn't surface as an unhandled rejection.
+  nextWork.finally(() => {
     if (documentChangeQueues.get(key) === nextWork) {
       documentChangeQueues.delete(key);
     }
-  });
+  }).catch(() => {});
 
   return nextWork;
 }
@@ -1914,7 +1939,7 @@ async function checkConfiguration(): Promise<void> {
   if (issues.length === 0) {
     vscode.window.showInformationMessage('LineageLens: All checks passed — ' + ok.join(', '));
   } else {
-    void vscode.window.showWarningMessage(
+    vscode.window.showWarningMessage(
       'LineageLens: ' + String(issues.length) + ' configuration issue(s)',
       'Show Details'
     ).then(action => {
@@ -1930,6 +1955,8 @@ async function checkConfiguration(): Promise<void> {
           lines.map(l => escapeHtml(l)).join('\n') +
           '</pre></body></html>';
       }
+    }, (error: unknown) => {
+      log('Configuration health warning message failed: ' + toErrorMessage(error));
     });
   }
 }
@@ -2051,3 +2078,12 @@ function log(message: string, fields?: Record<string, unknown>): void {
     outputChannel?.appendLine(message);
   }
 }
+
+export {
+  handleTextDocumentChange,
+  previousDocumentTexts,
+  countApproximateLines,
+  extractInsertedChunksFromDiff
+};
+
+

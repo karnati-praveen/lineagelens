@@ -34,6 +34,8 @@ from app.services.integrity_service import (
     compute_record_hash,
 )
 
+_META_EVIDENCE_KEY = "lineagelens.evidence"
+
 
 def _extract_commit(payload: dict, source: dict) -> str | None:
     """Find a VCS commit/revision anywhere the capture pipeline might place it."""
@@ -145,7 +147,7 @@ def record_to_agent_trace(
     if conf_score is not None or conf_level is not None:
         metadata["lineagelens.confidence"] = {"score": conf_score, "level": conf_level}
     if evidence_raw:
-        metadata["lineagelens.evidence"] = [e for e in evidence_raw if isinstance(e, dict)]
+        metadata[_META_EVIDENCE_KEY] = [e for e in evidence_raw if isinstance(e, dict)]
     if preview is not None:
         metadata["lineagelens.insertedCodePreview"] = preview
     if net_lines is not None:
@@ -200,7 +202,7 @@ def agent_trace_to_provenance_payload(
     meta = doc.metadata or {}
     ll_tool = meta.get("lineagelens.tool") or {}
     ll_conf = meta.get("lineagelens.confidence") or {}
-    ll_evidence = meta.get("lineagelens.evidence") or []
+    ll_evidence = meta.get(_META_EVIDENCE_KEY) or []
 
     model_name = (contributor.model_id if contributor else None)
     net_lines = (first_range.end_line - first_range.start_line + 1) if first_range else None
@@ -252,7 +254,7 @@ def compute_import_hash(
     the first record in the batch).
     """
     meta = doc.metadata or {}
-    ll_evidence = meta.get("lineagelens.evidence") or []
+    ll_evidence = meta.get(_META_EVIDENCE_KEY) or []
 
     surrogate_prompt = {
         "tool": (doc.tool.model_dump(exclude_none=True) if doc.tool else {}),

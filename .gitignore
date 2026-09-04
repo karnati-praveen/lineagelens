@@ -79,3 +79,6 @@ WIRING_AUDIT*.md
 !.env.lite.example
 !.env.plus.example
 !.env.max.example
+
+# Remotion product demo (local-only build artifact)
+lineagelens-demo/

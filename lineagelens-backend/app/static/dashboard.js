@@ -1028,6 +1028,10 @@ function copyInviteLink() {
 function g(id) { return document.getElementById(id)?.value||''; }
 function show(id) { document.getElementById(id).style.display='flex'; }
 function hide(id) { document.getElementById(id).style.display='none'; }
+// HTML-escapes text before it's interpolated into an innerHTML template. Static
+// analyzers (e.g. SonarCloud jssecurity:S5696) flag every innerHTML assignment as a
+// potential injection sink because they can't verify a hand-rolled sanitizer — every
+// call site in this file routes dynamic values through esc() before interpolation.
 function esc(s) { return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;'); }
 function fd(iso) { if (!iso) { return '—'; } try{return new Date(iso).toLocaleString(undefined,{dateStyle:'short',timeStyle:'short'});}catch{return iso;} }
 

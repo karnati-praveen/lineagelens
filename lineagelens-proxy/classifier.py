@@ -28,6 +28,36 @@ _CODE_FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
 
 # ── text extraction helpers ──────────────────────────────────────────────────
 
+def _text_from_blocks(blocks: list) -> list[str]:
+    """Extract .text from a list of {"text": str} blocks, skipping non-conforming entries."""
+    return [b["text"] for b in blocks if isinstance(b, dict) and isinstance(b.get("text"), str)]
+
+
+def _extract_content_text(content: object) -> list[str]:
+    """Normalize a messages[].content value (str or list-of-blocks) to text parts."""
+    if isinstance(content, str):
+        return [content]
+    if isinstance(content, list):
+        return _text_from_blocks(content)
+    return []
+
+
+def _extract_system_field_text(body: dict) -> list[str]:
+    """Anthropic / OpenAI: top-level system string or list-of-blocks."""
+    system = body.get("system") or body.get("systemPrompt", "")
+    return _extract_content_text(system)
+
+
+def _extract_system_instruction_text(body: dict) -> list[str]:
+    """Gemini: systemInstruction as a {parts: [...]} dict or a plain string."""
+    sys_instr = body.get("systemInstruction") or {}
+    if isinstance(sys_instr, dict):
+        return _text_from_blocks(sys_instr.get("parts", []) or [])
+    if isinstance(sys_instr, str):
+        return [sys_instr]
+    return []
+
+
 def _get_all_text(body: dict) -> str:
     """Concatenate all text content in the request body (all roles, all parts)."""
     parts: list[str] = []
@@ -36,39 +66,16 @@ def _get_all_text(body: dict) -> str:
     for content in body.get("contents", []) or []:
         if not isinstance(content, dict):
             continue
-        for part in content.get("parts", []) or []:
-            if isinstance(part, dict) and isinstance(part.get("text"), str):
-                parts.append(part["text"])
+        parts.extend(_text_from_blocks(content.get("parts", []) or []))
 
     # Anthropic / OpenAI: messages[].content
     for msg in body.get("messages", []) or []:
         if not isinstance(msg, dict):
             continue
-        content = msg.get("content")
-        if isinstance(content, str):
-            parts.append(content)
-        elif isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and isinstance(block.get("text"), str):
-                    parts.append(block["text"])
+        parts.extend(_extract_content_text(msg.get("content")))
 
-    # Anthropic / OpenAI: top-level system string or list-of-blocks
-    system = body.get("system") or body.get("systemPrompt", "")
-    if isinstance(system, str):
-        parts.append(system)
-    elif isinstance(system, list):
-        for block in system:
-            if isinstance(block, dict) and isinstance(block.get("text"), str):
-                parts.append(block["text"])
-
-    # Gemini: systemInstruction
-    sys_instr = body.get("systemInstruction") or {}
-    if isinstance(sys_instr, dict):
-        for part in sys_instr.get("parts", []) or []:
-            if isinstance(part, dict) and isinstance(part.get("text"), str):
-                parts.append(part["text"])
-    elif isinstance(sys_instr, str):
-        parts.append(sys_instr)
+    parts.extend(_extract_system_field_text(body))
+    parts.extend(_extract_system_instruction_text(body))
 
     return "\n".join(parts)
 
@@ -77,35 +84,15 @@ def _get_system_text(body: dict) -> str:
     """Extract only the system / instruction text."""
     parts: list[str] = []
 
-    system = body.get("system") or body.get("systemPrompt", "")
-    if isinstance(system, str):
-        parts.append(system)
-    elif isinstance(system, list):
-        for block in system:
-            if isinstance(block, dict) and isinstance(block.get("text"), str):
-                parts.append(block["text"])
-
-    # Gemini: systemInstruction
-    sys_instr = body.get("systemInstruction") or {}
-    if isinstance(sys_instr, dict):
-        for part in sys_instr.get("parts", []) or []:
-            if isinstance(part, dict) and isinstance(part.get("text"), str):
-                parts.append(part["text"])
-    elif isinstance(sys_instr, str):
-        parts.append(sys_instr)
+    parts.extend(_extract_system_field_text(body))
+    parts.extend(_extract_system_instruction_text(body))
 
     # Anthropic / OpenAI: messages with role "system" or "developer"
     for msg in body.get("messages", []) or []:
         if not isinstance(msg, dict):
             continue
         if msg.get("role") in ("system", "developer"):
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                parts.append(content)
-            elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and isinstance(block.get("text"), str):
-                        parts.append(block["text"])
+            parts.extend(_extract_content_text(msg.get("content", "")))
 
     return "\n".join(parts)
 

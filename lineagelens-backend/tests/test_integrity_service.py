@@ -215,13 +215,14 @@ def test_solo_mode_skips_hash_chain(monkeypatch) -> None:
         def scalar_one_or_none(self): return None
 
     class _Session:
+        """Fake AsyncSession double — only `add`/`execute` need real behavior for this test."""
         def __init__(self): self.added = []
         async def execute(self, _s): return _Exec()
         def add(self, r): self.added.append(r)
-        async def flush(self): pass
-        async def commit(self): pass
-        async def rollback(self): pass
-        async def refresh(self, r): pass
+        async def flush(self): pass  # no-op: fake session has nothing to flush
+        async def commit(self): pass  # no-op: fake session has nothing to commit
+        async def rollback(self): pass  # no-op: fake session has nothing to roll back
+        async def refresh(self, r): pass  # no-op: fake session has nothing to refresh from
 
     attach_calls = []
 

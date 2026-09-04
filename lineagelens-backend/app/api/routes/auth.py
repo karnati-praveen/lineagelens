@@ -58,6 +58,8 @@ _DUMMY_HASH = (
     "$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"  # 43 chars → 32 bytes
 )
 
+_INVALID_CREDENTIALS_DETAIL = "Invalid username or password."
+
 
 @router.post("/token", dependencies=[Depends(require_auth_rate_limit)])
 async def token_login(
@@ -83,7 +85,7 @@ async def token_login(
     if user is None or not password_ok or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password.",
+            detail=_INVALID_CREDENTIALS_DETAIL,
         )
 
     return await issue_token_response(session, user, settings)
@@ -165,7 +167,7 @@ async def login_user(
     if user is None or not password_ok or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password.",
+            detail=_INVALID_CREDENTIALS_DETAIL,
         )
 
     requested_workspace = normalize_workspace_id(payload.workspace_id)
