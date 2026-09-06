@@ -6,18 +6,16 @@ orders of magnitude faster once the table exceeds ~50k records.
 
 Revision ID: 202501210001
 Revises: 202501200001
-Create Date: 2026-05-03 00:00:01.000000
+Create Date: 2025-01-21 00:01:00.000000
 """
-
-from collections.abc import Sequence
 
 from alembic import op
 
 
-revision: str = "202501210001"
-down_revision: str | None = "202501200001"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+revision = "202501210001"
+down_revision = "202501200001"
+branch_labels = None
+depends_on = None
 
 
 def upgrade() -> None:
