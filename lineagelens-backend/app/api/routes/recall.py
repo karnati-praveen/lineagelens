@@ -36,19 +36,18 @@ logger = logging.getLogger(__name__)
 
 class RecallCriteria(BaseModel):
     model: str | None = None
-    modelVersion: str | None = Field(default=None, alias="modelVersion")
-    promptPatternRegex: str | None = Field(default=None, alias="promptPatternRegex")
-    dateFrom: datetime | None = Field(default=None, alias="dateFrom")
-    dateTo: datetime | None = Field(default=None, alias="dateTo")
-    recordUuid: str | None = Field(default=None, alias="recordUuid")
+    modelVersion: str | None = None
+    promptPatternRegex: str | None = None
+    dateFrom: datetime | None = None
+    dateTo: datetime | None = None
+    recordUuid: str | None = None
 
     model_config = ConfigDict(populate_by_name=True)
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
-def _get_neo4j(request):
-    from fastapi import Request as _Request
+def _get_neo4j(request: Request):
     return getattr(request.app.state, "neo4j_service", None)
 
 
@@ -85,11 +84,9 @@ async def preview_recall(
     criteria: RecallCriteria,
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(require_role("admin"))],
-    request: "Request",
+    request: Request,
 ) -> dict:
     """Dry-run: return matched records and blast-radius count without mutating state."""
-    from fastapi import Request  # local to keep import clean
-
     matched = await find_affected_records(
         session, auth.workspace_id, **_criteria_to_kwargs(criteria)
     )
@@ -114,11 +111,9 @@ async def create_recall(
     criteria: RecallCriteria,
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(require_role("admin"))],
-    request: "Request",
+    request: Request,
 ) -> dict:
     """Open a recall campaign and flag matched records."""
-    from fastapi import Request
-
     matched = await find_affected_records(
         session, auth.workspace_id, **_criteria_to_kwargs(criteria)
     )
@@ -150,11 +145,9 @@ async def quarantine_campaign(
     campaign_id: int,
     session: Annotated[AsyncSession, Depends(get_db_session)],
     auth: Annotated[AuthContext, Depends(require_role("admin"))],
-    request: "Request",
+    request: Request,
 ) -> dict:
     """Quarantine all records flagged by this campaign plus their blast-radius descendants."""
-    from fastapi import Request
-
     campaign = await _get_campaign_or_404(session, campaign_id, auth.workspace_id)
     if campaign.status != "open":
         raise HTTPException(status_code=409, detail="Campaign is not open.")

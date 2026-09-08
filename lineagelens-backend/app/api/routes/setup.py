@@ -75,7 +75,16 @@ async def run_setup(
     # request hits IntegrityError when it tries to insert the same sentinel.
     # OperationalError ("database is locked") is also caught to handle the case
     # where the first request still holds SQLite's write lock.
-    if not settings.is_sqlite:
+    bind = getattr(session, "bind", None)
+    if bind is None and hasattr(session, "get_bind"):
+        try:
+            bind = session.get_bind()
+        except Exception:
+            bind = None
+    dialect_name = getattr(getattr(bind, "dialect", None), "name", None)
+    is_pg = (dialect_name == "postgresql") if dialect_name else (not settings.is_sqlite)
+
+    if is_pg:
         await session.execute(text("SELECT pg_advisory_xact_lock(6079875813)"))
         if await is_setup_complete(session):
             raise HTTPException(

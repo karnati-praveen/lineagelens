@@ -26,6 +26,7 @@ def _build_settings(**kw) -> Settings:
     return Settings.model_validate(
         {
             "APP_ENV": "test",
+            "DATABASE_URL": "sqlite+aiosqlite:///:memory:",
             "JWT_SECRET_KEY": "a" * 40,
             "BACKEND_CORS_ORIGINS": "http://localhost:3000",
             **kw,
