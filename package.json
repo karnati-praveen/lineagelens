@@ -56,6 +56,16 @@
         "title": "Start LineageLens"
       },
       {
+        "command": "lineagelens.connectToServer",
+        "title": "LineageLens: Connect to Server",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.disconnectServer",
+        "title": "LineageLens: Disconnect from Server",
+        "category": "LineageLens"
+      },
+      {
         "command": "aiInsertionDetector.toggleFeature",
         "title": "AI Insertion Detector: Toggle Feature"
       },

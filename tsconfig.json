@@ -13,12 +13,16 @@
     "esModuleInterop": true,
     "skipLibCheck": true
   },
+  "include": [
+    "lineagelens-src/**/*"
+  ],
   "exclude": [
     "node_modules",
     ".vscode-test",
     "lineagelens-ad",
     "lineagelens-base-extension",
     "lineagelens-src/test",
+    "lineagelens-demo",
     "__mocks__"
   ]
 }

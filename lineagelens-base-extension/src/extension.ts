@@ -17,6 +17,7 @@ import { buildRecallSet, buildRecallReport } from './risk/recall';
 import { scanInstructionFiles, InstructionFile } from './risk/instructionScan';
 import { runWelcomeFlow, promptAndSaveEmail, removeEmail } from './welcomeFlow';
 import { openWelcomePanel } from './welcome';
+import { runBaseConnectWizard, disconnectBaseServer } from './sync/connectWizard';
 import { CaptureCodeLensProvider } from './ide/codeLens';
 import { CaptureHoverProvider } from './ide/hover';
 import { CaptureDecorations } from './ide/decorations';
@@ -598,6 +599,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.commands.registerCommand('lineagelens.removeEmail', async () => {
       await removeEmail(context);
+    }),
+    vscode.commands.registerCommand('lineagelensBase.connectToServer', async (opts?: import('./sync/connectWizard').BaseConnectWizardOptions) => {
+      await runBaseConnectWizard(context, undefined, opts);
+    }),
+    vscode.commands.registerCommand('lineagelensBase.disconnectServer', async () => {
+      await disconnectBaseServer(context);
+    }),
+    vscode.commands.registerCommand('lineagelens.connectToServer', async (opts?: import('./sync/connectWizard').BaseConnectWizardOptions) => {
+      await runBaseConnectWizard(context, undefined, opts);
+    }),
+    vscode.commands.registerCommand('lineagelens.disconnectServer', async () => {
+      await disconnectBaseServer(context);
+    }),
+    vscode.window.registerUriHandler({
+      handleUri(uri: vscode.Uri) {
+        const path = uri.path.replace(/^\/+/, '');
+        if (path === 'connect') {
+          const params = new URLSearchParams(uri.query);
+          const code = params.get('code') || undefined;
+          const server = params.get('server') || undefined;
+          void runBaseConnectWizard(context, undefined, { prefilledCode: code, prefilledServer: server });
+        }
+      }
     }),
   );
 }

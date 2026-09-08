@@ -22,6 +22,8 @@ const WELCOME_COMMANDS = new Set<string>([
   'lineagelens.toggleFocusMode',
   'lineagelens.showModeInfo',
   'lineagelens.saveEmail',
+  'lineagelensBase.connectToServer',
+  'lineagelensBase.disconnectServer',
 ]);
 
 let welcomePanel: vscode.WebviewPanel | undefined;
@@ -288,6 +290,7 @@ function renderHtml(webview: vscode.Webview): string {
     </ol>
     <div class="cta" style="justify-content:flex-start;margin-top:16px">
       <button class="btn" data-act="docs">How to start the proxy ↗</button>
+      <button class="btn sec" data-cmd="lineagelensBase.connectToServer">Connect to Server</button>
       <button class="btn sec" data-cmd="lineagelens.showModeInfo">Check my current mode</button>
       <button class="btn sec" data-act="settings">Open settings</button>
     </div>

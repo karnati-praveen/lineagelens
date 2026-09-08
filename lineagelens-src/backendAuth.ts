@@ -13,6 +13,8 @@ const DEFAULT_AUTO_AUTH_ON_ACTIVATE = true;
 const SECRET_BACKEND_ACCESS_TOKEN = 'aiInsertionDetector.backend.accessToken';
 const SECRET_BACKEND_REFRESH_TOKEN = 'aiInsertionDetector.backend.refreshToken';
 const LEGACY_SECRET_BACKEND_JWT = 'aiInsertionDetector.backend.jwt';
+export const SECRET_BACKEND_API_KEY = 'aiInsertionDetector.backend.apiKey';
+export const SECRET_BACKEND_WORKSPACE_ID = 'aiInsertionDetector.backend.workspaceId';
 
 export type BackendAuthConfig = {
   baseUrl: string;
@@ -69,6 +71,11 @@ export class BackendAuthSession {
     interactive = true,
     forceRefresh = false
   ): Promise<string | undefined> {
+    const apiKey = await this.context.secrets.get(SECRET_BACKEND_API_KEY);
+    if (apiKey?.trim()) {
+      return 'Bearer ' + apiKey.trim();
+    }
+
     const accessToken = await this.ensureAccessToken({ resource, interactive, forceRefresh });
     if (!accessToken) {
       return undefined;
@@ -78,6 +85,11 @@ export class BackendAuthSession {
   }
 
   public async getWorkspaceId(resource?: vscode.Uri, interactive = true): Promise<string | undefined> {
+    const storedWorkspaceId = await this.context.secrets.get(SECRET_BACKEND_WORKSPACE_ID);
+    if (storedWorkspaceId?.trim()) {
+      return storedWorkspaceId.trim();
+    }
+
     const accessToken = await this.ensureAccessToken({ resource, interactive, forceRefresh: false });
     if (!accessToken) {
       return undefined;
@@ -96,6 +108,19 @@ export class BackendAuthSession {
   public async clearStoredTokens(): Promise<void> {
     await this.context.secrets.delete(SECRET_BACKEND_ACCESS_TOKEN);
     await this.context.secrets.delete(SECRET_BACKEND_REFRESH_TOKEN);
+    await this.context.secrets.delete(SECRET_BACKEND_API_KEY);
+    await this.context.secrets.delete(SECRET_BACKEND_WORKSPACE_ID);
+  }
+
+  public async getStoredApiKey(): Promise<string | undefined> {
+    return (await this.context.secrets.get(SECRET_BACKEND_API_KEY))?.trim() || undefined;
+  }
+
+  public async setApiKey(apiKey: string, workspaceId?: string): Promise<void> {
+    await this.context.secrets.store(SECRET_BACKEND_API_KEY, apiKey.trim());
+    if (workspaceId) {
+      await this.context.secrets.store(SECRET_BACKEND_WORKSPACE_ID, workspaceId.trim());
+    }
   }
 
   private async ensureAccessToken(input: {

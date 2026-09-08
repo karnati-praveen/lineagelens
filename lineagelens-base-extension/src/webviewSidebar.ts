@@ -30,6 +30,8 @@ const SIDEBAR_COMMANDS = new Set<string>([
   'lineagelens.toggleFocusMode',
   'lineagelens.exportJson',
   'lineagelens.exportAgentTrace',
+  'lineagelensBase.connectToServer',
+  'lineagelensBase.disconnectServer',
 ]);
 
 function firstMeaningfulLine(code: string): string {
@@ -113,7 +115,13 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
       workspaceFolder: r.workspaceFolder,
       preview: firstMeaningfulLine(r.insertedCode ?? ''),
     }));
-    this.view.webview.postMessage({ type: 'data', records: cards });
+
+    const cfg = vscode.workspace.getConfiguration('lineagelensBase');
+    const backendUrl = (cfg.get<string>('backendUrl', '') ?? '').trim();
+    const workspaceId = (cfg.get<string>('workspaceId', '') ?? '').trim();
+    const server = backendUrl ? { backendUrl, workspaceId: workspaceId || 'default' } : null;
+
+    this.view.webview.postMessage({ type: 'data', records: cards, server });
   }
 
   private html(webview: vscode.Webview): string {
@@ -286,6 +294,13 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
   <div class="toolbar">
+    <div id="server-bar" style="display:flex;align-items:center;justify-content:space-between;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.04);border:1px solid var(--vscode-widget-border, rgba(255,255,255,0.08));font-size:11px;margin-bottom:2px;">
+      <span id="server-info" style="display:inline-flex;align-items:center;gap:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+        <span id="server-dot" style="width:7px;height:7px;border-radius:50%;background:#8a8a8a;flex-shrink:0;"></span>
+        <span id="server-text" style="color:var(--vscode-descriptionForeground);">Local Mode</span>
+      </span>
+      <button id="server-act-btn" class="tool-btn" data-cmd="lineagelensBase.connectToServer" style="padding:1px 6px;font-size:10px;">Connect</button>
+    </div>
     <label class="search">
       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
         <circle cx="7" cy="7" r="4.5"/><path d="M11 11l3.5 3.5"/>
@@ -474,7 +489,29 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
 
       window.addEventListener('message', (ev) => {
         const msg = ev.data;
-        if (msg && msg.type === 'data') { RECORDS = msg.records || []; render(); }
+        if (msg && msg.type === 'data') {
+          RECORDS = msg.records || [];
+          const s = msg.server;
+          const sDot = $('server-dot');
+          const sText = $('server-text');
+          const sBtn = $('server-act-btn');
+          if (s && sDot && sText && sBtn) {
+            sDot.style.background = '#22c55e';
+            sDot.style.boxShadow = '0 0 6px rgba(34,197,94,0.6)';
+            sText.textContent = s.workspaceId + ' (' + s.backendUrl.replace(/^https?:\/\//, '') + ')';
+            sText.style.color = 'var(--vscode-foreground)';
+            sBtn.textContent = 'Disconnect';
+            sBtn.setAttribute('data-cmd', 'lineagelensBase.disconnectServer');
+          } else if (sDot && sText && sBtn) {
+            sDot.style.background = '#8a8a8a';
+            sDot.style.boxShadow = 'none';
+            sText.textContent = 'Local Mode';
+            sText.style.color = 'var(--vscode-descriptionForeground)';
+            sBtn.textContent = 'Connect';
+            sBtn.setAttribute('data-cmd', 'lineagelensBase.connectToServer');
+          }
+          render();
+        }
       });
 
       vscode.postMessage({ type: 'ready' });

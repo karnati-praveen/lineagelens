@@ -1,4 +1,4 @@
-﻿import * as http from 'node:http';
+import * as http from 'node:http';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { TraceLinePanelManager } from './traceLinePanel';
@@ -41,6 +41,8 @@ import {
 import { ProvenanceReviewerService } from './reviewer';
 import { BackendIngestClient } from './backend';
 import { BackendAuthSession } from './backendAuth';
+import { runConnectWizard, disconnectFromServer } from './connectWizard';
+import { ConnectionStatusManager } from './connectionStatus';
 import { HumanReviewDepthTracker, runAttestHumanReview } from './humanReviewAttestation';
 import { BackendStorageService } from './storage/BackendStorageService';
 import { LocalStorageService } from './storage/LocalStorageService';
@@ -241,6 +243,10 @@ export function activate(context: vscode.ExtensionContext): void {
   activeToastManager = new CaptureStatusToastManager();
   context.subscriptions.push(activeToastManager);
 
+  // Connection status bar item and health monitor
+  const connectionStatusManager = new ConnectionStatusManager(context);
+  context.subscriptions.push(connectionStatusManager);
+
   // Quick action CodeLens — always register; use a lazy proxy so it works in both startup modes
   const quickActionStorageProxy = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -308,6 +314,23 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('lineagelens.start', async () => {
       await initializeStorageService(context, vscode.window.activeTextEditor?.document.uri);
       vscode.window.showInformationMessage('LineageLens is active.');
+    }),
+    vscode.commands.registerCommand('lineagelens.connectToServer', async (opts?: import('./connectWizard').ConnectWizardOptions) => {
+      return await runConnectWizard(context, undefined, opts);
+    }),
+    vscode.commands.registerCommand('lineagelens.disconnectServer', async () => {
+      await disconnectFromServer(context);
+    }),
+    vscode.window.registerUriHandler({
+      handleUri(uri: vscode.Uri) {
+        const path = uri.path.replace(/^\/+/, '');
+        if (path === 'connect') {
+          const params = new URLSearchParams(uri.query);
+          const code = params.get('code') || undefined;
+          const server = params.get('server') || undefined;
+          void runConnectWizard(context, undefined, { prefilledCode: code, prefilledServer: server });
+        }
+      }
     }),
     vscode.commands.registerCommand('aiInsertionDetector.toggleFeature', async () => {
       await toggleFeature();

@@ -10,6 +10,8 @@ venv/
 __pycache__/
 *.pyc
 .pytest_cache/
+.pt_tmp/
+.pytest_tmp/
 .mypy_cache/
 *.egg-info/
 .coverage
@@ -41,6 +43,7 @@ cli/node_modules/
 
 # Local video/ad project
 lineagelens-ad/
+lineagelens-demo/
 
 # Launch / marketing working files
 pracodx

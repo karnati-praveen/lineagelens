@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LineageLens — Connect Client</title>
+<style>
+:root {
+  --bg: #0f1923;
+  --bg2: #162232;
+  --bg3: #1e3048;
+  --accent: #3b82f6;
+  --accent2: #60a5fa;
+  --accent-glow: rgba(59, 130, 246, 0.25);
+  --text: #e2e8f0;
+  --text2: #94a3b8;
+  --border: #2d4a6a;
+  --danger: #ef4444;
+  --danger-bg: rgba(239, 68, 68, 0.15);
+  --ok: #22c55e;
+  --ok-bg: rgba(34, 197, 94, 0.15);
+  --warning: #f59e0b;
+  --warning-bg: rgba(245, 158, 11, 0.15);
+  --r: 8px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100vh;
+  padding: 32px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.container {
+  width: 100%;
+  max-width: 880px;
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 28px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.logo-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent), #1d4ed8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 18px;
+  color: #fff;
+  box-shadow: 0 0 16px var(--accent-glow);
+}
+.logo-title h1 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+.logo-title h1 span { color: var(--accent2); }
+.logo-title p {
+  color: var(--text2);
+  font-size: 12px;
+}
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.btn-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--bg2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  text-decoration: none;
+  font-weight: 500;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+.btn-nav:hover {
+  background: var(--bg3);
+  border-color: var(--accent);
+  color: var(--accent2);
+}
+
+/* Auth card when not signed in */
+.auth-panel {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 32px;
+  margin-bottom: 24px;
+  text-align: center;
+}
+.auth-panel h2 {
+  font-size: 18px;
+  margin-bottom: 8px;
+}
+.auth-panel p {
+  color: var(--text2);
+  margin-bottom: 20px;
+}
+.auth-form {
+  display: flex;
+  gap: 12px;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+/* Sections */
+.card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 24px;
+  margin-bottom: 24px;
+}
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+.card-title {
+  font-size: 16px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.card-desc {
+  color: var(--text2);
+  font-size: 13px;
+  margin-top: -12px;
+  margin-bottom: 18px;
+}
+
+/* Form inputs */
+.grid-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text2);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+input, select {
+  width: 100%;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+input:focus, select:focus {
+  border-color: var(--accent);
+}
+
+button.primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 24px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+button.primary:hover { opacity: 0.9; }
+button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Generated Code Hero */
+.code-display {
+  display: none;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(30, 48, 72, 0.5));
+  border: 1px solid var(--accent);
+  border-radius: var(--r);
+  padding: 24px;
+  margin-top: 20px;
+  text-align: center;
+  box-shadow: 0 0 24px rgba(59, 130, 246, 0.15);
+}
+.code-hero {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: #fff;
+  margin: 12px 0;
+  user-select: all;
+  text-shadow: 0 0 12px rgba(96, 165, 250, 0.5);
+}
+.code-meta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--text2);
+  margin-bottom: 16px;
+}
+.timer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--warning);
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-weight: 600;
+}
+.instructions-box {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 16px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text);
+  margin-top: 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.instructions-box .step-num {
+  width: 20px;
+  height: 20px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* Tabs & Snippets */
+.tabs-nav {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.tab-btn {
+  padding: 8px 16px;
+  background: transparent;
+  color: var(--text2);
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.15s;
+}
+.tab-btn.active {
+  color: var(--accent2);
+  border-bottom-color: var(--accent);
+}
+.snippet-box {
+  position: relative;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+}
+.snippet-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  color: #e2e8f0;
+  white-space: pre;
+  overflow-x: auto;
+}
+.copy-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: var(--bg3);
+  color: var(--text2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s;
+}
+.copy-btn:hover {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Table */
+.table-wrap {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+th {
+  text-align: left;
+  padding: 10px 12px;
+  color: var(--text2);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border);
+}
+td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+tr:hover td {
+  background: rgba(255, 255, 255, 0.02);
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.badge.active { background: var(--ok-bg); color: var(--ok); }
+.badge.exhausted { background: var(--bg3); color: var(--text2); }
+.badge.expired { background: var(--warning-bg); color: var(--warning); }
+.badge.revoked { background: var(--danger-bg); color: var(--danger); }
+
+button.revoke-btn {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+button.revoke-btn:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+/* Status message banner */
+.msg {
+  padding: 10px 14px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  display: none;
+}
+.msg.err { background: var(--danger-bg); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
+.msg.ok { background: var(--ok-bg); color: var(--ok); border: 1px solid rgba(34, 197, 94, 0.3); }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- Header -->
+  <header class="header">
+    <div class="logo">
+      <div class="logo-icon">LL</div>
+      <div class="logo-title">
+        <h1>Lineage<span>Lens</span> Connect</h1>
+        <p>Pair clients and developer extensions in seconds</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <a href="/dashboard" class="btn-nav">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+        Governance Dashboard
+      </a>
+      <button id="btn-auth-toggle" class="btn-nav" onclick="handleAuthToggle()">Sign In</button>
+    </div>
+  </header>
+
+  <!-- Notification Banner -->
+  <div id="alert-msg" class="msg" role="status"></div>
+
+  <!-- Sign-in Panel (shown if unauthenticated) -->
+  <div id="auth-panel" class="auth-panel" style="display: none;">
+    <h2>Admin Authentication Required</h2>
+    <p>Sign in with your workspace credentials to generate pairing codes and manage active connections.</p>
+    <div class="auth-form">
+      <input id="auth-user" type="text" placeholder="Username" autocomplete="username">
+      <input id="auth-pass" type="password" placeholder="Password" autocomplete="current-password">
+      <button class="primary" onclick="doLogin()">Sign In</button>
+    </div>
+  </div>
+
+  <!-- Section A: Generate Connect Code -->
+  <section class="card" id="card-generator">
+    <div class="card-header">
+      <h2 class="card-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+        Generate Connect Code
+      </h2>
+    </div>
+    <p class="card-desc">Generate a short-lived pairing code. The developer pastes this code into their VS Code extension to bind to this server automatically.</p>
+
+    <div class="grid-form">
+      <div class="field">
+        <label for="client-select">Client Type</label>
+        <select id="client-select">
+          <option value="vscode-power">VS Code / Cursor / Windsurf (Power Mode)</option>
+          <option value="vscode-base">VS Code / Cursor (Base Mode — Ingest Only)</option>
+          <option value="cli">LineageLens CLI</option>
+          <option value="mcp">Model Context Protocol (MCP Client)</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="code-label">Device / User Label (Optional)</label>
+        <input id="code-label" type="text" placeholder="e.g. dev-macbook-alice" maxlength="128">
+      </div>
+
+      <div class="field">
+        <label for="ttl-select">Expiration (TTL)</label>
+        <select id="ttl-select">
+          <option value="5">5 minutes</option>
+          <option value="10" selected>10 minutes (Recommended)</option>
+          <option value="30">30 minutes</option>
+          <option value="60">1 hour</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="uses-select">Max Uses</label>
+        <select id="uses-select">
+          <option value="1" selected>1 time (Single Use)</option>
+          <option value="3">3 times (Small Team)</option>
+          <option value="5">5 times</option>
+        </select>
+      </div>
+    </div>
+
+    <button id="btn-generate" class="primary" onclick="generateCode()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"></path></svg>
+      Generate Pairing Code
+    </button>
+
+    <!-- Code Result Hero -->
+    <div id="code-result" class="code-display">
+      <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent2);">Your One-Time Connect Code</div>
+      <div id="code-val" class="code-hero">LL-XXXXX-XXXXX</div>
+      <div class="code-meta">
+        <span class="timer-pill" id="code-timer">⏱ Expires in 10:00</span>
+        <span id="code-uses">Single Use</span>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap;margin-bottom:14px;">
+        <button class="primary" onclick="copyCode()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          <span id="copy-btn-text">Copy Code</span>
+        </button>
+        <a id="code-deeplink" href="#" class="btn-nav" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+          Open in VS Code
+        </a>
+        <div id="code-live-badge" class="badge active" style="display:none;padding:6px 12px;font-size:12px;">
+          <span id="code-live-dot" style="width:8px;height:8px;border-radius:50%;background:var(--accent2);display:inline-block;"></span>
+          <span id="code-live-text">Waiting for connection...</span>
+        </div>
+      </div>
+
+      <div class="instructions-box">
+        <div class="step-num">1</div>
+        <div>In VS Code, press <code>Ctrl+Shift+P</code> (or <code>Cmd+Shift+P</code>) to open the Command Palette.</div>
+      </div>
+      <div class="instructions-box" style="margin-top: 6px;">
+        <div class="step-num">2</div>
+        <div>Type <b>LineageLens: Connect to Server</b> and press Enter.</div>
+      </div>
+      <div class="instructions-box" style="margin-top: 6px;">
+        <div class="step-num">3</div>
+        <div>Paste this code. The extension verifies the server and configures authentication automatically.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section B: Manual Configuration Snippets -->
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+        Manual Configuration
+      </h2>
+    </div>
+    <p class="card-desc">If connecting manually or configuring CI/CD headless runners, use these configuration parameters.</p>
+
+    <div class="tabs-nav">
+      <button class="tab-btn active" onclick="switchTab('power')">VS Code (Power)</button>
+      <button class="tab-btn" onclick="switchTab('base')">VS Code (Base)</button>
+      <button class="tab-btn" onclick="switchTab('env')">CLI / Environment</button>
+    </div>
+
+    <div id="tab-power" class="snippet-box">
+      <button class="copy-btn" onclick="copySnippet('power-snippet')">Copy JSON</button>
+      <pre class="snippet-code" id="power-snippet">// In .vscode/settings.json
+{
+  "aiCodeProvenance.mode": "backend",
+  "aiInsertionDetector.backend.baseUrl": "<span class="server-url"></span>"
+}</pre>
+    </div>
+
+    <div id="tab-base" class="snippet-box" style="display:none;">
+      <button class="copy-btn" onclick="copySnippet('base-snippet')">Copy JSON</button>
+      <pre class="snippet-code" id="base-snippet">// In .vscode/settings.json
+{
+  "lineagelensBase.backendUrl": "<span class="server-url"></span>"
+}</pre>
+    </div>
+
+    <div id="tab-env" class="snippet-box" style="display:none;">
+      <button class="copy-btn" onclick="copySnippet('env-snippet')">Copy Env</button>
+      <pre class="snippet-code" id="env-snippet">export LINEAGELENS_BACKEND_URL=<span class="server-url"></span>
+export ANTHROPIC_BASE_URL=http://localhost:8788
+export OPENAI_BASE_URL=http://localhost:8788</pre>
+    </div>
+  </section>
+
+  <!-- Section C: Active / Recent Codes Table -->
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        Active &amp; Recent Pairing Codes
+      </h2>
+      <button class="btn-nav" onclick="loadCodes()" title="Refresh code list">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path></svg>
+        Refresh
+      </button>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Client</th>
+            <th>Label</th>
+            <th>Uses</th>
+            <th>Expires / Created</th>
+            <th>Status</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="codes-table-body">
+          <tr><td colspan="6" style="text-align:center;color:var(--text2);padding:24px;">Loading pairing codes…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+<script>
+let _token = localStorage.getItem('ll_auth_token') || sessionStorage.getItem('ll_auth_token') || '';
+let _currentCode = '';
+let _currentCodeId = '';
+let _countdownTimer = null;
+let _pollTimer = null;
+
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+  const origin = window.location.origin;
+  document.querySelectorAll('.server-url').forEach(el => el.textContent = origin);
+
+  if (_token) {
+    checkAuth();
+  } else {
+    showAuthPrompt(true);
+  }
+});
+
+function showAlert(msg, type = 'ok') {
+  const el = document.getElementById('alert-msg');
+  el.className = `msg ${type}`;
+  el.textContent = msg;
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 5000);
+}
+
+function handleAuthToggle() {
+  if (_token) {
+    _token = '';
+    localStorage.removeItem('ll_auth_token');
+    sessionStorage.removeItem('ll_auth_token');
+    document.getElementById('btn-auth-toggle').textContent = 'Sign In';
+    showAuthPrompt(true);
+    showAlert('Signed out of server session.', 'ok');
+  } else {
+    showAuthPrompt(true);
+  }
+}
+
+function showAuthPrompt(show) {
+  document.getElementById('auth-panel').style.display = show ? 'block' : 'none';
+  if (show) {
+    document.getElementById('codes-table-body').innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text2);padding:24px;">Please sign in to view active pairing codes.</td></tr>';
+  }
+}
+
+async function doLogin() {
+  const un = document.getElementById('auth-user').value.trim();
+  const pw = document.getElementById('auth-pass').value;
+  if (!un || !pw) {
+    showAlert('Username and password required.', 'err');
+    return;
+  }
+  try {
+    const res = await fetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: un, password: pw })
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || 'Login failed');
+    _token = d.accessToken;
+    localStorage.setItem('ll_auth_token', _token);
+    document.getElementById('btn-auth-toggle').textContent = 'Sign Out';
+    showAuthPrompt(false);
+    showAlert(`Signed in as ${un}`, 'ok');
+    loadCodes();
+  } catch (err) {
+    showAlert(err.message, 'err');
+  }
+}
+
+async function checkAuth() {
+  try {
+    const res = await fetch('/auth/me', {
+      headers: { 'Authorization': `Bearer ${_token}` }
+    });
+    if (res.ok) {
+      document.getElementById('btn-auth-toggle').textContent = 'Sign Out';
+      showAuthPrompt(false);
+      loadCodes();
+    } else {
+      showAuthPrompt(true);
+    }
+  } catch {
+    showAuthPrompt(true);
+  }
+}
+
+async function generateCode() {
+  if (!_token) {
+    showAuthPrompt(true);
+    showAlert('Please sign in first to generate pairing codes.', 'err');
+    return;
+  }
+
+  const client = document.getElementById('client-select').value;
+  const label = document.getElementById('code-label').value.trim() || null;
+  const ttlMinutes = parseInt(document.getElementById('ttl-select').value, 10);
+  const maxUses = parseInt(document.getElementById('uses-select').value, 10);
+
+  const btn = document.getElementById('btn-generate');
+  btn.disabled = true;
+
+  try {
+    const res = await fetch('/connect/codes', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${_token}`
+      },
+      body: JSON.stringify({ client, label, ttlMinutes, maxUses })
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || 'Failed to create code');
+
+    _currentCode = d.code;
+    _currentCodeId = d.id;
+    document.getElementById('code-val').textContent = d.code;
+    document.getElementById('code-uses').textContent = maxUses === 1 ? 'Single Use' : `Up to ${maxUses} uses`;
+    document.getElementById('code-result').style.display = 'block';
+
+    const serverUrl = window.location.origin;
+    const deeplinkEl = document.getElementById('code-deeplink');
+    if (deeplinkEl) {
+      deeplinkEl.href = `vscode://lineagelens.lineagelens/connect?code=${encodeURIComponent(d.code)}&server=${encodeURIComponent(serverUrl)}`;
+    }
+
+    const liveBadge = document.getElementById('code-live-badge');
+    if (liveBadge) {
+      liveBadge.style.display = 'inline-flex';
+      liveBadge.className = 'badge active';
+      document.getElementById('code-live-dot').style.background = 'var(--accent2)';
+      document.getElementById('code-live-text').textContent = 'Waiting for connection...';
+    }
+
+    startTimer(ttlMinutes * 60);
+    startStatusPolling(d.id);
+    showAlert('Pairing code generated successfully!', 'ok');
+    loadCodes();
+  } catch (err) {
+    showAlert(err.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function startStatusPolling(codeId) {
+  clearInterval(_pollTimer);
+  _pollTimer = setInterval(async () => {
+    if (!_token || !codeId) return;
+    try {
+      const res = await fetch('/connect/codes', {
+        headers: { 'Authorization': `Bearer ${_token}` }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const codeObj = (data.results || []).find(c => c.id === codeId);
+      if (!codeObj) return;
+
+      if (codeObj.useCount > 0 || codeObj.status === 'exhausted') {
+        clearInterval(_pollTimer);
+        const liveBadge = document.getElementById('code-live-badge');
+        if (liveBadge) {
+          liveBadge.style.display = 'inline-flex';
+          liveBadge.className = 'badge active';
+          document.getElementById('code-live-dot').style.background = 'var(--ok)';
+          document.getElementById('code-live-text').textContent = `Connected (${codeObj.redeemedByLabel || 'VS Code'})!`;
+        }
+        showAlert('Extension successfully connected and authenticated!', 'ok');
+        loadCodes();
+      } else if (codeObj.status === 'expired' || codeObj.status === 'revoked') {
+        clearInterval(_pollTimer);
+        const liveBadge = document.getElementById('code-live-badge');
+        if (liveBadge) {
+          liveBadge.className = 'badge ' + codeObj.status;
+          document.getElementById('code-live-text').textContent = codeObj.status;
+        }
+      }
+    } catch {
+      // transient polling error
+    }
+  }, 3000);
+}
+
+function startTimer(seconds) {
+  clearInterval(_countdownTimer);
+  let rem = seconds;
+  const timerEl = document.getElementById('code-timer');
+
+  function update() {
+    const m = Math.floor(rem / 60);
+    const s = rem % 60;
+    timerEl.textContent = `⏱ Expires in ${m}:${s < 10 ? '0' : ''}${s}`;
+    if (rem <= 0) {
+      clearInterval(_countdownTimer);
+      timerEl.textContent = '⏱ Expired';
+      document.getElementById('code-val').style.opacity = '0.5';
+    }
+    rem--;
+  }
+
+  update();
+  _countdownTimer = setInterval(update, 1000);
+}
+
+function copyCode() {
+  if (!_currentCode) return;
+  navigator.clipboard.writeText(_currentCode);
+  const btn = document.getElementById('copy-btn-text');
+  btn.textContent = 'Copied!';
+  setTimeout(() => { btn.textContent = 'Copy Code'; }, 2000);
+}
+
+function copySnippet(id) {
+  const el = document.getElementById(id);
+  navigator.clipboard.writeText(el.innerText || el.textContent);
+  showAlert('Snippet copied to clipboard', 'ok');
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('tab-power').style.display = name === 'power' ? 'block' : 'none';
+  document.getElementById('tab-base').style.display = name === 'base' ? 'block' : 'none';
+  document.getElementById('tab-env').style.display = name === 'env' ? 'block' : 'none';
+}
+
+async function loadCodes() {
+  if (!_token) return;
+  const tbody = document.getElementById('codes-table-body');
+  try {
+    const res = await fetch('/connect/codes', {
+      headers: { 'Authorization': `Bearer ${_token}` }
+    });
+    if (!res.ok) {
+      if (res.status === 401) showAuthPrompt(true);
+      return;
+    }
+    const data = await res.json();
+    const codes = data.results || [];
+
+    if (codes.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text2);padding:24px;">No active or recent pairing codes found.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = codes.map(c => {
+      const isRevocable = c.status === 'active';
+      return `
+        <tr>
+          <td><b>${escapeHtml(c.client)}</b></td>
+          <td>${escapeHtml(c.label || '—')}</td>
+          <td>${c.useCount} / ${c.maxUses}</td>
+          <td>${formatDate(c.createdAt)}</td>
+          <td><span class="badge ${c.status}">${c.status}</span></td>
+          <td>
+            ${isRevocable ? `<button class="revoke-btn" onclick="revokeCode('${c.id}')">Revoke</button>` : '—'}
+          </td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);padding:24px;">Error loading codes: ${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+async function revokeCode(id) {
+  if (!confirm('Revoke this pairing code immediately? Any clients attempting to use it will be denied.')) return;
+  try {
+    const res = await fetch(`/connect/codes/${id}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${_token}` }
+    });
+    if (res.status === 204) {
+      showAlert('Pairing code revoked.', 'ok');
+      loadCodes();
+    } else {
+      const d = await res.json();
+      throw new Error(d.detail || 'Revocation failed');
+    }
+  } catch (err) {
+    showAlert(err.message, 'err');
+  }
+}
+
+function formatDate(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' ' + d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  } catch {
+    return iso;
+  }
+}
+
+function escapeHtml(str) {
+  return (str || '').replace(/[&<>"']/g, m => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[m]);
+}
+</script>
+
+</body>
+</html>

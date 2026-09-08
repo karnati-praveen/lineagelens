@@ -139,6 +139,13 @@ def normalize_ingest_payload(
     if not isinstance(payload, dict):
         raise ValueError("Ingest payload must be a JSON object.")
 
+    # Support batched/wrapped extension format: {"records": [record, ...]}
+    if "records" in payload and isinstance(payload["records"], list) and payload["records"]:
+        first = payload["records"][0]
+        if isinstance(first, dict):
+            wrapper_meta = {k: v for k, v in payload.items() if k != "records"}
+            payload = {**wrapper_meta, **first}
+
     raw_payload = deepcopy(payload)
     record_uuid = _parse_uuid(
         _first_string_from_keys(payload, ["id", "eventId", "uuid"])

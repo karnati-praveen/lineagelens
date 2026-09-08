@@ -261,10 +261,27 @@ export class CaptureService {
 
   // ── Backend sync with persistent outbox ─────────────────────────────────────
 
-  private _postToBackend(record: import('./store').CaptureRecord): void {
+  /**
+   * Resolve the ingest token: prioritize encrypted SecretStorage
+   * (lineagelensBase.ingestToken) over plaintext settings.json for backward compatibility.
+   */
+  private async _getIngestToken(): Promise<string> {
+    try {
+      const secret = await this.context.secrets.get('lineagelensBase.ingestToken');
+      if (secret && secret.trim()) {
+        return secret.trim();
+      }
+    } catch {
+      // SecretStorage read failed or unavailable
+    }
+    const cfg = vscode.workspace.getConfiguration('lineagelensBase');
+    return (cfg.get<string>('ingestToken', '') ?? '').trim();
+  }
+
+  private async _postToBackend(record: import('./store').CaptureRecord): Promise<void> {
     const cfg = vscode.workspace.getConfiguration('lineagelensBase');
     const backendUrl = (cfg.get<string>('backendUrl', '') ?? '').trim().replace(/\/$/, '');
-    const ingestToken = (cfg.get<string>('ingestToken', '') ?? '').trim();
+    const ingestToken = await this._getIngestToken();
     const workspaceId = (cfg.get<string>('workspaceId', 'vscode-capture') ?? 'vscode-capture').trim();
 
     if (!backendUrl || !ingestToken) { return; }
@@ -326,7 +343,7 @@ export class CaptureService {
     if (this._disposed) { return; }
     const cfg = vscode.workspace.getConfiguration('lineagelensBase');
     const backendUrl = (cfg.get<string>('backendUrl', '') ?? '').trim().replace(/\/$/, '');
-    const ingestToken = (cfg.get<string>('ingestToken', '') ?? '').trim();
+    const ingestToken = await this._getIngestToken();
     if (!backendUrl || !ingestToken) { return; }
 
     const outbox = this._loadOutbox();

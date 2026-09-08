@@ -44,33 +44,12 @@ export async function runOnboardingWizard(
     const storageMode = (modeChoice as vscode.QuickPickItem & { value: string }).value;
     let backendUrl: string | undefined;
 
-    // Step 3a: Backend URL (only if backend mode)
+    // Step 3a: Backend mode configuration (delegate to connectToServer wizard)
     if (storageMode === 'backend') {
-        backendUrl = await vscode.window.showInputBox({
-            title: 'LineageLens Setup (2/3): Backend URL',
-            prompt: 'Enter your LineageLens backend URL',
-            value: vscode.workspace.getConfiguration('lineagelens').get<string>('backendUrl') ?? 'http://localhost:8787',
-            validateInput: (val) => {
-                if (!val.startsWith('http')) { return 'Must start with http:// or https://'; }
-                return null;
-            },
-        });
-        if (!backendUrl) { return { completed: false }; }
-
-        // Save it
-        await vscode.workspace.getConfiguration('lineagelens').update(
-            'backendUrl', backendUrl, vscode.ConfigurationTarget.Global
-        );
-
-        // Step 2b: First-time admin setup — open the browser setup page
-        const setupStep = await vscode.window.showInformationMessage(
-            'LineageLens Setup (2b/3): Open the setup page to create your admin account. Skip if the backend already has users.',
-            'Open Setup Page',
-            'Skip (already set up)'
-        );
-        if (setupStep === 'Open Setup Page') {
-            void vscode.env.openExternal(vscode.Uri.parse(`${backendUrl}/setup`));
-        }
+        const connectRes = await vscode.commands.executeCommand<{ backendUrl?: string }>('lineagelens.connectToServer');
+        backendUrl = connectRes?.backendUrl || vscode.workspace.getConfiguration('aiInsertionDetector.backend').get<string>('baseUrl');
+    } else {
+        await vscode.workspace.getConfiguration('aiCodeProvenance').update('mode', 'local', vscode.ConfigurationTarget.Global);
     }
 
     // Step 3: Proxy setup hint

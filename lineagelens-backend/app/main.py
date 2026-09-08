@@ -64,6 +64,7 @@ from app.api.routes.key_registry import router as key_registry_router
 from app.api.routes.capsule import router as capsule_router
 from app.api.routes.continuity_drill import router as continuity_drill_router
 from app.api.routes.witness import router as witness_router
+from app.api.routes.connect import router as connect_router
 from app.core.config import Settings, get_settings
 from app.core.rate_limit import InMemoryRateLimiter
 from app.db.session import create_engine_from_settings, create_session_factory, initialize_database
@@ -153,7 +154,7 @@ class SecurityHeadersMiddleware:
         await self.app(scope, receive, send_with_headers)
 
 
-_SETUP_BYPASS_PREFIXES = {"/setup", "/health", "/auth/login", "/auth/register", "/auth/sso/callback", "/invite-accept", "/leads"}
+_SETUP_BYPASS_PREFIXES = {"/setup", "/health", "/auth/login", "/auth/register", "/auth/sso/callback", "/invite-accept", "/leads", "/connect/redeem"}
 
 
 class SetupGuardMiddleware:
@@ -198,7 +199,7 @@ class SetupGuardMiddleware:
                     await self.app(scope, receive, send)
                     return
         except Exception:
-            logger.warning("Setup guard DB check failed; redirecting to /setup.")
+            logger.warning("Setup guard DB check failed; redirecting to /setup.", exc_info=True)
 
         # Setup not complete — redirect to /setup
         redirect_body = b""
@@ -574,6 +575,7 @@ app.include_router(leads_router)
 app.include_router(key_registry_router)
 app.include_router(capsule_router)
 app.include_router(continuity_drill_router)
+app.include_router(connect_router)
 app.include_router(witness_router)
 
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
@@ -582,6 +584,11 @@ app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 @app.get("/dashboard", include_in_schema=False)
 async def dashboard() -> FileResponse:
     return FileResponse(os.path.join(_STATIC_DIR, "dashboard.html"), media_type="text/html")
+
+
+@app.get("/connect", include_in_schema=False)
+async def connect_page() -> FileResponse:
+    return FileResponse(os.path.join(_STATIC_DIR, "connect.html"), media_type="text/html")
 
 
 _LOOPBACK_IPS = frozenset({"127.0.0.1", "::1", "localhost", ""})

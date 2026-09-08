@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from app.db.session import _CURRENT_ALEMBIC_HEAD
 
-_REVISION = "202606260009"
+_REVISION = "202609080001"
 
 
 # ─── Migration sanity ─────────────────────────────────────────────────────────

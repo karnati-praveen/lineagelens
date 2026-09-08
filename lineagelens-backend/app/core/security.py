@@ -66,12 +66,46 @@ async def get_current_auth_context(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_db_session),
 ) -> AuthContext:
-    from app.db.models import UserAccount  # local import to avoid circular dependency at module load
+    from app.db.models import ApiKey, UserAccount  # local import to avoid circular dependency at module load
 
     if token is None or token.strip() == "":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing bearer token.",
+        )
+
+    token = token.strip()
+
+    # Static API keys (llk_...) minted via /api-keys or pairing codes authenticate
+    # as their owning user with the key's scopes. Same required-scope rule as JWTs.
+    if token.startswith("llk_"):
+        key_hash = hashlib.sha256(token.encode()).hexdigest()
+        result = await session.execute(select(ApiKey).where(ApiKey.key_hash == key_hash))
+        ak = result.scalar_one_or_none()
+        if ak is None or not ak.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or revoked API key.",
+            )
+        if ak.expires_at is not None and ak.expires_at <= datetime.now(UTC):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API key has expired.",
+            )
+        key_scopes = set(ak.scopes or [])
+        if not key_scopes:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API key has no assigned scopes.",
+            )
+        ak.last_used_at = datetime.now(UTC)
+        await session.commit()
+        return AuthContext(
+            subject=ak.user_id,
+            workspace_id=ak.workspace_id,
+            scopes=key_scopes,
+            token_type="api_key",
+            token_payload={},
         )
 
     try:
@@ -154,7 +188,14 @@ async def get_ingest_auth_context(
             token_type="proxy",
             token_payload={},
         )
-    return await get_current_auth_context(token=token, settings=settings, session=session)
+    auth = await get_current_auth_context(token=token, settings=settings, session=session)
+    validate_scopes(
+        auth.scopes,
+        {"provenance:write", "write"},
+        any_of=True,
+        error_prefix="API key missing required scope(s): ",
+    )
+    return auth
 
 
 def authenticate_websocket(websocket: WebSocket, settings: Settings) -> AuthContext:
@@ -441,6 +482,59 @@ def require_role(*roles: str):
 # Thin wrapper: require_admin is equivalent to require_role("admin") but
 # kept as a named dependency for readability and backward compatibility.
 require_admin = require_role("admin")
+
+
+def validate_scopes(
+    granted_scopes: set[str] | list[str] | tuple[str, ...],
+    required_scopes: set[str] | list[str] | tuple[str, ...],
+    *,
+    any_of: bool = False,
+    error_prefix: str = "Missing required scope(s): ",
+) -> None:
+    """Validate that granted_scopes satisfy required_scopes.
+
+    - If any_of=False: all required scopes must be present.
+    - If any_of=True: at least one required scope must be present.
+
+    Raises HTTPException(403 FORBIDDEN) so developers and clients can see the issue directly.
+    """
+    granted = set(granted_scopes or [])
+    required = set(required_scopes or [])
+    if any_of:
+        if not granted.intersection(required):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"{error_prefix}" + " or ".join(sorted(required)) + ".",
+            )
+    else:
+        missing = required.difference(granted)
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"{error_prefix}" + ", ".join(sorted(missing)) + ".",
+            )
+
+
+def require_scopes(*scopes: str, any_of: bool = False):
+    """Reusable FastAPI dependency factory for scope enforcement.
+
+    Mirrors require_role(*roles) so scope requirements can be declared cleanly
+    at router or endpoint level.
+
+    Usage:
+        @router.post("/records", dependencies=[Depends(require_scopes("provenance:write"))])
+        async def create_record(auth: AuthContext = Depends(require_scopes("provenance:write"))):
+            ...
+    """
+    required = set(scopes)
+
+    async def _check(
+        auth: AuthContext = Depends(get_current_auth_context),
+    ) -> AuthContext:
+        validate_scopes(auth.scopes, required, any_of=any_of)
+        return auth
+
+    return _check
 
 
 async def get_verified_user_role(session: AsyncSession, auth: AuthContext) -> str:

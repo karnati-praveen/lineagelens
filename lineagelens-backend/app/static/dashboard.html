@@ -148,6 +148,11 @@
       <!-- Integrations -->
       <div class="nav-section-title">Integrations</div>
 
+      <a class="nav-item" href="/connect" target="_blank" style="text-decoration:none;color:inherit;display:flex;align-items:center;">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+        <span class="nav-label">Connect a Tool</span>
+      </a>
+
       <button class="nav-item adm-nav" data-t="github" data-requires="plus" style="display:none">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" y1="9" x2="6" y2="21"></line></svg>
         <span class="nav-label">GitHub CI</span>
@@ -196,6 +201,10 @@
       </button>
       <div class="topbar-breadcrumb" id="topbar-breadcrumb" aria-live="polite">Overview</div>
       <div class="topbar-right">
+        <button id="btn-topbar-connect" class="p" style="padding:5px 12px;font-size:12px;display:inline-flex;align-items:center;gap:5px;cursor:pointer" title="Generate pairing code for VS Code">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+          Connect Client
+        </button>
         <div class="mcp-status" title="Backend connection status">
           <div id="mcp-dot" class="mcp-dot" aria-label="Backend connection"></div>
           <span class="mcp-label" aria-hidden="true">Backend</span>
@@ -816,7 +825,205 @@
   </div>
 </div>
 
+<!-- ════ CONNECT EXTENSION MODAL ════ -->
+<div id="connect-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Connect an Extension" style="display:none">
+  <div class="modal" tabindex="-1" style="max-width:540px">
+    <div class="modal-hdr">
+      <h3>Connect VS Code Extension</h3>
+      <button class="modal-close" id="btn-connect-modal-close" aria-label="Close modal">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text2);margin:0 0 16px">Generate a short-lived pairing code to link your VS Code / Cursor extension to this server in one click.</p>
+      
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+        <div>
+          <label style="font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text2);display:block;margin-bottom:4px">Client</label>
+          <select id="conn-client" style="width:100%;padding:6px 10px;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px">
+            <option value="vscode-power">VS Code (Power Mode)</option>
+            <option value="vscode-base">VS Code (Base Mode — Ingest)</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text2);display:block;margin-bottom:4px">Label (Optional)</label>
+          <input id="conn-label" type="text" placeholder="e.g. alice-macbook" style="width:100%;padding:6px 10px;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px">
+        </div>
+      </div>
+
+      <button id="btn-conn-generate" class="p" style="padding:7px 16px;font-size:13px;margin-bottom:16px">Generate Connect Code</button>
+
+      <div id="conn-result" style="display:none;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;text-align:center">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--accent2);margin-bottom:6px">Your Pairing Code</div>
+        <div id="conn-code-val" style="font-size:24px;font-weight:800;letter-spacing:2px;font-family:var(--mono);color:#fff;margin-bottom:8px">LL-XXXXX-XXXXX</div>
+        
+        <div style="display:flex;justify-content:center;align-items:center;gap:8px;margin-bottom:12px">
+          <span id="conn-timer" style="font-size:11px;color:var(--text2);background:var(--bg2);padding:2px 8px;border-radius:10px">⏱ Expires in 10:00</span>
+          <span id="conn-live-badge" class="badge active" style="font-size:11px;display:none">
+            <span id="conn-live-dot" style="width:6px;height:6px;border-radius:50%;background:var(--accent2);display:inline-block"></span>
+            <span id="conn-live-text">Waiting for connection...</span>
+          </span>
+        </div>
+
+        <div style="display:flex;gap:8px;justify-content:center;margin-bottom:14px;flex-wrap:wrap">
+          <button id="btn-conn-copy" class="s" style="padding:6px 12px;font-size:12px">Copy Code</button>
+          <a id="conn-deeplink" href="#" class="p" style="text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px">Open in VS Code</a>
+        </div>
+
+        <div style="text-align:left;background:var(--bg2);padding:10px;border-radius:6px;font-size:11px;color:var(--text2)">
+          <div><b>CLI Snippet:</b></div>
+          <code id="conn-cli-snippet" style="display:block;margin-top:4px;word-break:break-all">export LINEAGELENS_BACKEND_URL=...</code>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="/static/chart.umd.min.js"></script>
 <script src="/static/dashboard.js"></script>
+<script>
+(function() {
+  const modal = document.getElementById('connect-modal');
+  const btnOpen = document.getElementById('btn-topbar-connect');
+  const btnClose = document.getElementById('btn-connect-modal-close');
+  const btnGen = document.getElementById('btn-conn-generate');
+  const btnCopy = document.getElementById('btn-conn-copy');
+  const clientSelect = document.getElementById('conn-client');
+  const labelInput = document.getElementById('conn-label');
+  const resultBox = document.getElementById('conn-result');
+  const codeVal = document.getElementById('conn-code-val');
+  const timerEl = document.getElementById('conn-timer');
+  const deeplinkEl = document.getElementById('conn-deeplink');
+  const liveBadge = document.getElementById('conn-live-badge');
+  const liveDot = document.getElementById('conn-live-dot');
+  const liveText = document.getElementById('conn-live-text');
+  const cliSnippet = document.getElementById('conn-cli-snippet');
+
+  let currentCode = '';
+  let countdownInterval = null;
+  let pollInterval = null;
+
+  if (btnOpen) {
+    btnOpen.addEventListener('click', () => {
+      modal.style.display = 'flex';
+      resultBox.style.display = 'none';
+      clearInterval(countdownInterval);
+      clearInterval(pollInterval);
+    });
+  }
+
+  if (btnClose) {
+    btnClose.addEventListener('click', () => {
+      modal.style.display = 'none';
+      clearInterval(countdownInterval);
+      clearInterval(pollInterval);
+    });
+  }
+
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      modal.style.display = 'none';
+      clearInterval(countdownInterval);
+      clearInterval(pollInterval);
+    }
+  });
+
+  if (btnGen) {
+    btnGen.addEventListener('click', async () => {
+      const token = sessionStorage.getItem('ll_access');
+      if (!token) {
+        alert('Please sign in to generate connect codes.');
+        return;
+      }
+      const client = clientSelect.value;
+      const label = labelInput.value.trim() || undefined;
+
+      btnGen.disabled = true;
+      btnGen.textContent = 'Generating...';
+
+      try {
+        const res = await fetch('/connect/codes', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ client, label, ttlMinutes: 10, maxUses: 1 })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to create code');
+
+        currentCode = data.code;
+        codeVal.textContent = data.code;
+        resultBox.style.display = 'block';
+
+        const origin = window.location.origin;
+        deeplinkEl.href = `vscode://lineagelens.lineagelens/connect?code=${encodeURIComponent(data.code)}&server=${encodeURIComponent(origin)}`;
+        cliSnippet.textContent = `export LINEAGELENS_BACKEND_URL=${origin}`;
+
+        liveBadge.style.display = 'inline-flex';
+        liveBadge.className = 'badge active';
+        liveDot.style.background = 'var(--accent2)';
+        liveText.textContent = 'Waiting for connection...';
+
+        // Countdown timer
+        clearInterval(countdownInterval);
+        let rem = 10 * 60;
+        countdownInterval = setInterval(() => {
+          rem--;
+          if (rem <= 0) {
+            clearInterval(countdownInterval);
+            timerEl.textContent = '⏱ Expired';
+            codeVal.style.opacity = '0.5';
+          } else {
+            const m = Math.floor(rem / 60);
+            const s = rem % 60;
+            timerEl.textContent = `⏱ Expires in ${m}:${s < 10 ? '0' : ''}${s}`;
+          }
+        }, 1000);
+
+        // Live polling every 3s
+        clearInterval(pollInterval);
+        pollInterval = setInterval(async () => {
+          try {
+            const pollRes = await fetch('/connect/codes', {
+              headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!pollRes.ok) return;
+            const pollData = await pollRes.json();
+            const found = (pollData.results || []).find(c => c.id === data.id);
+            if (found && (found.useCount > 0 || found.status === 'exhausted')) {
+              clearInterval(pollInterval);
+              liveBadge.style.background = 'var(--ok-bg)';
+              liveBadge.style.color = 'var(--ok)';
+              liveDot.style.background = 'var(--ok)';
+              liveText.textContent = `● Connected (${found.redeemedByLabel || 'VS Code'})!`;
+            } else if (found && (found.status === 'expired' || found.status === 'revoked')) {
+              clearInterval(pollInterval);
+              liveBadge.style.background = 'var(--danger-bg)';
+              liveBadge.style.color = 'var(--danger)';
+              liveDot.style.background = 'var(--danger)';
+              liveText.textContent = found.status;
+            }
+          } catch {}
+        }, 3000);
+
+      } catch (err) {
+        alert(err.message || 'Error generating connect code');
+      } finally {
+        btnGen.disabled = false;
+        btnGen.textContent = 'Generate Connect Code';
+      }
+    });
+  }
+
+  if (btnCopy) {
+    btnCopy.addEventListener('click', () => {
+      if (!currentCode) return;
+      navigator.clipboard.writeText(currentCode);
+      btnCopy.textContent = 'Copied!';
+      setTimeout(() => { btnCopy.textContent = 'Copy Code'; }, 2000);
+    });
+  }
+})();
+</script>
 </body>
 </html>

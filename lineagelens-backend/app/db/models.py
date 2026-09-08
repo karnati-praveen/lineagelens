@@ -382,6 +382,25 @@ class ApiKey(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class PairingCode(Base):
+    __tablename__ = "pairing_codes"
+
+    id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid_pkg.uuid4)
+    workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    client: Mapped[str] = mapped_column(String(32), nullable=False)
+    code_hash: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
+    label: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    scopes: Mapped[list] = mapped_column(_JSON_TYPE, nullable=False, default=list)
+    max_uses: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    use_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    last_redeemed_label: Mapped[str | None] = mapped_column(String(256), nullable=True)
+
+
 class GithubIntegration(Base):
     __tablename__ = "github_integrations"
 

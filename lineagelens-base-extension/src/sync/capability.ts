@@ -22,7 +22,12 @@ export function parseCapability(status: number, body: unknown): IngestCapability
 
 export type FetchLike = (
   url: string,
-  init?: { method?: string },
+  init?: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    signal?: AbortSignal;
+  },
 ) => Promise<{ status: number; json: () => Promise<unknown> }>;
 
 /** Probe `${backendUrl}/ingest/capabilities`; resolve the capability level. */

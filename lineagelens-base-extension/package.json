@@ -138,6 +138,16 @@
         "command": "lineagelens.removeEmail",
         "title": "LineageLens: Remove My Email",
         "category": "LineageLens"
+      },
+      {
+        "command": "lineagelensBase.connectToServer",
+        "title": "LineageLens Base: Connect to Server",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelensBase.disconnectServer",
+        "title": "LineageLens Base: Disconnect from Server",
+        "category": "LineageLens"
       }
     ],
     "menus": {
