@@ -65,6 +65,7 @@ from app.api.routes.capsule import router as capsule_router
 from app.api.routes.continuity_drill import router as continuity_drill_router
 from app.api.routes.witness import router as witness_router
 from app.api.routes.connect import router as connect_router
+from app.api.routes.exposure import router as exposure_router
 from app.core.config import Settings, get_settings
 from app.core.rate_limit import InMemoryRateLimiter
 from app.db.session import create_engine_from_settings, create_session_factory, initialize_database
@@ -577,6 +578,7 @@ app.include_router(capsule_router)
 app.include_router(continuity_drill_router)
 app.include_router(connect_router)
 app.include_router(witness_router)
+app.include_router(exposure_router)
 
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 

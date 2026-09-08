@@ -28,6 +28,11 @@ import {
 import { ProvenanceSidebarViewProvider, extractUuidFromText } from './provenanceSidebar';
 import { ProvenanceCodeLensProvider } from './provenanceCodeLens';
 import { ProvenanceQuickActionProvider } from './provenanceCodeLens';
+import { buildCapsule } from './evidence/exportCapsule';
+import { verifyEvidence } from './evidence/verifier';
+import { buildPrSummary } from './review/prSummary';
+import { selectForGate, hasBlockingFindings, gateSummaryLine } from './review/precommit';
+import type { CaptureRecord } from './evidence/types';
 import { ProvenanceHoverProvider } from './provenanceHover';
 import { CaptureStatusToastManager } from './captureStatusToast';
 import { DiffViewPanel } from './diffView';
@@ -320,6 +325,138 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('lineagelens.disconnectServer', async () => {
       await disconnectFromServer(context);
+    }),
+    vscode.commands.registerCommand('lineagelens.exportCapsule', async () => {
+      try {
+        const service = getStorageService();
+        const searchResults = await service.search({
+          keywords: '',
+          model: '',
+          dateFrom: '',
+          dateTo: '',
+          currentFileOnly: false,
+          limit: 1000
+        });
+        const records: CaptureRecord[] = searchResults.map((r) => ({
+          id: r.uuid,
+          timestamp: r.timestampIso || new Date().toISOString(),
+          filePath: r.filePath || 'unknown',
+          language: 'plaintext',
+          insertedCode: r.snippet || '',
+          linesAdded: r.snippet ? r.snippet.split('\n').length : 0,
+          modelName: r.model || undefined,
+          reviewState: 'reviewed',
+          lineageState: 'original'
+        }));
+        const workspaceId = vscode.workspace.workspaceFolders?.[0]?.name || 'default';
+        const capsule = buildCapsule(records, workspaceId, new Date().toISOString());
+        const uri = await vscode.window.showSaveDialog({
+          defaultUri: vscode.Uri.file(`evidence-${Date.now()}.llcapsule`),
+          filters: { 'LineageLens Capsule': ['llcapsule', 'json'] }
+        });
+        if (uri) {
+          await vscode.workspace.fs.writeFile(uri, Buffer.from(JSON.stringify(capsule, null, 2), 'utf-8'));
+          vscode.window.showInformationMessage(`Evidence capsule exported (${records.length} captures).`);
+        }
+      } catch (err) {
+        vscode.window.showErrorMessage('Failed to export capsule: ' + toErrorMessage(err));
+      }
+    }),
+    vscode.commands.registerCommand('lineagelens.verifyEvidence', async () => {
+      try {
+        const service = getStorageService();
+        const searchResults = await service.search({
+          keywords: '',
+          model: '',
+          dateFrom: '',
+          dateTo: '',
+          currentFileOnly: false,
+          limit: 1000
+        });
+        const records: CaptureRecord[] = searchResults.map((r) => ({
+          id: r.uuid,
+          timestamp: r.timestampIso || new Date().toISOString(),
+          filePath: r.filePath || 'unknown',
+          language: 'plaintext',
+          insertedCode: r.snippet || '',
+          linesAdded: r.snippet ? r.snippet.split('\n').length : 0,
+          modelName: r.model || undefined,
+          reviewState: 'reviewed',
+          lineageState: 'original'
+        }));
+        const report = verifyEvidence(records);
+        if (report.ok) {
+          vscode.window.showInformationMessage(report.summary);
+        } else {
+          vscode.window.showWarningMessage(report.summary);
+        }
+      } catch (err) {
+        vscode.window.showErrorMessage('Failed to verify evidence: ' + toErrorMessage(err));
+      }
+    }),
+    vscode.commands.registerCommand('lineagelens.exportPrSummary', async () => {
+      try {
+        const service = getStorageService();
+        const searchResults = await service.search({
+          keywords: '',
+          model: '',
+          dateFrom: '',
+          dateTo: '',
+          currentFileOnly: false,
+          limit: 1000
+        });
+        const records: CaptureRecord[] = searchResults.map((r) => ({
+          id: r.uuid,
+          timestamp: r.timestampIso || new Date().toISOString(),
+          filePath: r.filePath || 'unknown',
+          language: 'plaintext',
+          insertedCode: r.snippet || '',
+          linesAdded: r.snippet ? r.snippet.split('\n').length : 0,
+          modelName: r.model || undefined,
+          reviewState: 'reviewed',
+          lineageState: 'original'
+        }));
+        const summary = buildPrSummary(records);
+        await vscode.env.clipboard.writeText(summary);
+        vscode.window.showInformationMessage('PR summary copied to clipboard.');
+      } catch (err) {
+        vscode.window.showErrorMessage('Failed to export PR summary: ' + toErrorMessage(err));
+      }
+    }),
+    vscode.commands.registerCommand('lineagelens.checkBeforeCommit', async () => {
+      try {
+        const service = getStorageService();
+        const searchResults = await service.search({
+          keywords: '',
+          model: '',
+          dateFrom: '',
+          dateTo: '',
+          currentFileOnly: false,
+          limit: 1000
+        });
+        const records: CaptureRecord[] = searchResults.map((r) => ({
+          id: r.uuid,
+          timestamp: r.timestampIso || new Date().toISOString(),
+          filePath: r.filePath || 'unknown',
+          language: 'plaintext',
+          insertedCode: r.snippet || '',
+          linesAdded: r.snippet ? r.snippet.split('\n').length : 0,
+          modelName: r.model || undefined,
+          reviewState: 'reviewed',
+          lineageState: 'original'
+        }));
+        const editor = vscode.window.activeTextEditor;
+        const staged = editor ? [editor.document.fileName] : [];
+        const buckets = selectForGate(records, staged);
+        const summary = gateSummaryLine(buckets);
+        if (hasBlockingFindings(buckets)) {
+          vscode.window.showWarningMessage(`Pre-commit alert: ${summary}`);
+        } else {
+          vscode.window.showInformationMessage(summary);
+        }
+      } catch (err) {
+        vscode.window.showErrorMessage('Failed pre-commit check: ' + toErrorMessage(err));
+      }
     }),
     vscode.window.registerUriHandler({
       handleUri(uri: vscode.Uri) {

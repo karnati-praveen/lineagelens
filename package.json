@@ -164,6 +164,26 @@
         "command": "lineagelens.removeEmail",
         "title": "LineageLens: Remove My Email",
         "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.exportCapsule",
+        "title": "LineageLens: Export Local Evidence Capsule (.llcapsule)",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.verifyEvidence",
+        "title": "LineageLens: Verify Evidence Integrity",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.exportPrSummary",
+        "title": "LineageLens: Export PR Provenance Summary (Markdown)",
+        "category": "LineageLens"
+      },
+      {
+        "command": "lineagelens.checkBeforeCommit",
+        "title": "LineageLens: Check Staged Changes Before Commit",
+        "category": "LineageLens"
       }
     ],
     "keybindings": [
