@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import and_, select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import log_audit_event
@@ -131,26 +131,133 @@ async def compute_blast_radius(
     neo4j_service: Any | None,
     record_uuids: list[str],
     workspace_id: str,
+    session: AsyncSession | None = None,
+    use_sql_fallback: bool = False,
 ) -> BlastRadiusResult:
     """Return descendant record UUIDs (via EVOLVED_FROM lineage) with coverage.
 
-    PART 2 #14: never collapse "graph unavailable" or "query failed" into an
+    PART 2 #14 & #26: never collapse "graph unavailable" or "query failed" into an
     empty descendant list that reads as "zero descendants". The coverage_status
     distinguishes checked / checked_empty / unavailable / failed.
+    When neo4j_service is None and use_sql_fallback is True (with session provided),
+    executes an honest SQL canonical graph fallback matching block lineage and
+    chronological file evolution.
     """
+    checkpoint = datetime.now(UTC).isoformat()
     if neo4j_service is None:
-        return BlastRadiusResult(
-            descendant_uuids=[],
-            coverage_status="unavailable",
-            sources_checked=[],
-            limitations=["neo4j_disabled — descendant lineage was not checked"],
+        if not use_sql_fallback or session is None:
+            return BlastRadiusResult(
+                descendant_uuids=[],
+                coverage_status="unavailable",
+                sources_checked=[],
+                limitations=["neo4j_disabled — descendant lineage was not checked"],
+            )
+        # SQL canonical graph fallback
+        if not record_uuids:
+            return BlastRadiusResult(
+                descendant_uuids=[],
+                coverage_status="checked_empty",
+                sources_checked=["sql_canonical"],
+                graph_checkpoint=checkpoint,
+            )
+        parsed_uuids = []
+        for u in record_uuids:
+            try:
+                parsed_uuids.append(uuid_pkg.UUID(str(u)))
+            except (ValueError, AttributeError):
+                pass
+        if not parsed_uuids:
+            return BlastRadiusResult(
+                descendant_uuids=[],
+                coverage_status="checked_empty",
+                sources_checked=["sql_canonical"],
+                graph_checkpoint=checkpoint,
+            )
+
+        seed_stmt = select(
+            ProvenanceRecord.uuid,
+            ProvenanceRecord.lineage_node_id,
+            ProvenanceRecord.file_path,
+            ProvenanceRecord.timestamp_iso,
+        ).where(
+            ProvenanceRecord.workspace_id == workspace_id,
+            ProvenanceRecord.uuid.in_(parsed_uuids),
         )
+        seed_rows = (await session.execute(seed_stmt)).all()
+        if not seed_rows:
+            return BlastRadiusResult(
+                descendant_uuids=[],
+                coverage_status="checked_empty",
+                sources_checked=["sql_canonical"],
+                graph_checkpoint=checkpoint,
+            )
+
+        seed_id_set = {str(r.uuid) for r in seed_rows}
+        lineage_node_ids = {r.lineage_node_id for r in seed_rows if r.lineage_node_id}
+        file_time_conditions = []
+        for r in seed_rows:
+            if r.file_path and r.timestamp_iso:
+                file_time_conditions.append(
+                    and_(
+                        ProvenanceRecord.file_path == r.file_path,
+                        ProvenanceRecord.timestamp_iso > r.timestamp_iso,
+                    )
+                )
+
+        or_clauses = []
+        if lineage_node_ids:
+            or_clauses.append(ProvenanceRecord.lineage_node_id.in_(lineage_node_ids))
+        if file_time_conditions:
+            or_clauses.extend(file_time_conditions)
+
+        if not or_clauses:
+            return BlastRadiusResult(
+                descendant_uuids=[],
+                coverage_status="checked_empty",
+                sources_checked=["sql_canonical"],
+                graph_checkpoint=checkpoint,
+            )
+
+        desc_stmt = (
+            select(ProvenanceRecord.uuid)
+            .where(
+                ProvenanceRecord.workspace_id == workspace_id,
+                ProvenanceRecord.uuid.notin_(parsed_uuids),
+                or_(*or_clauses),
+            )
+            .order_by(ProvenanceRecord.timestamp_iso.asc())
+            .limit(_MAX_BLAST_RADIUS_RESULTS + 1)
+        )
+        desc_rows = (await session.execute(desc_stmt)).scalars().all()
+        descendants = [str(uid) for uid in desc_rows if str(uid) not in seed_id_set]
+
+        truncated = len(descendants) > _MAX_BLAST_RADIUS_RESULTS
+        if truncated:
+            descendants = descendants[:_MAX_BLAST_RADIUS_RESULTS]
+
+        coverage_status = (
+            "blast_radius_partial"
+            if truncated
+            else ("checked" if descendants else "checked_empty")
+        )
+
+        return BlastRadiusResult(
+            descendant_uuids=descendants,
+            coverage_status=coverage_status,
+            sources_checked=["sql_canonical"],
+            graph_checkpoint=checkpoint,
+            limitations=(
+                ["sql_graph_fallback: neo4j_disabled, computed lineage via canonical SQL store"]
+                + ([f"result truncated at {_MAX_BLAST_RADIUS_RESULTS} descendants"] if truncated else [])
+            ),
+        )
+
     if not record_uuids:
         return BlastRadiusResult(
             descendant_uuids=[],
             coverage_status="checked_empty",
             sources_checked=["neo4j"],
-            graph_checkpoint=datetime.now(UTC).isoformat(),
+            graph_checkpoint=checkpoint,
         )
 
     query = """
@@ -162,7 +269,6 @@ async def compute_blast_radius(
     RETURN DISTINCT desc.versionId AS versionId
     LIMIT $limit
     """
-    checkpoint = datetime.now(UTC).isoformat()
     try:
         async with neo4j_service._driver.session(database=neo4j_service._database) as neo_session:
             result = await neo_session.run(

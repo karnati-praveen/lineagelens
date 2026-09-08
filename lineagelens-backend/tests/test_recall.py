@@ -268,7 +268,7 @@ def test_blast_radius_includes_descendants(client, make_user, monkeypatch):
 
     from app.services.recall_service import BlastRadiusResult
 
-    async def _fake_compute_blast_radius(neo4j_svc, uuids, workspace_id):
+    async def _fake_compute_blast_radius(neo4j_svc, uuids, workspace_id, *args, **kwargs):
         descendants = [child_uuid] if parent_uuid in uuids else []
         return BlastRadiusResult(
             descendant_uuids=descendants,
@@ -467,3 +467,31 @@ def test_get_recall_not_found(client, make_user):
     admin = make_user(role="admin")
     resp = client.get("/recall/999999", headers=admin.auth_headers)
     assert resp.status_code == 404
+
+
+def test_compute_blast_radius_sql_canonical_fallback(client, make_user):
+    import asyncio
+    from app.services.recall_service import compute_blast_radius
+
+    admin = make_user(role="admin")
+    db_url = client.database_url
+    ws = admin.workspace_id
+
+    seed_uuid = _seed_provenance(db_url, ws, model_name="seed-model", ts_offset_hours=0)
+    desc_uuid = _seed_provenance(db_url, ws, model_name="desc-model", ts_offset_hours=1)
+
+    async def _test():
+        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+        engine = _engine_for(db_url)
+        try:
+            factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+            async with factory() as session:
+                res = await compute_blast_radius(None, [seed_uuid], ws, session=session, use_sql_fallback=True)
+                assert res.sources_checked == ["sql_canonical"]
+                assert desc_uuid in res.descendant_uuids
+                assert res.coverage_status == "checked"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_test())
+

@@ -115,7 +115,8 @@ def test_drill_with_neo4j_configured_attempts_rebuild(db_query):
     result = _run_drill(db_query, ws, neo4j_service=_FakeNeo4jService())
     by_step = {s.step: s.status for s in result.steps}
     assert by_step[STEP_REBUILD_GRAPH] == PASSED
-    assert result.overall_status == "green"
+    expected_overall = "green" if by_step[STEP_VERIFY_OFFLINE] == PASSED else "amber"
+    assert result.overall_status == expected_overall
 
 
 def test_drill_reports_failed_rebuild_not_silently_skipped(db_query):

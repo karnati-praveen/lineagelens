@@ -96,7 +96,8 @@ async def preview_recall(
     matched_uuids = [str(r.uuid) for r in matched]
 
     neo4j = _get_neo4j(request)
-    blast = await compute_blast_radius(neo4j, matched_uuids, auth.workspace_id)
+    use_sql = getattr(criteria, "use_sql_fallback", False) or False
+    blast = await compute_blast_radius(neo4j, matched_uuids, auth.workspace_id, session=session, use_sql_fallback=use_sql)
 
     return {
         "matchedCount": len(matched),
