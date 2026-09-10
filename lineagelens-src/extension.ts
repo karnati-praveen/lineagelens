@@ -58,6 +58,7 @@ import {
 } from './storage/StorageService';
 import { getStoragePathForUri } from './storagePath';
 import { DEFAULT_BACKEND_BASE_URL } from './src/constants';
+import { activateTerminalInterceptor, checkManifestEdits } from './terminalInterceptor';
 
 const CONFIG_SECTION = 'aiInsertionDetector';
 const MODE_CONFIG_SECTION = 'aiCodeProvenance';
@@ -178,6 +179,10 @@ export function activate(context: vscode.ExtensionContext): void {
   outputChannel = vscode.window.createOutputChannel('AI Insertion Detector');
   structuredLogger = new StructuredLogger((line) => outputChannel?.appendLine(line));
   context.subscriptions.push(outputChannel);
+
+  activateTerminalInterceptor(context);
+
+  configureAutoInstrumentation(context, getDetectorConfig());
 
   detectorStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   detectorStatusBarItem.command = 'aiInsertionDetector.showStatus';
@@ -311,6 +316,9 @@ export function activate(context: vscode.ExtensionContext): void {
       previousDocumentTexts.delete(document.uri.toString());
     }),
     vscode.workspace.onDidChangeTextDocument((event) => {
+      checkManifestEdits(event).catch((error: unknown) => {
+        log('Manifest check failed: ' + toErrorMessage(error));
+      });
       // fire-and-forget intentional — errors logged in catch
       queueDocumentChangeProcessing(event).catch((error: unknown) => {
         log('Document change processing failed: ' + toErrorMessage(error));
@@ -736,6 +744,7 @@ export function activate(context: vscode.ExtensionContext): void {
         event.affectsConfiguration(CONFIG_SECTION + '.localProxy.port') ||
         event.affectsConfiguration(CONFIG_SECTION + '.localProxy.retentionMs')
       ) {
+        configureAutoInstrumentation(context, getDetectorConfig(activeUri));
         if (runtimeInitialized) {
           void syncLocalProxyLifecycle();
         } else {
@@ -1075,6 +1084,17 @@ function toLineColumn(position: vscode.Position): LineColumn {
     line: position.line + 1,
     column: position.character + 1
   };
+}
+
+function configureAutoInstrumentation(context: vscode.ExtensionContext, config: DetectorConfig): void {
+  // Frontier 9: inject fail-soft SDK hooks into VS Code terminals.
+  const pythonHookDir = vscode.Uri.joinPath(context.extensionUri, 'instrumentation', 'python').fsPath;
+  const nodeHookFile = vscode.Uri.joinPath(context.extensionUri, 'instrumentation', 'node', 'hook.js').fsPath;
+  const localProxyUrl = `http://127.0.0.1:${config.localProxyPort}`;
+
+  context.environmentVariableCollection.replace('LINEAGELENS_LLM_PROXY_URL', localProxyUrl);
+  context.environmentVariableCollection.prepend('PYTHONPATH', `${pythonHookDir}${path.delimiter}`);
+  context.environmentVariableCollection.append('NODE_OPTIONS', ` --require "${nodeHookFile}"`);
 }
 
 function getDetectorConfig(resource?: vscode.Uri): DetectorConfig {

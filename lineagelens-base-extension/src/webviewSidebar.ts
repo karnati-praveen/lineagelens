@@ -63,23 +63,22 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly store: CaptureStore,
     private readonly onMutate: () => void,
-  ) {}
+  ) { }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
     webviewView.webview.options = { enableScripts: true };
-    webviewView.webview.html = this.html(webviewView.webview);
 
     webviewView.webview.onDidReceiveMessage((msg: { type: string; id?: string; source?: string; command?: string }) => {
       switch (msg.type) {
-        case 'ready':   this.postRecords(); break;
-        case 'open':    if (msg.id) { vscode.commands.executeCommand('lineagelens.openCapture', msg.id); } break;
-        case 'insert':  if (msg.id) { vscode.commands.executeCommand('lineagelens.insertAtCursor', msg.id); } break;
-        case 'copy':    if (msg.id) { vscode.commands.executeCommand('lineagelens.copyCode', msg.id); } break;
-        case 'reveal':  if (msg.id) { vscode.commands.executeCommand('lineagelens.revealInFile', msg.id); } break;
-        case 'delete':  if (msg.id) { vscode.commands.executeCommand('lineagelens.deleteCapture', msg.id); } break;
+        case 'ready': this.postRecords(); break;
+        case 'open': if (msg.id) { vscode.commands.executeCommand('lineagelens.openCapture', msg.id); } break;
+        case 'insert': if (msg.id) { vscode.commands.executeCommand('lineagelens.insertAtCursor', msg.id); } break;
+        case 'copy': if (msg.id) { vscode.commands.executeCommand('lineagelens.copyCode', msg.id); } break;
+        case 'reveal': if (msg.id) { vscode.commands.executeCommand('lineagelens.revealInFile', msg.id); } break;
+        case 'delete': if (msg.id) { vscode.commands.executeCommand('lineagelens.deleteCapture', msg.id); } break;
         case 'clearAll': vscode.commands.executeCommand('lineagelens.clearAll'); break;
-        case 'cmd':     if (msg.command && SIDEBAR_COMMANDS.has(msg.command)) { vscode.commands.executeCommand(msg.command); } break;
+        case 'cmd': if (msg.command && SIDEBAR_COMMANDS.has(msg.command)) { vscode.commands.executeCommand(msg.command); } break;
         case 'reclassify': {
           const src = msg.source as CaptureSource;
           if (msg.id && (src === 'ai' || src === 'paste' || src === 'unknown')) {
@@ -92,6 +91,12 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
 
     // Re-send data whenever the view becomes visible again (state can change while hidden).
     webviewView.onDidChangeVisibility(() => { if (webviewView.visible) { this.postRecords(); } });
+
+    // Set HTML last: the webview fires `ready` on load, so the listener above
+    // must exist before any script can post. The deferred push covers hosts
+    // that restore the view without re-firing `ready`.
+    webviewView.webview.html = this.html(webviewView.webview);
+    setTimeout(() => { this.postRecords(); }, 0);
   }
 
   /** Push the current store contents to the webview, if it is live. */

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.security import AuthContext
+from app.db.models import RecordEncryptionKey
 from app.schemas.provenance import SearchRequest
 from app.services.ingest_normalizer import NormalizedIngestPayload, normalize_ingest_payload
 from app.services.provenance_service import ingest_provenance_event, search_provenance_records
@@ -228,7 +229,9 @@ def test_ingest_provenance_event_stores_null_user_for_non_uuid_subject(monkeypat
     )
 
     assert outcome.record.user_id is None
-    assert session.added_records == [outcome.record]
+    assert session.added_records[0] is outcome.record
+    assert isinstance(session.added_records[1], RecordEncryptionKey)
+    assert session.added_records[1].record_uuid == str(outcome.record.uuid)
     assert session.flush_calls == 1
     assert session.commit_calls == 1
     assert invalidated_workspaces == [workspace_id]

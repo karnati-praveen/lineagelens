@@ -1,6 +1,7 @@
 from app.services.insights_service import (
     _insights_cache,
     build_insights_dashboard,
+    build_recall_coverage_warnings,
     get_agent_context,
     invalidate_insights_cache,
 )
@@ -201,3 +202,44 @@ def test_invalidate_insights_cache_only_removes_workspace_entries() -> None:
     assert "admin:filtered-dashboard" not in _insights_cache
     assert "other:empty-dashboard" in _insights_cache
     _insights_cache.clear()
+
+
+def test_dashboard_renders_warnings() -> None:
+    dashboard = build_insights_dashboard([], extra_warnings=["Blast radius could not be fully computed."])
+
+    assert dashboard["warnings"] == ["Blast radius could not be fully computed."]
+
+
+def test_recall_coverage_warnings_include_incomplete_open_campaigns(db_query) -> None:
+    async def _seed(session):
+        from app.db.models import RecallCampaign
+
+        session.add(RecallCampaign(
+            workspace_id="ws-warn",
+            created_by="admin",
+            criteria_json={"model": "bad-model"},
+            status="open",
+            matched_count=1,
+            member_uuids=[],
+            blast_uuids=[],
+            blast_coverage_status="unavailable",
+        ))
+        session.add(RecallCampaign(
+            workspace_id="ws-warn",
+            created_by="admin",
+            criteria_json={"model": "ok-model"},
+            status="open",
+            matched_count=1,
+            member_uuids=[],
+            blast_uuids=[],
+            blast_coverage_status="checked",
+        ))
+        await session.commit()
+
+        return await build_recall_coverage_warnings(session, "ws-warn")
+
+    warnings = db_query(_seed)
+
+    assert len(warnings) == 1
+    assert "incomplete blast-radius coverage" in warnings[0]
+    assert "unavailable" in warnings[0]

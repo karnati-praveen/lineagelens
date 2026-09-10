@@ -127,9 +127,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     decorations.apply(vscode.window.activeTextEditor);
   }
 
+  let lastActiveTextEditor = vscode.window.activeTextEditor;
+
   // Repaint decorations when the user switches files.
   context.subscriptions.push(
-    vscode.window.onDidChangeActiveTextEditor(editor => decorations.apply(editor)),
+    vscode.window.onDidChangeActiveTextEditor(editor => {
+      if (editor) { lastActiveTextEditor = editor; }
+      decorations.apply(editor);
+    }),
   );
 
   // Captured ranges shift as the user types — debounce a repaint of the active
@@ -148,17 +153,51 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   decorations.apply(vscode.window.activeTextEditor);
 
   // ── Shared record actions (reused by tree commands and the detail panel) ──────
-  function insertRecord(record: { insertedCode: string; fileName: string }): void {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) {
-      vscode.window.showWarningMessage('LineageLens: No active editor — open a file first.');
-      return;
-    }
-    editor.edit(editBuilder => {
+  function sameFile(editor: vscode.TextEditor | undefined, filePath: string | undefined): boolean {
+    if (!editor || !filePath || editor.document.uri.scheme !== 'file') { return false; }
+    const left = path.resolve(editor.document.uri.fsPath);
+    const right = path.resolve(filePath);
+    return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+  }
+
+  async function insertIntoEditor(editor: vscode.TextEditor, text: string): Promise<boolean> {
+    return editor.edit(editBuilder => {
       for (const sel of editor.selections) {
-        editBuilder.insert(sel.active, record.insertedCode);
+        editBuilder.insert(sel.active, text);
       }
     });
+  }
+
+  async function insertAtDocumentEnd(filePath: string, text: string): Promise<boolean> {
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+    const editor = await vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.One });
+    const end = doc.lineAt(Math.max(0, doc.lineCount - 1)).range.end;
+    return editor.edit(editBuilder => { editBuilder.insert(end, text); });
+  }
+
+  async function insertRecord(record: { insertedCode: string; fileName: string; filePath?: string }): Promise<void> {
+    const editor = vscode.window.activeTextEditor
+      ?? lastActiveTextEditor
+      ?? vscode.window.visibleTextEditors.find(e => sameFile(e, record.filePath));
+
+    if (!editor) {
+      if (!record.filePath) {
+        vscode.window.showWarningMessage('LineageLens: No active editor — open a file first.');
+        return;
+      }
+      try {
+        if (!await insertAtDocumentEnd(record.filePath, record.insertedCode)) {
+          vscode.window.showWarningMessage(`LineageLens: Could not insert code into "${record.fileName}".`);
+        }
+      } catch {
+        vscode.window.showWarningMessage(`LineageLens: Could not open ${record.filePath} — the file may have moved or been deleted.`);
+      }
+      return;
+    }
+
+    if (!await insertIntoEditor(editor, record.insertedCode)) {
+      vscode.window.showWarningMessage(`LineageLens: Could not insert code into "${record.fileName}".`);
+    }
   }
 
   function copyRecord(record: { insertedCode: string; fileName: string }): void {
@@ -231,7 +270,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           return;
         }
         switch (msg.type) {
-          case 'insert': insertRecord(current); break;
+          case 'insert': await insertRecord(current); break;
           case 'copy':   copyRecord(current); break;
           case 'reveal': await revealRecord(current); break;
           case 'delete':
@@ -359,14 +398,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Insert capture code at the active editor cursor (also used by the context menu)
   context.subscriptions.push(
-    vscode.commands.registerCommand('lineagelens.insertAtCursor', (idOrItem: unknown) => {
+    vscode.commands.registerCommand('lineagelens.insertAtCursor', async (idOrItem: unknown) => {
       const id = resolveId(idOrItem);
       const record = id ? store.getById(id) : undefined;
       if (!record) {
         vscode.window.showErrorMessage('LineageLens: Capture not found.');
         return;
       }
-      insertRecord(record);
+      await insertRecord(record);
     }),
   );
 

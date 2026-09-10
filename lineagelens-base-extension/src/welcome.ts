@@ -86,64 +86,72 @@ function renderHtml(webview: vscode.Webview): string {
   :root { --accent: #7c8cff; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: var(--vscode-font-family); color: var(--vscode-foreground);
-    background:
-      radial-gradient(120% 60% at 50% -10%, rgba(124,140,255,.14), transparent 60%),
-      var(--vscode-editor-background);
+    font-family: var(--vscode-font-family); color: #FFFFFF;
+    background: #0A0A0A;
     line-height: 1.5; padding: 0 0 60px;
+    min-height: 100vh;
   }
-  .wrap { max-width: 860px; margin: 0 auto; padding: 0 24px; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 0 32px; }
 
   /* Hero */
-  .hero { text-align: center; padding: 48px 24px 28px; }
+  .hero { text-align: center; padding: 64px 24px 32px; }
   .logo { font-size: 40px; }
-  .hero h1 { font-size: 26px; font-weight: 700; margin: 10px 0 6px; }
-  .hero .tag { font-size: 14px; color: var(--vscode-descriptionForeground); max-width: 560px; margin: 0 auto; }
-  .hero .sub { font-size: 12.5px; color: var(--vscode-descriptionForeground); margin-top: 10px; }
-  .cta { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 20px; }
+  .hero h1 { font-size: 34px; font-weight: 700; letter-spacing: -.5px; margin: 12px 0 8px; color: #FFFFFF; }
+  .hero .tag { font-size: 14px; color: #A1A1A1; max-width: 560px; margin: 0 auto; }
+  .hero .sub { font-size: 12.5px; color: #A1A1A1; margin-top: 10px; }
+  .cta { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 22px; }
 
   .btn {
     display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
-    border: 1px solid var(--vscode-button-border, transparent); border-radius: 7px;
-    padding: 8px 14px; font-size: 12.5px; font-family: inherit;
-    background: var(--vscode-button-background); color: var(--vscode-button-foreground);
+    border: none; border-radius: 8px;
+    padding: 10px 18px; font-size: 13px; font-weight: 600; font-family: inherit;
+    color: #000000; background: #FFFFFF;
+    transition: background .15s ease;
   }
-  .btn:hover { background: var(--vscode-button-hoverBackground); }
-  .btn.sec { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
-  .btn.sec:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  .btn:hover { background: #E8E8E8; }
+  .btn.sec {
+    background: transparent; color: #FFFFFF;
+    border: 1px solid rgba(255,255,255,.16);
+  }
+  .btn.sec:hover { background: transparent; border-color: rgba(255,255,255,.32); }
   .btn.sm { padding: 5px 10px; font-size: 11.5px; border-radius: 6px; }
 
-  h2 { font-size: 17px; font-weight: 700; margin: 34px 0 4px; }
-  h2 .em { color: var(--accent); }
-  .lead { font-size: 12.5px; color: var(--vscode-descriptionForeground); margin-bottom: 14px; }
+  h2 { font-size: 18px; font-weight: 700; margin: 36px 0 4px; color: #FFFFFF; }
+  h2 .em { color: #FFFFFF; }
+  .lead { font-size: 12.5px; color: #A1A1A1; margin-bottom: 14px; }
 
   /* Feature grid */
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
   .card {
-    border: 1px solid var(--vscode-widget-border, rgba(255,255,255,.08)); border-radius: 10px;
-    padding: 14px 15px; background: var(--vscode-editorWidget-background, rgba(255,255,255,.025));
+    border: 1px solid rgba(255,255,255,.08); border-radius: 12px;
+    padding: 16px; background: rgba(255,255,255,.03);
+    transition: border-color .15s ease;
   }
+  .card:hover { border-color: rgba(255,255,255,.16); }
   .card .ico { font-size: 18px; }
-  .card h3 { font-size: 13.5px; font-weight: 700; margin: 6px 0 5px; }
-  .card p { font-size: 12px; color: var(--vscode-descriptionForeground); }
-  .card ul { margin: 8px 0 10px 16px; font-size: 12px; color: var(--vscode-descriptionForeground); }
+  .card h3 { font-size: 13.5px; font-weight: 700; margin: 8px 0 6px; color: #FFFFFF; }
+  .card p { font-size: 12px; color: #A1A1A1; }
+  .card ul { margin: 8px 0 10px 16px; font-size: 12px; color: #A1A1A1; }
   .card li { margin-bottom: 3px; }
-  .card .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .card .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 
   /* Mode section */
   .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 620px) { .modes { grid-template-columns: 1fr; } }
   .mode {
-    border: 1px solid var(--vscode-widget-border, rgba(255,255,255,.08)); border-radius: 10px; padding: 16px;
+    border: 1px solid rgba(255,255,255,.08); border-radius: 12px; padding: 18px;
+    background: rgba(255,255,255,.03);
+    transition: border-color .15s ease;
   }
-  .mode.easy { border-color: rgba(245,166,35,.4); }
-  .mode.power { border-color: rgba(124,140,255,.5); background: rgba(124,140,255,.05); }
-  .mode .pill { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 20px; }
-  .mode.easy .pill { color: #f5a623; border: 1px solid rgba(245,166,35,.4); }
-  .mode.power .pill { color: var(--accent); border: 1px solid rgba(124,140,255,.5); }
-  .mode h3 { font-size: 14px; margin: 8px 0 6px; }
-  .mode p { font-size: 12px; color: var(--vscode-descriptionForeground); }
-  .mode ul { margin: 8px 0 0 16px; font-size: 12px; color: var(--vscode-descriptionForeground); }
+  .mode:hover { border-color: rgba(255,255,255,.16); }
+  .mode.easy { border-color: rgba(255,255,255,.08); }
+  .mode.power { border-color: rgba(255,255,255,.14); background: rgba(255,255,255,.04); }
+  .mode .pill { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 20px; color: #FFFFFF; border: 1px solid rgba(255,255,255,.16); }
+  .mode.easy .pill { color: #FFFFFF; border: 1px solid rgba(255,255,255,.16); }
+  .mode.power .pill { color: #FFFFFF; border: 1px solid rgba(255,255,255,.24); }
+  .mode h3 { font-size: 14px; margin: 8px 0 6px; color: #FFFFFF; }
+  .mode p { font-size: 12px; color: #A1A1A1; }
+  .mode ul { margin: 8px 0 0 16px; font-size: 12px; color: #A1A1A1; }
   .mode li { margin-bottom: 4px; }
 
   .steps { counter-reset: step; margin: 14px 0 0; list-style: none; }

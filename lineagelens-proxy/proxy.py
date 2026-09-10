@@ -646,6 +646,15 @@ async def proxy_request(request: Request, path: str) -> Response:
     if provider == "unknown":
         provider = detect_provider_and_format(url, dict(request.headers))
 
+    if provider == "unknown":
+        # Never forward client credentials when the provider is unrecognized —
+        # misrouted keys are a credential-egress path. Fail closed.
+        headers = {
+            k: v for k, v in headers.items()
+            if k.lower() not in {"authorization", "x-api-key", "x-goog-api-key", "cookie"}
+        }
+        return Response(content="Unknown provider for this path", status_code=400)
+
     logger.debug("provider routing: inbound=/%s -> provider=%s upstream=%s", safe_path, provider, url)
 
     try:

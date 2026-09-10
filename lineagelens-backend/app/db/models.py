@@ -78,6 +78,7 @@ class ProvenanceRecord(Base):
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     is_redacted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
+    is_encrypted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
 
     lineage_node_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
@@ -249,11 +250,36 @@ class RetentionPolicy(Base):
     retain_days: Mapped[int] = mapped_column(Integer, nullable=False, default=365)
     redact_after_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class RetentionPolicyVersion(Base):
+    __tablename__ = "retention_policy_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    policy_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    change_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    retain_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    redact_after_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_retention_policy_version_policy", "policy_id", "version"),
+        UniqueConstraint("policy_id", "version", name="uq_retention_policy_version"),
     )
 
 
@@ -581,6 +607,7 @@ class RoutingPolicy(Base):
     enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
+    current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -592,6 +619,30 @@ class RoutingPolicy(Base):
     __table_args__ = (
         UniqueConstraint("workspace_id", "provider", name="uq_routing_policy_workspace_provider"),
         Index("ix_routing_policy_workspace", "workspace_id"),
+    )
+
+
+class RoutingPolicyVersion(Base):
+    __tablename__ = "routing_policy_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    policy_id: Mapped[uuid_pkg.UUID] = mapped_column(Uuid(), index=True, nullable=False)
+    workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    change_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    mappings: Mapped[dict] = mapped_column(_JSON_TYPE, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_routing_policy_version_policy", "policy_id", "version"),
+        UniqueConstraint("policy_id", "version", name="uq_routing_policy_version"),
     )
 
 
@@ -955,3 +1006,38 @@ class WitnessReceipt(Base):
     __table_args__ = (
         Index("ix_witness_receipts_workspace_root", "workspace_id", "root_hash"),
     )
+
+
+class RecordEncryptionKey(Base):
+    """Stores the ephemeral AES-256-GCM key used to encrypt the payload of a specific ProvenanceRecord.
+    Deleting this key (Crypto-Shredding) permanently removes access to the plaintext without mutating the main table.
+    """
+    __tablename__ = "record_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    record_uuid: Mapped[str] = mapped_column(String(64), index=True, unique=True, nullable=False)
+    encryption_key: Mapped[str] = mapped_column(Text, nullable=False) # Stored as hex/base64 encoded AES key
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class EpochNotarization(Base):
+    """Stores RFC 3161 Time Stamping Authority receipts proving a Merkle root existed at a specific time."""
+    __tablename__ = "epoch_notarizations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    merkle_root: Mapped[str] = mapped_column(String(64), nullable=False)
+    start_record_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    end_record_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tsa_token: Mapped[str] = mapped_column(Text, nullable=False) # ASN.1 or base64 encoded RFC3161 token
+    tsa_provider: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_epoch_notarization_workspace_root", "workspace_id", "merkle_root"),
+    )
+

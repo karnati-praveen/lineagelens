@@ -90,11 +90,8 @@ async def token_login(
 
 
 def _registration_conflict_detail(exc: IntegrityError) -> str:
-    """Return a precise 409 message by inspecting which constraint fired."""
-    msg = str(getattr(exc, "orig", exc)).lower()
-    if "user_account" in msg or "username" in msg or "uq_user" in msg:
-        return "Username already taken."
-    return "Workspace ID already taken."
+    """Generic 409 message — never reveal whether the username or workspace exists."""
+    return "Username or workspace ID already taken."
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_auth_rate_limit)])
@@ -399,6 +396,10 @@ async def accept_invite(
         await kv_store.delete(f"{_INVITE_PREFIX}{payload.token}")
         raise HTTPException(status_code=status.HTTP_410_GONE, detail="Invite token has already been fully used.")
 
+    # Single-use invites are consumed BEFORE user creation so concurrent
+    # accepts cannot both succeed (kv store has no atomic incr).
+    await kv_store.delete(f"{_INVITE_PREFIX}{payload.token}")
+
     username = normalize_username(payload.username)
     validate_password_strength(payload.password, settings)
 
@@ -421,14 +422,7 @@ async def accept_invite(
         await session.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken.")
 
-    # Mark invite as used; delete when exhausted.
-    invite["used"] += 1
-    if invite["used"] >= invite["max_uses"]:
-        await kv_store.delete(f"{_INVITE_PREFIX}{payload.token}")
-    else:
-        remaining_ttl = max(1, int((expires_at - datetime.now(tz=UTC)).total_seconds()))
-        await kv_store.set(f"{_INVITE_PREFIX}{payload.token}", invite, ttl=remaining_ttl)
-
+    # Invite was already consumed above (single-use only).
     return await issue_token_response(session, user, settings)
 
 

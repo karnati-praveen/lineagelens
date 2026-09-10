@@ -116,9 +116,12 @@ def test_valid_oidc_login_provisions_user_in_correct_workspace(client, make_user
     data = resp.json()
     assert "accessToken" in data
     assert "refreshToken" in data
+    import hashlib as _hashlib
     assert data["workspaceId"] == admin.workspace_id
     assert data["user"]["workspaceId"] == admin.workspace_id
-    assert data["user"]["username"] == "sso_external-user-001"
+    # IdP subjects are hashed (no truncation collision, no raw sub as username).
+    expected = "sso_" + _hashlib.sha256(f"{provider_id}:external-user-001".encode()).hexdigest()[:48]
+    assert data["user"]["username"] == expected
 
 
 def test_second_login_links_existing_user(client, make_user):

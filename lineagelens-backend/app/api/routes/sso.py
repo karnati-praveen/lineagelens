@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +39,8 @@ logger = logging.getLogger(__name__)
 _PROVIDER_NOT_FOUND = "Provider not found."
 
 
+ALLOWED_SSO_DEFAULT_ROLES = {"member", "reviewer", "viewer"}
+
 class OidcProviderCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
     issuer: str = Field(..., min_length=1, max_length=512)
@@ -49,6 +51,14 @@ class OidcProviderCreate(BaseModel):
     enabled: bool = True
 
     model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("default_role")
+    @classmethod
+    def validate_default_role(cls, value: str) -> str:
+        role = (value or "").strip().lower()
+        if role not in ALLOWED_SSO_DEFAULT_ROLES:
+            raise ValueError(f"defaultRole must be one of {sorted(ALLOWED_SSO_DEFAULT_ROLES)}.")
+        return role
 
 
 def _ser(p: OidcProvider) -> dict:
@@ -79,12 +89,13 @@ async def create_oidc_provider(
             detail=f"Could not fetch OIDC discovery document from '{payload.issuer}': {exc}",
         )
 
+    from app.core.encryption import encrypt_field
     provider = OidcProvider(
         workspace_id=auth.workspace_id,
         name=payload.name,
         issuer=payload.issuer,
         client_id=payload.client_id,
-        client_secret=payload.client_secret,
+        client_secret=encrypt_field(payload.client_secret),
         scopes=payload.scopes,
         default_role=payload.default_role,
         enabled=payload.enabled,
@@ -227,16 +238,26 @@ async def sso_callback(
         raise HTTPException(status_code=400, detail="SSO provider no longer exists.")
     if not provider.enabled:
         raise HTTPException(status_code=404, detail="Provider not found or disabled.")
+    # State binds the flow to the exact provider + workspace that initiated it.
+    # Reject callbacks where the provider's workspace drifted since login.
+    state_workspace = str(state_data.get("workspace_id") or "")
+    if not state_workspace or state_workspace != provider.workspace_id:
+        raise HTTPException(status_code=400, detail="SSO state workspace mismatch.")
 
     redirect_uri = str(request.base_url).rstrip("/") + "/auth/sso/callback"
 
     try:
+        from app.core.encryption import decrypt_field
+        try:
+            provider_secret = decrypt_field(provider.client_secret or "")
+        except ValueError:
+            provider_secret = provider.client_secret or ""
         discovery_doc = await fetch_discovery_doc(provider.issuer)
         tokens = await exchange_code(
             code=code,
             redirect_uri=redirect_uri,
             client_id=provider.client_id,
-            client_secret=provider.client_secret,
+            client_secret=provider_secret,
             token_endpoint=discovery_doc["token_endpoint"],
         )
         userinfo = await fetch_userinfo(
@@ -254,7 +275,10 @@ async def sso_callback(
         raise HTTPException(status_code=502, detail="OIDC userinfo missing 'sub' claim.")
 
     workspace_id = provider.workspace_id
-    sso_username = f"sso_{sub}"[:128]
+    import hashlib as _hashlib
+    # Hash the IdP subject so distinct subs can never collide via truncation,
+    # and no raw IdP identifier becomes a local username.
+    sso_username = "sso_" + _hashlib.sha256(f"{provider.id}:{sub}".encode()).hexdigest()[:48]
 
     user_result = await session.execute(
         select(UserAccount).where(

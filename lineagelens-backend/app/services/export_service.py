@@ -71,13 +71,14 @@ async def run_export_job(
             job.filename = "export.json"
 
         elif fmt == "csv":
+            from app.api.routes.export import _safe_csv_value
             output = io.StringIO()
             if records:
                 keys = ["uuid", "filePath", "modelName", "timestampIso", "riskScore", "insertedCode", "tokenCount", "costUsd"]
                 writer = csv.DictWriter(output, fieldnames=keys, extrasaction="ignore", quoting=csv.QUOTE_ALL)
                 writer.writeheader()
                 for row in records:
-                    writer.writerow({k: str(row.get(k, "")) for k in keys})
+                    writer.writerow({k: _safe_csv_value(str(row.get(k, ""))) for k in keys})
             job.result_bytes = output.getvalue().encode()
             job.result_content_type = "text/csv"
             job.filename = "export.csv"

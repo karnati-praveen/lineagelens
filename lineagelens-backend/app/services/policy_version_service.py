@@ -14,7 +14,7 @@ import json
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Policy, PolicyVersion
+from app.db.models import Policy, PolicyVersion, RoutingPolicy, RoutingPolicyVersion, RetentionPolicy, RetentionPolicyVersion
 
 # Bumped whenever the policy evaluation semantics change, so a decision can be
 # replayed against the evaluator that produced it.
@@ -116,3 +116,95 @@ async def list_versions(
         .order_by(PolicyVersion.version.asc())
     )
     return list(result.scalars().all())
+
+
+def compute_routing_digest(provider: str, mappings: dict) -> str:
+    canonical = json.dumps({"provider": provider, "mappings": mappings}, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+async def append_routing_version(
+    session: AsyncSession,
+    policy: RoutingPolicy,
+    *,
+    change_type: str,
+    created_by: str | None,
+) -> RoutingPolicyVersion:
+    digest = compute_routing_digest(provider=policy.provider, mappings=policy.mappings)
+
+    prev = (
+        await session.execute(
+            select(RoutingPolicyVersion)
+            .where(
+                RoutingPolicyVersion.policy_id == policy.id,
+                RoutingPolicyVersion.superseded_at.is_(None),
+            )
+            .order_by(RoutingPolicyVersion.version.desc())
+        )
+    ).scalars().first()
+
+    next_version = (prev.version + 1) if prev is not None else 1
+    if prev is not None:
+        from datetime import UTC, datetime
+        prev.superseded_at = datetime.now(UTC)
+
+    version = RoutingPolicyVersion(
+        policy_id=policy.id,
+        workspace_id=policy.workspace_id,
+        version=next_version,
+        change_type=change_type,
+        provider=policy.provider,
+        mappings=policy.mappings,
+        enabled=policy.enabled,
+        digest=digest,
+        created_by=created_by,
+    )
+    session.add(version)
+    policy.current_version = next_version
+    return version
+
+
+def compute_retention_digest(retain_days: int, redact_after_days: int | None) -> str:
+    canonical = json.dumps({"retain_days": retain_days, "redact_after_days": redact_after_days}, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+async def append_retention_version(
+    session: AsyncSession,
+    policy: RetentionPolicy,
+    *,
+    change_type: str,
+    created_by: str | None,
+) -> RetentionPolicyVersion:
+    digest = compute_retention_digest(retain_days=policy.retain_days, redact_after_days=policy.redact_after_days)
+
+    prev = (
+        await session.execute(
+            select(RetentionPolicyVersion)
+            .where(
+                RetentionPolicyVersion.policy_id == policy.id,
+                RetentionPolicyVersion.superseded_at.is_(None),
+            )
+            .order_by(RetentionPolicyVersion.version.desc())
+        )
+    ).scalars().first()
+
+    next_version = (prev.version + 1) if prev is not None else 1
+    if prev is not None:
+        from datetime import UTC, datetime
+        prev.superseded_at = datetime.now(UTC)
+
+    version = RetentionPolicyVersion(
+        policy_id=policy.id,
+        workspace_id=policy.workspace_id,
+        version=next_version,
+        change_type=change_type,
+        retain_days=policy.retain_days,
+        redact_after_days=policy.redact_after_days,
+        enabled=policy.enabled,
+        digest=digest,
+        created_by=created_by,
+    )
+    session.add(version)
+    policy.current_version = next_version
+    return version

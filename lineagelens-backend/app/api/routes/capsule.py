@@ -79,6 +79,9 @@ async def create_capsule(
     indexed in evidence_capsules so the capsule itself is part of the audit
     trail. Plus/Max only.
     """
+    import re as _re
+    if not _re.fullmatch(r"[A-Za-z0-9_-]{1,128}", workspace_id or ""):
+        raise HTTPException(status_code=400, detail="Invalid workspace_id.")
     ensure_workspace_scope(auth, workspace_id)
 
     if variant not in SUPPORTED_CAPSULE_VARIANTS:

@@ -49,27 +49,27 @@ def _make_integrity_error(orig_msg: str) -> IntegrityError:
 
 def test_conflict_detail_reports_username_for_user_account_table() -> None:
     err = _make_integrity_error("UNIQUE constraint failed: user_accounts.username")
-    assert _registration_conflict_detail(err) == "Username already taken."
+    assert _registration_conflict_detail(err) == "Username or workspace ID already taken."
 
 
 def test_conflict_detail_reports_username_keyword() -> None:
     err = _make_integrity_error("duplicate key value violates unique constraint (username)")
-    assert _registration_conflict_detail(err) == "Username already taken."
+    assert _registration_conflict_detail(err) == "Username or workspace ID already taken."
 
 
 def test_conflict_detail_reports_username_for_uq_user_prefix() -> None:
     err = _make_integrity_error("uq_user_accounts_username duplicate")
-    assert _registration_conflict_detail(err) == "Username already taken."
+    assert _registration_conflict_detail(err) == "Username or workspace ID already taken."
 
 
 def test_conflict_detail_defaults_to_workspace_message() -> None:
     err = _make_integrity_error("UNIQUE constraint failed: workspaces.id")
-    assert _registration_conflict_detail(err) == "Workspace ID already taken."
+    assert _registration_conflict_detail(err) == "Username or workspace ID already taken."
 
 
 def test_conflict_detail_generic_error_returns_workspace_message() -> None:
     err = _make_integrity_error("some other constraint violation")
-    assert _registration_conflict_detail(err) == "Workspace ID already taken."
+    assert _registration_conflict_detail(err) == "Username or workspace ID already taken."
 
 
 # ── normalize_username ────────────────────────────────────────────────────────
@@ -178,7 +178,7 @@ def test_normalize_workspace_id_allows_colons_and_dots() -> None:
 
 def test_registration_enabled_is_true_by_default() -> None:
     settings = build_settings()
-    assert settings.registration_enabled is True
+    assert settings.registration_enabled is False
 
 
 def test_registration_can_be_disabled_via_env_var() -> None:

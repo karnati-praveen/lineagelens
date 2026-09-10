@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { minimatch } from 'minimatch';
 import { CaptureStore, CaptureSource } from './store';
 import { captureGitContext, GitContext, GIT_UNAVAILABLE } from './evidence/git';
@@ -19,7 +21,14 @@ const AI_TOOL_HINTS = [
   /supermaven\.supermaven/i,
   /blackboxapp\.blackbox/i,
   /amazonwebservices\.amazon-q-vscode/i,
+  /antigravity/i,
+  /gemini/i,
+  /google.*(ai|assistant)/i,
 ];
+
+export function matchesAiToolHint(value: string): boolean {
+  return AI_TOOL_HINTS.some(pattern => pattern.test(value));
+}
 
 // Scanning all extensions on every text-change event is O(extensions).
 // Cache the result and invalidate only when the extension set actually changes.
@@ -27,10 +36,37 @@ let _cachedAiToolActive: boolean | null = null;
 
 function detectAiToolActive(): boolean {
   if (_cachedAiToolActive !== null) { return _cachedAiToolActive; }
-  _cachedAiToolActive = vscode.extensions.all.some(ext =>
-    AI_TOOL_HINTS.some(pattern => pattern.test(ext.id)) && ext.isActive,
-  );
+  _cachedAiToolActive = matchesAiToolHint(vscode.env.appName) ||
+    vscode.extensions.all.some(ext =>
+      matchesAiToolHint(ext.id) && ext.isActive,
+    );
   return _cachedAiToolActive;
+}
+
+export interface InsertedBlock {
+  text: string;
+  startLine: number;
+}
+
+/** Return the changed line block in `after`, excluding unchanged prefix/suffix lines. */
+export function insertedBlock(before: string, after: string): InsertedBlock | null {
+  if (before === after) { return null; }
+  const oldLines = before.split('\n');
+  const newLines = after.split('\n');
+  let prefix = 0;
+  while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) {
+    prefix++;
+  }
+  let suffix = 0;
+  while (
+    suffix < oldLines.length - prefix &&
+    suffix < newLines.length - prefix &&
+    oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
+  ) {
+    suffix++;
+  }
+  const changed = newLines.slice(prefix, newLines.length - suffix);
+  return changed.length > 0 ? { text: changed.join('\n'), startLine: prefix } : null;
 }
 
 /** Normalise text for comparison: strip trailing whitespace on each line. */
@@ -109,6 +145,12 @@ export class CaptureService {
   private static readonly GIT_TTL_MS = 15_000;
   // Backend ingest capability (legacy vs evidence-v2); detected in the background.
   private _capability: IngestCapability = 'legacy';
+  private _fileSnapshots = new Map<string, string>();
+  private _fileTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private _createdFiles = new Set<string>();
+  private static readonly SNAPSHOT_MAX_FILES = 5_000;
+  private static readonly SNAPSHOT_MAX_FILE_BYTES = 512 * 1024;
+  private static readonly SNAPSHOT_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 
   constructor(
     store: CaptureStore,
@@ -130,6 +172,10 @@ export class CaptureService {
       );
     });
     this.disposables.push(listener);
+
+    // Built-in and CLI agents may write directly to disk without producing a
+    // TextDocument change event in this extension host.
+    void this.startFilesystemCapture();
 
     // Invalidate the AI-tool cache whenever extensions are installed/uninstalled/activated.
     this.disposables.push(
@@ -168,6 +214,133 @@ export class CaptureService {
     this._gitContextAt = Date.now();
   }
 
+  private snapshotKey(filePath: string): string {
+    const resolved = path.resolve(filePath);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  }
+
+  private isExcluded(filePath: string, patterns: string[]): boolean {
+    return patterns.some(p => minimatch(filePath, p, { matchBase: true }));
+  }
+
+  private async readSnapshot(filePath: string): Promise<string | undefined> {
+    try {
+      const stat = await fs.promises.stat(filePath);
+      if (!stat.isFile() || stat.size > CaptureService.SNAPSHOT_MAX_FILE_BYTES) { return undefined; }
+      const bytes = await fs.promises.readFile(filePath);
+      if (bytes.includes(0)) { return undefined; }
+      return bytes.toString('utf8');
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async startFilesystemCapture(): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration('lineagelensBase');
+    const excludePatterns: string[] = cfg.get('excludePatterns', []);
+    let totalBytes = 0;
+    try {
+      const files = await vscode.workspace.findFiles('**/*', undefined, CaptureService.SNAPSHOT_MAX_FILES);
+      for (const uri of files) {
+        if (this._disposed || uri.scheme !== 'file' || this.isExcluded(uri.fsPath, excludePatterns)) { continue; }
+        const content = await this.readSnapshot(uri.fsPath);
+        if (content === undefined) { continue; }
+        totalBytes += Buffer.byteLength(content);
+        if (totalBytes > CaptureService.SNAPSHOT_MAX_TOTAL_BYTES) { break; }
+        const key = this.snapshotKey(uri.fsPath);
+        // A document event may have populated a newer in-memory value while the
+        // activation scan was reading this file.
+        if (!this._fileSnapshots.has(key)) { this._fileSnapshots.set(key, content); }
+      }
+    } catch {
+      // Workspace enumeration is best-effort; the editor capture path remains active.
+    }
+    if (this._disposed) { return; }
+
+    const watcher = vscode.workspace.createFileSystemWatcher('**/*');
+    const schedule = (uri: vscode.Uri, created: boolean) => {
+      if (uri.scheme !== 'file') { return; }
+      const key = this.snapshotKey(uri.fsPath);
+      if (created) { this._createdFiles.add(key); }
+      const existing = this._fileTimers.get(key);
+      if (existing) { clearTimeout(existing); }
+      this._fileTimers.set(key, setTimeout(() => {
+        this._fileTimers.delete(key);
+        const wasCreated = this._createdFiles.delete(key);
+        void this.handleFilesystemChange(uri, wasCreated).catch(err =>
+          console.error('LineageLens Base filesystem capture failed:', err),
+        );
+      }, 250));
+    };
+    this.disposables.push(
+      watcher,
+      watcher.onDidChange(uri => schedule(uri, false)),
+      watcher.onDidCreate(uri => schedule(uri, true)),
+      watcher.onDidDelete(uri => {
+        const key = this.snapshotKey(uri.fsPath);
+        const timer = this._fileTimers.get(key);
+        if (timer) { clearTimeout(timer); }
+        this._fileTimers.delete(key);
+        this._createdFiles.delete(key);
+        this._fileSnapshots.delete(key);
+      }),
+    );
+  }
+
+  private async handleFilesystemChange(uri: vscode.Uri, created: boolean): Promise<void> {
+    if (this._disposed) { return; }
+    const cfg = vscode.workspace.getConfiguration('lineagelensBase');
+    if (!cfg.get('captureEnabled', true)) { return; }
+    if (this.isExcluded(uri.fsPath, cfg.get<string[]>('excludePatterns', []))) { return; }
+
+    const content = await this.readSnapshot(uri.fsPath);
+    if (content === undefined) { return; }
+    const key = this.snapshotKey(uri.fsPath);
+    const previous = this._fileSnapshots.get(key);
+    this._fileSnapshots.set(key, content);
+    // A missing baseline is only trustworthy for a newly-created file.
+    if (previous === undefined && !created) { return; }
+
+    const block = insertedBlock(previous ?? '', content);
+    if (!block) { return; }
+    const linesAdded = block.text.split('\n').length;
+    const minLines = cfg.get<number>('minInsertionLines', 4);
+    if (linesAdded < minLines) { return; }
+
+    const { confidence, source } = await scoreInsertion(
+      block.text,
+      linesAdded,
+      minLines,
+      detectAiToolActive(),
+    );
+    if (source === 'paste') { return; }
+
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
+    const cwd = workspaceFolder?.uri.fsPath ?? this.gitCwd();
+    if (cwd && Date.now() - this._gitContextAt > CaptureService.GIT_TTL_MS) {
+      this._gitContextAt = Date.now();
+      void this.refreshGitContext(cwd);
+    }
+    const git = this._gitContext;
+    const record = this.store.add({
+      filePath: uri.fsPath,
+      fileName: path.basename(uri.fsPath),
+      language: path.extname(uri.fsPath).replace(/^\./, '') || 'plaintext',
+      insertedCode: block.text,
+      linesAdded,
+      workspaceFolder: workspaceFolder?.name ?? null,
+      confidence,
+      source,
+      startLine: block.startLine,
+      endLine: block.startLine + linesAdded - 1,
+      gitBranch: git.branch,
+      gitCommit: git.commit,
+    });
+    this._postToBackend(record);
+    this.updateStatusBar();
+    this.onCapture(record);
+  }
+
   private async handleChange(event: vscode.TextDocumentChangeEvent): Promise<void> {
     if (this._disposed) { return; }
 
@@ -187,10 +360,23 @@ export class CaptureService {
 
     const excludePatterns: string[] = cfg.get('excludePatterns', []);
     const filePath = doc.uri.fsPath;
-    if (excludePatterns.some(p => minimatch(filePath, p, { matchBase: true }))) { return; }
+    if (this.isExcluded(filePath, excludePatterns)) { return; }
 
     const minLines: number = cfg.get('minInsertionLines', 4);
     const aiExtensionActive = detectAiToolActive();
+
+    const wholeDocumentReplacement = event.contentChanges.some(change =>
+      !doc.isDirty &&
+      change.range.start.line === 0 &&
+      change.range.start.character === 0 &&
+      change.range.end.isEqual(doc.lineAt(doc.lineCount - 1).range.end),
+    );
+    // Keep disk snapshots aligned with normal editor changes so the subsequent
+    // save event cannot double-capture them. External whole-file reloads are left
+    // for the filesystem watcher, which still has the previous disk contents.
+    if (!wholeDocumentReplacement && typeof doc.getText === 'function') {
+      this._fileSnapshots.set(this.snapshotKey(filePath), doc.getText());
+    }
 
     for (const change of event.contentChanges) {
       const addedText = change.text;
@@ -202,12 +388,7 @@ export class CaptureService {
       // Skip whole-document replacements on a non-dirty document — these are
       // typically caused by git checkout or an external tool rewriting the file,
       // not by an AI insertion in the editor.
-      if (
-        !doc.isDirty &&
-        change.range.start.line === 0 &&
-        change.range.start.character === 0 &&
-        change.range.end.isEqual(doc.lineAt(doc.lineCount - 1).range.end)
-      ) {
+      if (wholeDocumentReplacement) {
         continue;
       }
 
@@ -402,6 +583,11 @@ export class CaptureService {
       clearTimeout(this._retryTimer);
       this._retryTimer = null;
     }
+
+    for (const timer of this._fileTimers.values()) { clearTimeout(timer); }
+    this._fileTimers.clear();
+    this._createdFiles.clear();
+    this._fileSnapshots.clear();
 
     for (const disposable of this.disposables) {
       try {

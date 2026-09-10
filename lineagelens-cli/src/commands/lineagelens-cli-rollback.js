@@ -103,8 +103,9 @@ async function rollback(mode, opts = {}) {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const safetyBackupFile = path.join(safetyBackupDir, `lineagelens-rollback-safety-${mode}-${timestamp}.dump`);
 
+  const { lockFilePermissions } = require('../utils/lineagelens-cli-fsperm');
   if (!fs.existsSync(safetyBackupDir)) {
-    fs.mkdirSync(safetyBackupDir, { recursive: true });
+    fs.mkdirSync(safetyBackupDir, { recursive: true, mode: 0o700 });
   }
 
   if (!isJsonMode()) console.log(`Creating safety backup → ${safetyBackupFile}`);
@@ -119,6 +120,7 @@ async function rollback(mode, opts = {}) {
   }
 
   fs.writeFileSync(safetyBackupFile, safetyBackupResult.stdout);
+  lockFilePermissions(safetyBackupFile);
 
   // Step 1: Stop backend service (not postgres)
   if (!isJsonMode()) console.log(`Stopping backend service for ${mode.toUpperCase()}...`);

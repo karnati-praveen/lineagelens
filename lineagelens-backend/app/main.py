@@ -50,6 +50,7 @@ from app.api.routes.scheduled_reports import router as scheduled_reports_router
 from app.api.routes.sso import router as sso_router
 from app.api.routes.setup import router as setup_router
 from app.api.routes.integrity import router as integrity_router
+from app.api.routes.notary import router as notary_router
 from app.api.routes.agent_trace import router as agent_trace_router
 from app.api.routes.agent_actions import router as agent_actions_router
 from app.api.routes.incidents import router as incidents_router
@@ -563,6 +564,7 @@ app.include_router(scheduled_reports_router)
 app.include_router(sso_router)
 app.include_router(setup_router)
 app.include_router(integrity_router)
+app.include_router(notary_router)
 app.include_router(agent_trace_router)
 app.include_router(agent_actions_router)
 app.include_router(incidents_router)

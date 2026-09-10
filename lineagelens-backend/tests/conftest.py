@@ -121,6 +121,9 @@ def client(tmp_path, monkeypatch):
 
     monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.setenv("RATE_LIMIT_ENABLED", "false")
+    # Tests exercise the registration flow directly; production default is
+    # disabled (REGISTRATION_ENABLED=false) so opt in explicitly here.
+    monkeypatch.setenv("REGISTRATION_ENABLED", "true")
     # Lower the body cap to its minimum so the 413 oversized-body test can send a
     # ~9 KB body instead of >2 MB. Still well above any payload these tests post.
     monkeypatch.setenv("HTTP_MAX_BODY_BYTES", "8192")

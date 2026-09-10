@@ -11,7 +11,7 @@ from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.model_names import normalize_model_name as _canonical_normalize_model_name
-from app.db.models import ProvenanceRecord, UserAccount
+from app.db.models import ProvenanceRecord, RecallCampaign, UserAccount
 from app.schemas.provenance import SearchRequest
 from app.services.provenance_service import (
     build_workspace_record_filters,
@@ -80,6 +80,8 @@ async def get_insights_dashboard_payload(
             "apply date or file filters to narrow results."
         )
 
+    extra_warnings.extend(await build_recall_coverage_warnings(session, workspace_id))
+
     member_stats = await build_member_stats(session, workspace_id)
     payload = build_insights_dashboard(records, extra_warnings=extra_warnings)
     payload["memberStats"] = [member.model_dump(by_alias=True) for member in member_stats]
@@ -136,6 +138,30 @@ async def build_member_stats(session: AsyncSession, workspace_id: str) -> list[A
         net_added_lines_by_user = {}
 
     return build_team_member_stats(users, record_counts, net_added_lines_by_user)
+
+
+async def build_recall_coverage_warnings(session: AsyncSession, workspace_id: str) -> list[str]:
+    stmt = (
+        select(RecallCampaign)
+        .where(
+            RecallCampaign.workspace_id == workspace_id,
+            RecallCampaign.status == "open",
+            RecallCampaign.blast_coverage_status.is_not(None),
+            RecallCampaign.blast_coverage_status.notin_(["checked", "checked_empty"]),
+        )
+        .order_by(desc(RecallCampaign.created_at))
+        .limit(5)
+    )
+    result = await session.execute(stmt)
+    campaigns = result.scalars().all()
+    warnings: list[str] = []
+    for campaign in campaigns:
+        status = campaign.blast_coverage_status or "unknown"
+        warnings.append(
+            f"Recall campaign #{campaign.id} has incomplete blast-radius coverage "
+            f"({status}); graph-derived impacted records may be missing."
+        )
+    return warnings
 
 
 def _top_high_risk_previews(high_risk: list[dict[str, Any]]) -> list[dict[str, Any]]:

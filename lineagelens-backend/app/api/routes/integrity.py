@@ -114,9 +114,39 @@ async def verify_chain(
             states["validly_deleted" if lifecycle == "deleted" else "validly_redacted"] += 1
         else:
             # Active record: recompute the chain hash from its content. The
-            # committed prompt digest is preferred over re-hashing prompt_messages
-            # so the check is stable across schema-compatible storage changes.
-            prompt_sha256 = record.prompt_sha256 or compute_prompt_sha256(record.prompt_messages)
+            # plaintext prompt must still match its stored commitment; otherwise
+            # mutating prompt_messages in-place would leave record_hash unchanged.
+            recomputed_prompt_sha256 = compute_prompt_sha256(record.prompt_messages)
+            if (
+                record.prompt_messages is not None
+                and record.prompt_sha256 is not None
+                and recomputed_prompt_sha256 != record.prompt_sha256
+            ):
+                await log_audit_event(
+                    session,
+                    workspace_id=workspace_id,
+                    user_id=auth.subject,
+                    action="integrity_verify_hash_break",
+                    target_uuid=str(record.uuid),
+                    details={
+                        "expected_prompt_sha256": record.prompt_sha256,
+                        "recomputed_prompt_sha256": recomputed_prompt_sha256,
+                        "reason": "prompt_commitment_mismatch",
+                    },
+                )
+                return {
+                    "ok": False,
+                    "records_checked": records_checked,
+                    "first_break_uuid": str(record.uuid),
+                    "states": states,
+                    "chainState": ChainState.TAMPERED.value,
+                    "message": (
+                        f"Prompt commitment mismatch at record {record.uuid}: stored prompt_sha256 "
+                        "does not match prompt_messages — record may have been tampered with."
+                    ),
+                }
+
+            prompt_sha256 = record.prompt_sha256 or recomputed_prompt_sha256
             expected_hash = compute_record_hash(
                 record_uuid=str(record.uuid),
                 workspace_id=record.workspace_id,

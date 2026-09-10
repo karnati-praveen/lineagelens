@@ -167,7 +167,7 @@ def test_normalize_confusable_characters(client, make_user):
 
 def test_current_alembic_head_matches_revision():
     from app.db.session import _CURRENT_ALEMBIC_HEAD
-    assert _CURRENT_ALEMBIC_HEAD == "202609080001"
+    assert _CURRENT_ALEMBIC_HEAD == "202609090001"
 
 
 def test_repeated_attempts_auto_revokes_code(client, make_user):

@@ -65,6 +65,17 @@ async def create_api_key(
     invalid_scopes = set(payload.scopes) - ALLOWED_SCOPES
     if invalid_scopes:
         raise HTTPException(status_code=400, detail=f"Invalid scopes: {sorted(invalid_scopes)}. Allowed: {sorted(ALLOWED_SCOPES)}")
+    # A key must never exceed the creator's own scopes (privilege-escalation
+    # guard). The API-key vocabulary has legacy aliases: provenance:read covers
+    # "read", provenance:write covers "write".
+    held = set(auth.scopes or [])
+    if "provenance:read" in held:
+        held |= {"read", "provenance:read"}
+    if "provenance:write" in held:
+        held |= {"write", "provenance:write"}
+    escalated = set(payload.scopes) - held
+    if escalated:
+        raise HTTPException(status_code=403, detail=f"Cannot grant scopes you do not hold: {sorted(escalated)}.")
 
     full_key, prefix, key_hash = _generate_api_key()
 

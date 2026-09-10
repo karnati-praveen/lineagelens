@@ -67,15 +67,15 @@ class Settings(BaseSettings):
     jwt_secret_key: str = Field(alias="JWT_SECRET_KEY")
     jwt_refresh_secret_key: str | None = Field(default=None, alias="JWT_REFRESH_SECRET_KEY")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
-    jwt_audience: str | None = Field(default="provenance-api", alias="JWT_AUDIENCE")
-    jwt_issuer: str | None = Field(default="provenance-backend", alias="JWT_ISSUER")
+    jwt_audience: str = Field(default="provenance-api", alias="JWT_AUDIENCE")
+    jwt_issuer: str = Field(default="provenance-backend", alias="JWT_ISSUER")
     jwt_access_token_ttl_minutes: int = Field(default=30, alias="JWT_ACCESS_TOKEN_TTL_MINUTES")
     jwt_refresh_token_ttl_minutes: int = Field(default=10080, alias="JWT_REFRESH_TOKEN_TTL_MINUTES")
     jwt_required_scopes: str = Field(
         default="provenance:write provenance:read", alias="JWT_REQUIRED_SCOPES"
     )
     auth_password_min_length: int = Field(default=8, alias="AUTH_PASSWORD_MIN_LENGTH")
-    registration_enabled: bool = Field(default=True, alias="REGISTRATION_ENABLED")
+    registration_enabled: bool = Field(default=False, alias="REGISTRATION_ENABLED")
 
     # Admin auto-seed: if set and no users exist yet, a first admin account is created on startup.
     admin_seed_username: str | None = Field(default=None, alias="ADMIN_SEED_USERNAME")
@@ -134,6 +134,7 @@ class Settings(BaseSettings):
     smtp_from: str | None = Field(default=None, alias="SMTP_FROM")
 
     proxy_static_token: str = Field(default="", alias="PROXY_STATIC_TOKEN")
+    proxy_static_workspace: str = Field(default="", alias="PROXY_STATIC_WORKSPACE")
 
     # Field-level encryption key for sensitive DB columns (GitHub tokens, webhook secrets).
     # If unset the system falls back to deriving a key from JWT_SECRET_KEY.
@@ -253,6 +254,21 @@ class Settings(BaseSettings):
                 "PROXY_STATIC_TOKEN must be at least 32 characters long when set."
             )
         return value
+
+    @field_validator("jwt_algorithm")
+    @classmethod
+    def validate_jwt_algorithm(cls, value: str) -> str:
+        alg = (value or "").strip()
+        if alg not in {"HS256", "HS384", "HS512"}:
+            raise ValueError("JWT_ALGORITHM must be one of HS256, HS384, HS512.")
+        return alg
+
+    @field_validator("jwt_audience", "jwt_issuer")
+    @classmethod
+    def validate_jwt_claims(cls, value: str) -> str:
+        if not (value or "").strip():
+            raise ValueError("JWT_AUDIENCE and JWT_ISSUER must be non-empty.")
+        return value.strip()
 
     @field_validator("auth_password_min_length")
     @classmethod

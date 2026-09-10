@@ -6,7 +6,7 @@
  */
 
 import * as vscode from 'vscode';
-import { CaptureService } from '../capture';
+import { CaptureService, insertedBlock, matchesAiToolHint } from '../capture';
 import { CaptureStore } from '../store';
 import { rangeContentHash } from '../evidence/hash';
 import * as fs from 'fs';
@@ -58,6 +58,49 @@ function makeService(ctx: vscode.ExtensionContext): CaptureService {
   const bar = makeStatusBar();
   return new CaptureService(store, bar, ctx, () => {});
 }
+
+describe('filesystem capture helpers', () => {
+  it('extracts the changed block and its line offset', () => {
+    expect(insertedBlock(
+      'const before = true;\nconst after = true;',
+      'const before = true;\nconst a = 1;\nconst b = 2;\nconst after = true;',
+    )).toEqual({ text: 'const a = 1;\nconst b = 2;', startLine: 1 });
+  });
+
+  it('recognizes Antigravity and Gemini hosts', () => {
+    expect(matchesAiToolHint('Antigravity IDE')).toBe(true);
+    expect(matchesAiToolHint('Google Gemini Code Assist')).toBe(true);
+    expect(matchesAiToolHint('Visual Studio Code')).toBe(false);
+  });
+
+  it('captures a multi-line change written directly to disk', async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'll-fs-capture-test-'));
+    const filePath = path.join(tmpDir, 'agent.ts');
+    const before = 'const before = true;\nconst after = true;';
+    const inserted = ['const a = 1;', 'const b = 2;', 'const c = 3;', 'const d = 4;'].join('\n');
+    fs.writeFileSync(filePath, `${before.split('\n')[0]}\n${inserted}\n${before.split('\n')[1]}`);
+
+    const ctx = makeContext();
+    const store = makeStore(ctx);
+    const svc = new CaptureService(store, makeStatusBar(), ctx, () => {});
+    const key = (svc as any).snapshotKey(filePath);
+    (svc as any)._fileSnapshots.set(key, before);
+    jest.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue({
+      get: (name: string, fallback?: unknown) => name === 'clipboardPasteDetection' ? false : fallback,
+    } as any);
+
+    await (svc as any).handleFilesystemChange(vscode.Uri.file(filePath), false);
+
+    const record = store.getAll()[0];
+    expect(record.insertedCode).toBe(inserted);
+    expect(record.startLine).toBe(1);
+    expect(record.endLine).toBe(4);
+    svc.dispose();
+    store.dispose();
+    jest.restoreAllMocks();
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+  });
+});
 
 // ── Outbox tests ──────────────────────────────────────────────────────────────
 

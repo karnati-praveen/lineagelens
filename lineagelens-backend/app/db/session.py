@@ -12,12 +12,13 @@ from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
 
-_CURRENT_ALEMBIC_HEAD = "202609080001"
+_CURRENT_ALEMBIC_HEAD = "202609090001"
 _SQLITE_PROVENANCE_COLUMNS = {
     "risk_score": "INTEGER",
     "token_count": "INTEGER",
     "cost_usd": "FLOAT",
     "is_redacted": "BOOLEAN NOT NULL DEFAULT 0",
+    "is_encrypted": "BOOLEAN NOT NULL DEFAULT 0",
     "prompt_sha256": "VARCHAR(64)",
     "content_sha256": "VARCHAR(64)",
     "lifecycle_state": "VARCHAR(16) NOT NULL DEFAULT 'active'",
@@ -31,6 +32,12 @@ _SQLITE_POLICY_COLUMNS = {
     "current_version": "INTEGER NOT NULL DEFAULT 1",
     "current_digest": "VARCHAR(64)",
     "archived": "BOOLEAN NOT NULL DEFAULT 0",
+}
+_SQLITE_RETENTION_POLICY_COLUMNS = {
+    "current_version": "INTEGER NOT NULL DEFAULT 1",
+}
+_SQLITE_ROUTING_POLICY_COLUMNS = {
+    "current_version": "INTEGER NOT NULL DEFAULT 1",
 }
 # Columns added to existing `recall_campaigns` tables on legacy SQLite (PART 2 #13/#14).
 _SQLITE_RECALL_COLUMNS = {
@@ -118,6 +125,22 @@ def _upgrade_sqlite_schema(connection) -> None:
             if column_name not in policy_columns:
                 connection.exec_driver_sql(
                     f"ALTER TABLE policies ADD COLUMN {column_name} {column_sql}"
+                )
+
+    if "retention_policies" in inspector.get_table_names():
+        retention_policy_columns = {column["name"] for column in inspector.get_columns("retention_policies")}
+        for column_name, column_sql in _SQLITE_RETENTION_POLICY_COLUMNS.items():
+            if column_name not in retention_policy_columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE retention_policies ADD COLUMN {column_name} {column_sql}"
+                )
+
+    if "routing_policies" in inspector.get_table_names():
+        routing_policy_columns = {column["name"] for column in inspector.get_columns("routing_policies")}
+        for column_name, column_sql in _SQLITE_ROUTING_POLICY_COLUMNS.items():
+            if column_name not in routing_policy_columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE routing_policies ADD COLUMN {column_name} {column_sql}"
                 )
 
     if "recall_campaigns" in inspector.get_table_names():

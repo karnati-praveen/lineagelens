@@ -64,14 +64,30 @@ class VerificationResult:
 
 # ── Loading ────────────────────────────────────────────────────────────────
 
+# Decompression-bomb guards for untrusted capsules.
+_MAX_CAPSULE_FILES = 10_000
+_MAX_CAPSULE_FILE_BYTES = 10 * 1024 * 1024
+_MAX_CAPSULE_TOTAL_BYTES = 100 * 1024 * 1024
+
 def load_capsule(path: str) -> tuple[dict, dict, str, str, dict[str, bytes]]:
     """Open a capsule zip. Returns (capsule_json, manifest_json, signature_hex,
     public_key_id, files) where files maps every zip member (except
     manifest.json itself) to its raw bytes for manifest verification."""
     files: dict[str, bytes] = {}
+    total = 0
     with zipfile.ZipFile(path, "r") as zf:
-        for name in zf.namelist():
-            files[name] = zf.read(name)
+        names = zf.namelist()
+        if len(names) > _MAX_CAPSULE_FILES:
+            raise ValueError(f"capsule has too many files: {len(names)}")
+        for name in names:
+            info = zf.getinfo(name)
+            if info.file_size > _MAX_CAPSULE_FILE_BYTES:
+                raise ValueError(f"capsule member {name!r} exceeds size cap")
+            data = zf.read(name)
+            total += len(data)
+            if total > _MAX_CAPSULE_TOTAL_BYTES:
+                raise ValueError("capsule exceeds total size cap")
+            files[name] = data
 
     if "capsule.json" not in files:
         raise ValueError("capsule.json missing from archive")
@@ -148,15 +164,28 @@ def _parse_ts(value: str | None) -> datetime | None:
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
-def verify_key_trust(capsule_json: dict, public_key_id: str) -> str:
+def verify_key_trust(
+    capsule_json: dict,
+    public_key_id: str,
+    trusted_public_keys: dict[str, str] | None = None,
+) -> str:
     """Return the signing key's trust status *at the capsule's own generatedAt
     time*, using only the keyRegistry snapshot embedded in the capsule —
     mirrors app.core.attestation.key_status_at without any live registry call.
 
     Returns one of: valid | not_yet_valid | expired | compromised | retired |
     unknown_key.
+
+    When `trusted_public_keys` ({publicKeyId: publicKeyHex}) is supplied, the
+    embedded registry entry must match the out-of-band anchor or the key is
+    reported `unknown_key` — the capsule can never self-attest trust.
     """
     registry = capsule_json.get("keyRegistry") or []
+    if trusted_public_keys is not None:
+        anchor = trusted_public_keys.get(public_key_id)
+        embedded = next((r for r in registry if r.get("publicKeyId") == public_key_id), None)
+        if anchor is None or embedded is None or embedded.get("publicKeyHex") != anchor:
+            return "unknown_key"
     record = next((r for r in registry if r.get("publicKeyId") == public_key_id), None)
     if record is None:
         return "unknown_key"
@@ -164,7 +193,9 @@ def verify_key_trust(capsule_json: dict, public_key_id: str) -> str:
     if record.get("status") == "retired":
         return "retired"
 
-    moment = _parse_ts(capsule_json.get("generatedAt")) or datetime.now(tz=UTC)
+    moment = _parse_ts(capsule_json.get("generatedAt"))
+    if moment is None:
+        return "unknown_key"
     compromised = _parse_ts(record.get("compromisedAt"))
     if compromised is not None and moment >= compromised:
         return "compromised"

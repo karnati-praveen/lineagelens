@@ -23,7 +23,7 @@ the real tamper signal.
 import json
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.attestation import (
@@ -32,7 +32,7 @@ from app.core.attestation import (
     sign_attestation,
     verify_attestation,
 )
-from app.db.models import ProvenanceRecord, RecordLifecycleEvent
+from app.db.models import ProvenanceRecord, RecordLifecycleEvent, RecordEncryptionKey
 from app.services.integrity_service import (
     compute_content_sha256,
     compute_prompt_sha256,
@@ -40,17 +40,22 @@ from app.services.integrity_service import (
 
 # Fields cleared by each operation. Redaction keeps inserted_code (the code must
 # remain reviewable); deletion is a full tombstone.
+# provenance_payload is included in both: it duplicates prompt/response bodies
+# (prompt.fullMessages, correlation.fullPromptMessages, normalizedEvent bodies,
+# rawData.detectionPayload) and redaction without it leaves plaintext behind.
 _REDACTION_FIELDS = (
     "prompt_messages",
     "raw_model_response",
     "surrounding_context",
     "context_snapshot",
+    "provenance_payload",
 )
 _DELETION_FIELDS = (
     "prompt_messages",
     "raw_model_response",
     "surrounding_context",
     "context_snapshot",
+    "provenance_payload",
     "inserted_code",
     "embeddings",
     "ast_snapshot",
@@ -75,9 +80,12 @@ def _build_commitment(record: ProvenanceRecord, fields_removed: tuple[str, ...])
 
 def _scrub(record: ProvenanceRecord, fields: tuple[str, ...]) -> None:
     # inserted_code is NOT NULL in the schema — tombstone it with an empty string.
+    # provenance_payload is NOT NULL JSONB — tombstone it with an empty dict.
     for field in fields:
         if field == "inserted_code":
             record.inserted_code = ""
+        elif field == "provenance_payload":
+            record.provenance_payload = {}
         else:
             setattr(record, field, None)
 
@@ -146,6 +154,11 @@ async def apply_lifecycle_event(
     record.is_redacted = True
     record.lifecycle_state = "deleted" if event_type == "deletion" else "redacted"
     session.add(record)
+
+    # Crypto-Shredding: permanently destroy the encryption key if one exists
+    await session.execute(
+        delete(RecordEncryptionKey).where(RecordEncryptionKey.record_uuid == str(record.uuid))
+    )
 
     return event
 

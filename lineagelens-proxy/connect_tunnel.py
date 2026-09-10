@@ -19,6 +19,7 @@ from fastapi.responses import StreamingResponse
 
 from config import (
     _BLOCKED_CONNECT_HOSTS,
+    _KNOWN_LLM_DOMAINS,
     MAX_BODY_BYTES,
     PROXY_CA_CERT_PATH,
     PROXY_CA_KEY_PATH,
@@ -26,6 +27,10 @@ from config import (
     PROXY_CONNECT_TOKEN,
     PROXY_HOST,
 )
+
+# CONNECT is an LLM-egress tunnel, not a general forward proxy. Only known
+# LLM API hosts on 443 are allowed (fail closed on anything else).
+_CONNECT_ALLOWED_PORTS = frozenset({443})
 
 logger = logging.getLogger("lineagelens-proxy")
 
@@ -214,6 +219,18 @@ async def _parse_connect_request(
             )
             await writer.drain()
             return None
+
+    host_lower = host.strip().lower().strip("[]")
+    if host_lower not in _KNOWN_LLM_DOMAINS:
+        logger.warning("CONNECT to non-LLM host blocked: %s:%d", host, port)
+        writer.write(b"HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n")
+        await writer.drain()
+        return None
+    if port not in _CONNECT_ALLOWED_PORTS:
+        logger.warning("CONNECT to disallowed port blocked: %s:%d", host, port)
+        writer.write(b"HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n")
+        await writer.drain()
+        return None
 
     pinned_ip = await _resolve_and_validate_host(host)
     if pinned_ip is None:

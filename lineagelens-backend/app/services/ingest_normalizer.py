@@ -318,11 +318,10 @@ def normalize_ingest_payload(
 
     warnings = _build_ingest_warnings(raw_payload, capture_status)
 
-    # Extract routing decision block sent by the proxy (if present).
+    # Routing/cost attestation must be server-computed, never client-claimed.
+    # The proxy annotates routing server-side at ingest; raw client `routing`
+    # blocks are dropped so forged savings/model claims cannot persist.
     routing_decision: dict[str, Any] | None = None
-    _routing_raw = payload.get("routing")
-    if isinstance(_routing_raw, dict) and _routing_raw:
-        routing_decision = _routing_raw
 
     return NormalizedIngestPayload(
         record_uuid=record_uuid,
@@ -1162,6 +1161,7 @@ def _parse_uuid(value: str | None) -> uuid_pkg.UUID | None:
 
 
 def _parse_timestamp(payload: dict[str, Any]) -> datetime | None:
+    from datetime import timedelta as _timedelta
     for path in (
         ["timestampIso"],
         ["timestamp_iso"],
@@ -1174,9 +1174,16 @@ def _parse_timestamp(payload: dict[str, Any]) -> datetime | None:
             continue
 
         try:
-            return _normalize_datetime(datetime.fromisoformat(value.replace("Z", "+00:00")))
+            parsed = _normalize_datetime(datetime.fromisoformat(value.replace("Z", "+00:00")))
         except ValueError:
             continue
+        # Retention-evasion guard: reject absurd future dates and ancient past.
+        now = datetime.now(UTC)
+        if parsed > now + _timedelta(minutes=10):
+            raise ValueError(f"timestamp {value!r} is too far in the future.")
+        if parsed < datetime(2000, 1, 1, tzinfo=UTC):
+            raise ValueError(f"timestamp {value!r} is too far in the past.")
+        return parsed
 
     return None
 

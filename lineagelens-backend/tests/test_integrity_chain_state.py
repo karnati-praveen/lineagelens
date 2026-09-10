@@ -116,3 +116,29 @@ def test_tampered_chain_reports_tampered(client, make_user, db_query):
     body = resp.json()
     assert body["ok"] is False
     assert body["chainState"] == ChainState.TAMPERED.value
+
+
+def test_active_prompt_mutation_reports_tampered(client, make_user, db_query):
+    admin = make_user(role="admin")
+    rid = _seed_chained_record(db_query, admin.workspace_id, prompt=[{"role": "user", "content": "original"}])
+
+    async def _tamper(session):
+        from sqlalchemy import select
+        rec = (
+            await session.execute(
+                select(ProvenanceRecord).where(ProvenanceRecord.uuid == _uuid.UUID(rid))
+            )
+        ).scalar_one()
+        rec.prompt_messages = [{"role": "user", "content": "mutated"}]
+        await session.commit()
+
+    db_query(_tamper)
+
+    resp = client.get(
+        "/integrity/verify", params={"workspace_id": admin.workspace_id}, headers=admin.auth_headers
+    )
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["first_break_uuid"] == rid
+    assert body["chainState"] == ChainState.TAMPERED.value
+    assert "Prompt commitment mismatch" in body["message"]

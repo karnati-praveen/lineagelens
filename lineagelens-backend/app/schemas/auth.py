@@ -66,7 +66,7 @@ class CreateInviteRequest(BaseModel):
     workspace_id: str = Field(alias="workspaceId")
     role: str = Field(default="member")
     ttl_minutes: int = Field(default=1440, alias="ttlMinutes", ge=1, le=20160)
-    max_uses: int = Field(default=1, alias="maxUses", ge=1, le=100)
+    max_uses: int = Field(default=1, alias="maxUses", ge=1, le=1)
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 

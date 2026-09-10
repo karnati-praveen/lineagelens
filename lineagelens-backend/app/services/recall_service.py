@@ -86,17 +86,19 @@ async def find_affected_records(
 
     if model is not None and model.strip():
         from sqlalchemy import func
-        clean = model.strip().lower()
-        filters.append(
-            func.lower(func.coalesce(ProvenanceRecord.model_name, "")).like(f"%{clean}%")
-        )
+        clean = model.strip().lower().replace("%", "").replace("_", "").replace("\\", "")
+        if clean:
+            filters.append(
+                func.lower(func.coalesce(ProvenanceRecord.model_name, "")).like(f"%{clean}%")
+            )
 
     if model_version is not None and model_version.strip():
         from sqlalchemy import func
-        clean = model_version.strip().lower()
-        filters.append(
-            func.lower(func.coalesce(ProvenanceRecord.model_name, "")).like(f"%{clean}%")
-        )
+        clean = model_version.strip().lower().replace("%", "").replace("_", "").replace("\\", "")
+        if clean:
+            filters.append(
+                func.lower(func.coalesce(ProvenanceRecord.model_name, "")).like(f"%{clean}%")
+            )
 
     if date_from is not None:
         filters.append(ProvenanceRecord.timestamp_iso >= date_from)
@@ -303,12 +305,14 @@ async def compute_blast_radius(
             ),
         )
     except Exception as exc:
-        return BlastRadiusResult(
-            descendant_uuids=[],
-            coverage_status="failed",
-            sources_checked=["neo4j"],
-            graph_checkpoint=checkpoint,
-            limitations=[f"neo4j_query_failed: {type(exc).__name__}"],
+        logger.error(f"Neo4j compute_blast_radius failed: {exc}. Falling back to SQL graph.")
+        # Fallback to SQL Canonical Graph on failure
+        return await compute_blast_radius(
+            neo4j_service=None,
+            record_uuids=record_uuids,
+            workspace_id=workspace_id,
+            session=session,
+            use_sql_fallback=True
         )
 
 
@@ -369,6 +373,11 @@ async def open_recall(
     )
     await session.commit()
     await session.refresh(campaign)
+    try:
+        from app.services.insights_service import invalidate_insights_cache
+        invalidate_insights_cache(workspace_id)
+    except Exception:
+        pass
     return campaign
 
 
@@ -465,6 +474,11 @@ async def quarantine_records(
         },
     )
     await session.commit()
+    try:
+        from app.services.insights_service import invalidate_insights_cache
+        invalidate_insights_cache(workspace_id)
+    except Exception:
+        pass
     return result.rowcount
 
 
@@ -493,6 +507,11 @@ async def clear_records(
         details={"cleared_count": result.rowcount},
     )
     await session.commit()
+    try:
+        from app.services.insights_service import invalidate_insights_cache
+        invalidate_insights_cache(workspace_id)
+    except Exception:
+        pass
     return result.rowcount
 
 
@@ -514,6 +533,11 @@ async def close_recall(
     )
     await session.commit()
     await session.refresh(campaign)
+    try:
+        from app.services.insights_service import invalidate_insights_cache
+        invalidate_insights_cache(workspace_id)
+    except Exception:
+        pass
     return campaign
 
 

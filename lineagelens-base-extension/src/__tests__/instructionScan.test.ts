@@ -12,6 +12,7 @@ test('classifies known instruction files by tool', () => {
     '/repo/.github/copilot-instructions.md',
     '/repo/.continue/config.yaml',
     '/repo/CLAUDE.md',
+    '/repo/AGENTS.md',
     '/repo/.cursor/rules/style.md',
     '/repo/src/app.ts', // not an instruction file
   ]);
@@ -21,6 +22,7 @@ test('classifies known instruction files by tool', () => {
   expect(byPath['/repo/.github/copilot-instructions.md']).toBe('GitHub Copilot');
   expect(byPath['/repo/.continue/config.yaml']).toBe('Continue');
   expect(byPath['/repo/CLAUDE.md']).toBe('Claude Code');
+  expect(byPath['/repo/AGENTS.md']).toBe('AI agents');
   expect(byPath['/repo/.cursor/rules/style.md']).toBe('Cursor');
   expect(byPath['/repo/src/app.ts']).toBeUndefined();
 });
@@ -41,6 +43,7 @@ test('scans a workspace root for instruction files', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'll-instr-'));
   try {
     fs.writeFileSync(path.join(root, '.cursorrules'), 'be concise');
+    fs.writeFileSync(path.join(root, 'AGENTS.md'), 'use the project conventions');
     fs.mkdirSync(path.join(root, '.github'), { recursive: true });
     fs.writeFileSync(path.join(root, '.github', 'copilot-instructions.md'), '# rules');
     fs.mkdirSync(path.join(root, '.cursor', 'rules'), { recursive: true });
@@ -48,7 +51,7 @@ test('scans a workspace root for instruction files', () => {
 
     const found = scanInstructionFiles(root);
     const tools = found.map((f) => f.tool).sort();
-    expect(tools).toEqual(['Cursor', 'Cursor', 'GitHub Copilot']);
+    expect(tools).toEqual(['AI agents', 'Cursor', 'Cursor', 'GitHub Copilot']);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from app.db.session import _CURRENT_ALEMBIC_HEAD
 
-_REVISION = "202609080001"
+_REVISION = "202609090001"
 
 
 # ─── Migration sanity ─────────────────────────────────────────────────────────
@@ -494,4 +494,3 @@ def test_compute_blast_radius_sql_canonical_fallback(client, make_user):
             await engine.dispose()
 
     asyncio.run(_test())
-

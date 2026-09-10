@@ -5,6 +5,13 @@ const vscode = {
     }),
     getWorkspaceFolder: (_uri: unknown) => null,
     onDidChangeTextDocument: (_listener: unknown) => ({ dispose: () => {} }),
+    findFiles: () => Promise.resolve([]),
+    createFileSystemWatcher: () => ({
+      onDidChange: (_listener: unknown) => ({ dispose: () => {} }),
+      onDidCreate: (_listener: unknown) => ({ dispose: () => {} }),
+      onDidDelete: (_listener: unknown) => ({ dispose: () => {} }),
+      dispose: () => {},
+    }),
   },
   window: {
     createStatusBarItem: () => ({
@@ -32,6 +39,7 @@ const vscode = {
     onDidChange: (_listener: unknown) => ({ dispose: () => {} }),
   },
   env: {
+    appName: 'Visual Studio Code',
     clipboard: {
       readText: () => Promise.resolve(''),
       writeText: () => Promise.resolve(),

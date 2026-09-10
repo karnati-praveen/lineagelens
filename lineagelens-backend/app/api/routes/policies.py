@@ -14,7 +14,7 @@ from app.core.audit import log_audit_event
 from app.core.security import AuthContext, ensure_workspace_scope, require_role
 from app.db.models import Policy, RoutingPolicy
 from app.db.session import get_db_session
-from app.services.policy_version_service import append_version, list_versions
+from app.services.policy_version_service import append_version, list_versions, append_routing_version
 
 # Captured at module import time (correct for production).
 # Unit tests that need a different token should patch policies._BACKEND_INGEST_TOKEN directly.
@@ -337,6 +337,8 @@ async def upsert_routing_policy(
         existing.enabled = payload.enabled
         policy = existing
         action = "routing_policy.update"
+        await session.flush()
+        await append_routing_version(session, policy, change_type="update", created_by=auth.subject)
     else:
         policy = RoutingPolicy(
             workspace_id=auth.workspace_id,
@@ -347,6 +349,8 @@ async def upsert_routing_policy(
         )
         session.add(policy)
         action = "routing_policy.create"
+        await session.flush()
+        await append_routing_version(session, policy, change_type="create", created_by=auth.subject)
 
     await log_audit_event(
         session,

@@ -483,7 +483,9 @@ function buildDash(d) {
   const highRiskCount = gs.highRiskRecords ?? gs.highRiskCount ?? 0;
   const criticalCount = gs.criticalRecords ?? gs.criticalCount ?? 0;
 
-  let h = `<div class="mgrid">
+  let h = buildDashboardWarnings(d.warnings || d.coverageWarnings || []);
+
+  h += `<div class="mgrid">
     ${mc('Total Records', num(gs.totalRecords), 'accent')}
     ${mc('Prompt Capture', pct(gs.promptCaptureRate), (gs.promptCaptureRate||0)<.5?'warn':'ok')}
     ${mc('Avg Risk', pct(gs.avgRiskScore), rCls(gs.avgRiskScore))}
@@ -559,6 +561,14 @@ function buildDash(d) {
     h += '<div id="integrity-card-section" class="twrap" style="margin-top:12px"></div>';
   }
   return h || '<div class="empty">No data yet. Start capturing AI insertions and refresh.</div>';
+}
+
+function buildDashboardWarnings(warnings) {
+  if (!Array.isArray(warnings) || warnings.length === 0) return '';
+  return `<div class="al warn" style="margin-bottom:12px">
+    <strong>Coverage warning:</strong>
+    <ul style="margin:6px 0 0 18px;padding:0">${warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>
+  </div>`;
 }
 
 function mc(lbl, val, cls) {
@@ -1827,7 +1837,7 @@ async function loadQuality() {
   } catch(e) { out.innerHTML = `<span style="color:var(--err)">${esc(e.message || 'Error')}</span>`; }
 }
 function metricCard(label, value) {
-  return `<div class="card" style="text-align:center;padding:12px 8px"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">${label}</div><div style="font-size:18px;font-weight:700">${value}</div></div>`;
+  return `<div class="card" style="text-align:center;padding:12px 8px"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">${esc(label)}</div><div style="font-size:18px;font-weight:700">${esc(value)}</div></div>`;
 }
 async function loadQualityBatch() {
   const uuids = document.getElementById('q-batch').value.split('\n').map(s=>s.trim()).filter(Boolean);
@@ -1845,7 +1855,7 @@ async function loadQualityBatch() {
       Low Maintainability: ${s.lowMaintainabilityCount}
     </div>
     <table class="tbl" style="margin-top:10px"><thead><tr><th>UUID</th><th>Lang</th><th>Lines</th><th>Cyclomatic</th><th>Maintain.</th></tr></thead>
-    <tbody>${d.results.map(r=>`<tr><td style="font-family:monospace;font-size:11px">${r.record_id.slice(0,8)}…</td><td>${r.metrics?.language||'-'}</td><td>${r.metrics?.codeLines??'-'}</td><td>${r.metrics?.cyclomaticComplexity??'-'}</td><td>${r.metrics?.maintainabilityScore??'-'}</td></tr>`).join('')}</tbody></table>`;
+    <tbody>${d.results.map(r=>`<tr><td style="font-family:monospace;font-size:11px">${esc(String(r.record_id||'').slice(0,8))}…</td><td>${esc(r.metrics?.language||'-')}</td><td>${esc(r.metrics?.codeLines??'-')}</td><td>${esc(r.metrics?.cyclomaticComplexity??'-')}</td><td>${esc(r.metrics?.maintainabilityScore??'-')}</td></tr>`).join('')}</tbody></table>`;
   } catch(e) { out.innerHTML = `<span style="color:var(--err)">${esc(e.message || 'Error')}</span>`; }
 }
 

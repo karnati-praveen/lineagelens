@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.models import ProvenanceRecord, RetentionPolicy
 from app.services.record_lifecycle_service import apply_lifecycle_event
+from app.services.policy_version_service import append_retention_version
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +39,16 @@ async def upsert_retention_policy(
             enabled=enabled,
         )
         session.add(policy)
+        await session.flush()
+        await append_retention_version(session, policy, change_type="create", created_by=None)
     else:
         existing.retain_days = retain_days
         existing.redact_after_days = redact_after_days
         existing.enabled = enabled
         policy = existing
+        await session.flush()
+        await append_retention_version(session, policy, change_type="update", created_by=None)
 
-    await session.flush()
     return policy
 
 

@@ -181,6 +181,12 @@ async def get_ingest_auth_context(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Proxy ingest payload must include workspaceId.",
             )
+        pinned_workspace = (settings.proxy_static_workspace or "").strip()
+        if pinned_workspace and workspace_id != pinned_workspace:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Proxy token is not authorized for this workspace.",
+            )
         return AuthContext(
             subject="proxy",
             workspace_id=workspace_id,
@@ -288,16 +294,13 @@ def decode_token(
     decode_kwargs: dict[str, object] = {
         "algorithms": [settings.jwt_algorithm],
         "options": {
-            "verify_aud": bool(settings.jwt_audience),
-            "verify_iss": bool(settings.jwt_issuer),
+            "verify_aud": True,
+            "verify_iss": True,
+            "require": ["exp", "iat", "aud", "iss"],
         },
+        "audience": settings.jwt_audience,
+        "issuer": settings.jwt_issuer,
     }
-
-    if settings.jwt_audience:
-        decode_kwargs["audience"] = settings.jwt_audience
-
-    if settings.jwt_issuer:
-        decode_kwargs["issuer"] = settings.jwt_issuer
 
     secret_key = settings.refresh_secret_key if use_refresh_secret else settings.jwt_secret_key
 

@@ -5,14 +5,23 @@
 .github/**
 .venv/**
 lineagelens-backend/**
+lineagelens-base-extension/**
+lineagelens-config/**
 lineagelens-deploy/**
+lineagelens-demo/**
 lineagelens-docs/**
+lineagelens-k8s/**
+lineagelens-marketing/**
 lineagelens-ad/**
 lineagelens-proxy/**
+lineagelens-verifier/**
 lineagelens-src/**
 dist/**
 !dist/extension.js
 .vscode/**
+data/**
+outputs/**
+reproduction_tests/**
 
 # Local and build artifacts
 **/*.map
@@ -33,15 +42,15 @@ lineagelens-cli/**
 lineagelens-mcp/**
 lineagelens-docs/shipping-modes.md
 
-# Exclude all node_modules by default, then allow required runtime native modules.
-node_modules/**
-!node_modules/
-!node_modules/tree-sitter/**
-!node_modules/tree-sitter-javascript/**
-!node_modules/tree-sitter-python/**
-!node_modules/tree-sitter-typescript/**
-!node_modules/node-addon-api/**
-!node_modules/node-gyp-build/**
+# Exclude all node_modules by default, then allow required root runtime native modules.
+**/node_modules/**
+!/node_modules/
+!/node_modules/tree-sitter/**
+!/node_modules/tree-sitter-javascript/**
+!/node_modules/tree-sitter-python/**
+!/node_modules/tree-sitter-typescript/**
+!/node_modules/node-addon-api/**
+!/node_modules/node-gyp-build/**
 
 # Keep package metadata/docs
 !package.json

@@ -18,9 +18,10 @@ from app.core.assurance_states import prompt_availability_state
 from app.core.config import Settings
 from app.core.evidence import classify_record_claims
 from app.core.security import AuthContext
-from app.db.models import ProvenanceRecord, ProvenanceTag, ReviewQueue
+from app.db.models import ProvenanceRecord, ProvenanceTag, ReviewQueue, RecordEncryptionKey
 from app.schemas.provenance import SearchRequest, decode_cursor, encode_cursor
 from app.services.ast_normalizer import normalize_ast_tokens
+from app.services.encryption_service import generate_key, encrypt_payload
 from app.services.embedding_service import (
     SEMANTIC_UNAVAILABLE_WARNING,
     generate_embedding,
@@ -169,6 +170,13 @@ async def ingest_provenance_event(
         file_path=payload.file_path,
     )
 
+    enc_key = generate_key()
+    
+    enc_prompt = {"_ciphertext": encrypt_payload(enc_key, payload.prompt_messages)} if payload.prompt_messages is not None else None
+    enc_context = {"_ciphertext": encrypt_payload(enc_key, payload.surrounding_context)} if payload.surrounding_context is not None else None
+    enc_snapshot = {"_ciphertext": encrypt_payload(enc_key, payload.context_snapshot)} if payload.context_snapshot is not None else None
+    enc_raw = encrypt_payload(enc_key, payload.raw_model_response) if payload.raw_model_response is not None else None
+
     record = ProvenanceRecord(
         uuid=payload.record_uuid,
         workspace_id=payload.workspace_id or auth.workspace_id,
@@ -179,13 +187,13 @@ async def ingest_provenance_event(
         cursor_line=payload.cursor_line,
         cursor_column=payload.cursor_column,
         timestamp_iso=timestamp,
-        prompt_messages=payload.prompt_messages,
+        prompt_messages=enc_prompt,
         model_name=payload.model_name,
         model_parameters=payload.model_parameters,
-        raw_model_response=payload.raw_model_response,
+        raw_model_response=enc_raw,
         inserted_code=payload.inserted_text,
-        surrounding_context=payload.surrounding_context,
-        context_snapshot=payload.context_snapshot,
+        surrounding_context=enc_context,
+        context_snapshot=enc_snapshot,
         embeddings=embeddings,
         ast_snapshot=ast_snapshot,
         embedding_vector=embedding_vector,
@@ -194,10 +202,17 @@ async def ingest_provenance_event(
         provenance_payload=payload.provenance_payload,
         routing_decision=payload.routing_decision,
         confidence_breakdown=payload.confidence_breakdown,
+        is_encrypted=True,
+    )
+
+    key_record = RecordEncryptionKey(
+        record_uuid=str(payload.record_uuid),
+        encryption_key=enc_key
     )
 
     try:
         session.add(record)
+        session.add(key_record)
         await session.flush()
 
         for slug in risk_categories:
@@ -640,25 +655,27 @@ def serialize_provenance_record(
     score: float | None = None,
     model_durability: int | None = None,
 ) -> dict[str, Any]:
+    # DB columns are the source of truth — stored client JSON must never
+    # shadow server-computed values (spoofed riskScore/cost/isRedacted fix).
     payload = dict(record.provenance_payload or {})
 
-    payload.setdefault("id", str(record.uuid))
-    payload.setdefault("uuid", str(record.uuid))
-    payload.setdefault("workspaceId", record.workspace_id)
-    payload.setdefault("timestampIso", record.timestamp_iso.isoformat())
-    payload.setdefault("filePath", record.file_path)
-    payload.setdefault("fileUri", record.file_uri)
-    payload.setdefault("insertedText", record.inserted_code)
-    payload.setdefault("insertedCode", record.inserted_code)
-    payload.setdefault("modelName", record.model_name)
-    payload.setdefault("riskScore", record.risk_score)
-    payload.setdefault("tokenCount", record.token_count)
-    payload.setdefault("costUsd", record.cost_usd)
-    payload.setdefault("isRedacted", record.is_redacted)
-    payload.setdefault("contextSnapshot", record.context_snapshot)
-    payload.setdefault("astSnapshot", record.ast_snapshot)
-    payload.setdefault("embeddings", record.embeddings)
-    payload.setdefault("lineageNodeId", record.lineage_node_id)
+    payload["id"] = str(record.uuid)
+    payload["uuid"] = str(record.uuid)
+    payload["workspaceId"] = record.workspace_id
+    payload["timestampIso"] = record.timestamp_iso.isoformat()
+    payload["filePath"] = record.file_path
+    payload["fileUri"] = record.file_uri
+    payload["insertedText"] = record.inserted_code
+    payload["insertedCode"] = record.inserted_code
+    payload["modelName"] = record.model_name
+    payload["riskScore"] = record.risk_score
+    payload["tokenCount"] = record.token_count
+    payload["costUsd"] = record.cost_usd
+    payload["isRedacted"] = record.is_redacted
+    payload["contextSnapshot"] = record.context_snapshot
+    payload["astSnapshot"] = record.ast_snapshot
+    payload["embeddings"] = record.embeddings
+    payload["lineageNodeId"] = record.lineage_node_id
 
     # Always surface the latest confidence value and breakdown.
     # normalized_event.confidence (full dict) is already inside provenance_payload
@@ -768,25 +785,27 @@ def build_workspace_record_filters(search: SearchRequest, workspace_id: str) -> 
     # model name filter (supports both 'model' and 'model_name' fields)
     model_filter = (getattr(search, "model_name", None) or search.model or "").strip().lower()
     if model_filter:
-        filters.append(
-            func.lower(func.coalesce(ProvenanceRecord.model_name, "")).like(f"%{model_filter}%")
-        )
+        clean_model = model_filter.replace("%", "").replace("_", "").replace("\\", "")
+        if clean_model:
+            filters.append(
+                func.lower(func.coalesce(ProvenanceRecord.model_name, "")).like(f"%{clean_model}%")
+            )
 
     file_filter = normalize_search_path(search.file_path or search.current_file or "")
     if file_filter:
         normalized_record_path = func.lower(
             func.replace(ProvenanceRecord.file_path, "\\", "/")
         )
-
-        if "/" in file_filter and not file_filter.startswith("/"):
+        clean_file = file_filter.replace("%", "").replace("_", "").replace("\\", "/")
+        if "/" in clean_file and not clean_file.startswith("/"):
             filters.append(
                 or_(
-                    normalized_record_path == file_filter,
-                    normalized_record_path.like(f"%/{file_filter}"),
+                    normalized_record_path == clean_file,
+                    normalized_record_path.like(f"%/{clean_file}"),
                 )
             )
         else:
-            filters.append(normalized_record_path == file_filter)
+            filters.append(normalized_record_path == clean_file)
 
     if search.date_from:
         filters.append(ProvenanceRecord.timestamp_iso >= search.date_from)
@@ -814,12 +833,13 @@ def build_workspace_record_filters(search: SearchRequest, workspace_id: str) -> 
     # file extension filter
     file_extension = getattr(search, "file_extension", None)
     if file_extension:
-        ext = file_extension.strip().lower()
+        ext = file_extension.strip().lower().replace("%", "").replace("_", "").replace("\\", "")
         if not ext.startswith("."):
             ext = f".{ext}"
-        filters.append(
-            func.lower(ProvenanceRecord.file_path).like(f"%{ext}")
-        )
+        if ext.strip("."):
+            filters.append(
+                func.lower(ProvenanceRecord.file_path).like(f"%{ext}")
+            )
 
     # capture_status — stored in context_snapshot->captureStatus or provenance_payload
     capture_status = getattr(search, "capture_status", None)
