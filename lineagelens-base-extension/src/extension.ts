@@ -22,6 +22,7 @@ import { CaptureCodeLensProvider } from './ide/codeLens';
 import { CaptureHoverProvider } from './ide/hover';
 import { CaptureDecorations } from './ide/decorations';
 import { openFileTimeline } from './ide/timeline';
+import { resolveInsertTarget, insertIntoEditor, insertAtDocumentEnd } from './ide/insertTarget';
 
 /** Whether secrets should be scrubbed from data leaving the machine (default on). */
 function shouldRedactOnEgress(): boolean {
@@ -59,6 +60,28 @@ async function getStagedFiles(cwd: string): Promise<string[] | null> {
       .map(rel => path.join(root, rel));
   } catch {
     return null;
+  }
+}
+
+/**
+ * Default location for export save dialogs. Undefined when no folder is open
+ * (a relative `path.join('', name)` would otherwise produce a bogus default).
+ */
+function defaultExportUri(fileName: string): vscode.Uri | undefined {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  return folder ? vscode.Uri.file(path.join(folder, fileName)) : undefined;
+}
+
+/** Write an export file, surfacing failures instead of throwing unhandled. */
+function writeExportFile(fsPath: string, content: string): boolean {
+  try {
+    fs.writeFileSync(fsPath, content, 'utf-8');
+    return true;
+  } catch {
+    vscode.window.showErrorMessage(
+      `LineageLens: Could not write ${fsPath} — check disk space and file permissions.`,
+    );
+    return false;
   }
 }
 
@@ -100,7 +123,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // can carry its own background, elevation, and inline search/grouping).
   const webviewProvider = new CaptureWebviewProvider(store, () => syncUi());
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(CaptureWebviewProvider.VIEW_ID, webviewProvider),
+    vscode.window.registerWebviewViewProvider(
+      CaptureWebviewProvider.VIEW_ID,
+      webviewProvider,
+      { webviewOptions: { retainContextWhenHidden: true } },
+    ),
   );
 
   // Full UI sync after any store change: re-render the cards + status bar count
@@ -153,32 +180,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   decorations.apply(vscode.window.activeTextEditor);
 
   // ── Shared record actions (reused by tree commands and the detail panel) ──────
-  function sameFile(editor: vscode.TextEditor | undefined, filePath: string | undefined): boolean {
-    if (!editor || !filePath || editor.document.uri.scheme !== 'file') { return false; }
-    const left = path.resolve(editor.document.uri.fsPath);
-    const right = path.resolve(filePath);
-    return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
-  }
-
-  async function insertIntoEditor(editor: vscode.TextEditor, text: string): Promise<boolean> {
-    return editor.edit(editBuilder => {
-      for (const sel of editor.selections) {
-        editBuilder.insert(sel.active, text);
-      }
-    });
-  }
-
-  async function insertAtDocumentEnd(filePath: string, text: string): Promise<boolean> {
-    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
-    const editor = await vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.One });
-    const end = doc.lineAt(Math.max(0, doc.lineCount - 1)).range.end;
-    return editor.edit(editBuilder => { editBuilder.insert(end, text); });
-  }
-
+  // Insert-target resolution and the insert/open helpers live in ./ide/insertTarget.
   async function insertRecord(record: { insertedCode: string; fileName: string; filePath?: string }): Promise<void> {
-    const editor = vscode.window.activeTextEditor
-      ?? lastActiveTextEditor
-      ?? vscode.window.visibleTextEditors.find(e => sameFile(e, record.filePath));
+    const target = resolveInsertTarget(record, lastActiveTextEditor);
+    const editor = target.kind === 'none' ? undefined : target.editor;
 
     if (!editor) {
       if (!record.filePath) {
@@ -203,7 +208,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   function copyRecord(record: { insertedCode: string; fileName: string }): void {
     Promise.resolve(vscode.env.clipboard.writeText(record.insertedCode)).then(() => {
       vscode.window.showInformationMessage(`LineageLens: Copied code from "${record.fileName}".`);
-    }).catch(() => {});
+    }).catch(() => {
+      vscode.window.showWarningMessage('LineageLens: Copy failed — the clipboard is unavailable.');
+    });
   }
 
   async function revealRecord(record: { filePath: string }): Promise<void> {
@@ -255,7 +262,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         'lineagelens.captureDetail',
         `Capture: ${record.fileName}`,
         vscode.ViewColumn.Beside,
-        { enableScripts: true },
+        // Retain context so an unsaved review-note draft and scroll position
+        // survive tab switches instead of reloading from the HTML string.
+        { enableScripts: true, retainContextWhenHidden: true },
       );
       // Inventory AI instruction files once; reused across panel rebuilds.
       const instructionFiles = instructionFilesFor(record.filePath);
@@ -280,7 +289,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             const src = msg.source as CaptureSource;
             if (src === 'ai' || src === 'paste' || src === 'unknown') {
               const updated = store.setClassification(id, src);
-              if (updated) { syncUi(); buildDetailPanel(panel, updated, instructionFiles); }
+              // Preserve the unsent note draft the panel carried along.
+              const note = typeof msg.note === 'string' ? msg.note : '';
+              const withNote = updated && note !== (updated.reviewNote ?? '')
+                ? (store.setReviewState(id, updated.reviewState ?? 'unreviewed', note) ?? updated)
+                : updated;
+              if (withNote) { syncUi(); buildDetailPanel(panel, withNote, instructionFiles); }
             }
             break;
           }
@@ -323,6 +337,97 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand('lineagelens.diagnostics', async () => {
+      const cfg = vscode.workspace.getConfiguration('lineagelensBase');
+      const lines = [
+        'LineageLens Base diagnostics',
+        `version=${context.extension.packageJSON?.version ?? 'unknown'}`,
+        `workspaceFolders=${(vscode.workspace.workspaceFolders ?? []).map(f => f.uri.fsPath).join('; ') || 'none'}`,
+        `storePath=${store.getStoragePath()}`,
+        `storeCount=${store.count}`,
+        `captureEnabled=${cfg.get<boolean>('captureEnabled', true)}`,
+        `minInsertionLines=${cfg.get<number>('minInsertionLines', 4)}`,
+        `excludePatterns=${JSON.stringify(cfg.get<string[]>('excludePatterns', []))}`,
+        webviewProvider.diagnostics(),
+      ];
+      const doc = await vscode.workspace.openTextDocument({ content: lines.join('\n'), language: 'plaintext' });
+      await vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.Beside });
+    }),
+  );
+
+  // Never Capture Here — right-click a file/folder in the explorer (or run
+  // from the palette with a file open) to add it to excludePatterns.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('lineagelens.ignoreFromCapture', async (uri?: vscode.Uri) => {
+      const target = (uri instanceof vscode.Uri ? uri : undefined)
+        ?? vscode.window.activeTextEditor?.document.uri;
+      if (!target || target.scheme !== 'file') {
+        vscode.window.showInformationMessage(
+          'LineageLens: Right-click a file or folder in the Explorer, or run this with a file open.',
+        );
+        return;
+      }
+      let isDir = false;
+      try {
+        const stat = await vscode.workspace.fs.stat(target);
+        isDir = (stat.type & vscode.FileType.Directory) !== 0;
+      } catch {
+        vscode.window.showWarningMessage(`LineageLens: Could not read ${target.fsPath}.`);
+        return;
+      }
+      const folder = vscode.workspace.getWorkspaceFolder(target);
+      const scoped = vscode.workspace.getConfiguration('lineagelensBase', folder?.uri);
+      const rel = folder
+        ? path.relative(folder.uri.fsPath, target.fsPath).split(path.sep).join('/')
+        : path.basename(target.fsPath);
+      const pattern = isDir ? `**/${rel}/**` : `**/${rel}`;
+      const current = scoped.get<string[]>('excludePatterns', []) ?? [];
+      if (current.includes(pattern)) {
+        vscode.window.showInformationMessage(`LineageLens: "${rel}" is already ignored.`);
+        return;
+      }
+      await scoped.update(
+        'excludePatterns',
+        [...current, pattern],
+        folder ? vscode.ConfigurationTarget.WorkspaceFolder : vscode.ConfigurationTarget.Global,
+      );
+      vscode.window.showInformationMessage(
+        `LineageLens: will no longer capture ${isDir ? 'anything under ' : ''}"${rel}".`,
+      );
+    }),
+  );
+
+  // Quick-find: fuzzy-search captures from the command palette and open the pick.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('lineagelens.searchCaptures', async () => {
+      const records = store.getAll();
+      if (records.length === 0) {
+        vscode.window.showInformationMessage('LineageLens: No captures yet — copy or generate code to create one.');
+        return;
+      }
+      const pick = await vscode.window.showQuickPick(
+        records.map(r => {
+          const firstLine = (r.insertedCode ?? '').split('\n').map(l => l.trim()).find(Boolean) ?? '';
+          return {
+            label: r.fileName,
+            description: `${r.language ?? 'text'} · +${r.linesAdded} · ${r.source ?? 'unknown'}`,
+            detail: firstLine.slice(0, 120),
+            id: r.id,
+          };
+        }),
+        {
+          placeHolder: 'Search captures by file, language, source, or code…',
+          matchOnDescription: true,
+          matchOnDetail: true,
+        },
+      );
+      if (pick) {
+        vscode.commands.executeCommand('lineagelens.openCapture', pick.id);
+      }
+    }),
+  );
+
   // Clear all captures
   context.subscriptions.push(
     vscode.commands.registerCommand('lineagelens.clearAll', async () => {
@@ -342,19 +447,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Export as JSON
   context.subscriptions.push(
     vscode.commands.registerCommand('lineagelens.exportJson', async () => {
-      const uri = await vscode.window.showSaveDialog({
-        defaultUri: vscode.Uri.file(path.join(
-          vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '',
-          `lineagelens-captures-${Date.now()}.json`,
-        )),
-        filters: { JSON: ['json'] },
-      });
+      const saveOptions: vscode.SaveDialogOptions = { filters: { JSON: ['json'] } };
+      const defaultUri = defaultExportUri(`lineagelens-captures-${Date.now()}.json`);
+      if (defaultUri) { saveOptions.defaultUri = defaultUri; }
+      const uri = await vscode.window.showSaveDialog(saveOptions);
       if (!uri) return;
       const redact = shouldRedactOnEgress();
       const { records, total } = redact
         ? redactRecords(store.getAll())
         : { records: store.getAll(), total: 0 };
-      fs.writeFileSync(uri.fsPath, JSON.stringify(records, null, 2), 'utf-8');
+      if (!writeExportFile(uri.fsPath, JSON.stringify(records, null, 2))) { return; }
       const secretNote = total > 0 ? ` (${total} secret${total !== 1 ? 's' : ''} redacted)` : '';
       const open = await vscode.window.showInformationMessage(
         `LineageLens: Exported ${store.count} captures${secretNote}.`,
@@ -371,20 +473,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('lineagelens.exportAgentTrace', async () => {
       const cfg = vscode.workspace.getConfiguration('lineagelensBase');
       const workspaceId = cfg.get<string>('workspaceId', 'vscode-capture') || 'vscode-capture';
-      const uri = await vscode.window.showSaveDialog({
-        defaultUri: vscode.Uri.file(path.join(
-          vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '',
-          `lineagelens-agent-trace-${Date.now()}.jsonl`,
-        )),
-        filters: { 'Agent Trace JSONL': ['jsonl'] },
-      });
+      const saveOptions: vscode.SaveDialogOptions = { filters: { 'Agent Trace JSONL': ['jsonl'] } };
+      const defaultUri = defaultExportUri(`lineagelens-agent-trace-${Date.now()}.jsonl`);
+      if (defaultUri) { saveOptions.defaultUri = defaultUri; }
+      const uri = await vscode.window.showSaveDialog(saveOptions);
       if (!uri) { return; }
       const redact = shouldRedactOnEgress();
       const { records, total } = redact
         ? redactRecords(store.getAll())
         : { records: store.getAll(), total: 0 };
       const jsonl = captureStoreTojsonl(records, workspaceId);
-      fs.writeFileSync(uri.fsPath, jsonl, 'utf-8');
+      if (!writeExportFile(uri.fsPath, jsonl)) { return; }
       const secretNote = total > 0 ? ` (${total} secret${total !== 1 ? 's' : ''} redacted)` : '';
       const open = await vscode.window.showInformationMessage(
         `LineageLens: Exported ${store.count} captures as Agent Trace${secretNote}.`,
@@ -462,8 +561,35 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Pre-commit AI review gate
   context.subscriptions.push(
     vscode.commands.registerCommand('lineagelens.checkBeforeCommit', async () => {
-      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      const staged = folder ? await getStagedFiles(folder) : null;
+      // Union staged files across ALL workspace folders — gating only the
+      // first root would silently pass AI code staged in any other root.
+      const folders = (vscode.workspace.workspaceFolders ?? []).map(f => f.uri.fsPath);
+      const stagedByFolder = new Map<string, string[]>();
+      for (const folder of folders) {
+        const partial = await getStagedFiles(folder);
+        if (partial !== null) { stagedByFolder.set(folder, partial); }
+      }
+      // Union staged files across ALL roots — gating only the first root
+      // would silently pass AI code staged in any other root. Where git
+      // failed for a root, conservatively gate that root's captured files
+      // instead. Null (git failed everywhere) keeps the caller's
+      // all-captured-files fallback.
+      let staged: string[] | null = null;
+      if (stagedByFolder.size === folders.length && folders.length > 0) {
+        staged = [...stagedByFolder.values()].flat();
+      } else if (stagedByFolder.size > 0) {
+        const failedRoots = folders.filter(f => !stagedByFolder.has(f));
+        const underFailedRoot = (p: string) => {
+          const resolved = path.resolve(p);
+          return failedRoots.some(r => resolved === path.resolve(r) || resolved.startsWith(path.resolve(r) + path.sep));
+        };
+        staged = [...stagedByFolder.values()].flat();
+        for (const r of store.getAll()) {
+          if (r.filePath && underFailedRoot(r.filePath) && !staged.includes(r.filePath)) {
+            staged.push(r.filePath);
+          }
+        }
+      }
 
       // git available but nothing staged → nothing to gate.
       if (staged !== null && staged.length === 0) {
@@ -502,6 +628,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Verify the local evidence store (tamper-evident chain + schema check)
   context.subscriptions.push(
     vscode.commands.registerCommand('lineagelens.verifyEvidence', () => {
+      void context.globalState.update('lineagelens.tour.verified', true);
       const report = verifyEvidence(store.getAll());
       if (report.ok) {
         vscode.window.showInformationMessage(`LineageLens: ${report.summary}`);
@@ -530,18 +657,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         );
         if (proceed !== 'Export anyway') { return; }
       }
-      const uri = await vscode.window.showSaveDialog({
-        defaultUri: vscode.Uri.file(path.join(
-          vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '',
-          `lineagelens-capsule-${Date.now()}.llcapsule`,
-        )),
-        filters: { 'LineageLens Capsule': ['llcapsule'] },
-      });
+      const saveOptions: vscode.SaveDialogOptions = { filters: { 'LineageLens Capsule': ['llcapsule'] } };
+      const defaultUri = defaultExportUri(`lineagelens-capsule-${Date.now()}.llcapsule`);
+      if (defaultUri) { saveOptions.defaultUri = defaultUri; }
+      const uri = await vscode.window.showSaveDialog(saveOptions);
       if (!uri) { return; }
       const cfg = vscode.workspace.getConfiguration('lineagelensBase');
       const workspaceId = cfg.get<string>('workspaceId', 'vscode-capture') || 'vscode-capture';
       const capsule = buildCapsule(records, workspaceId, new Date().toISOString());
-      fs.writeFileSync(uri.fsPath, JSON.stringify(capsule, null, 2), 'utf-8');
+      if (!writeExportFile(uri.fsPath, JSON.stringify(capsule, null, 2))) { return; }
       const open = await vscode.window.showInformationMessage(
         `LineageLens: Exported evidence capsule — ${capsule.verification.summary}`,
         'Open File',
@@ -631,7 +755,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Email management commands
   context.subscriptions.push(
     vscode.commands.registerCommand('lineagelens.openWelcome', () => {
-      openWelcomePanel(context);
+      openWelcomePanel(context, store);
     }),
     vscode.commands.registerCommand('lineagelens.saveEmail', async () => {
       await promptAndSaveEmail(context, true);

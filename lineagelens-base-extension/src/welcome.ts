@@ -14,6 +14,7 @@ const PROXY_DOCS_URL = 'https://github.com/karnati-praveen/lineagelens#proxy';
 // Commands the welcome page may invoke (allowlisted — never an arbitrary id).
 const WELCOME_COMMANDS = new Set<string>([
   'lineagelens.captures.focus',
+  'lineagelens.searchCaptures',
   'lineagelens.verifyEvidence',
   'lineagelens.exportCapsule',
   'lineagelens.exportPrSummary',
@@ -28,19 +29,32 @@ const WELCOME_COMMANDS = new Set<string>([
 
 let welcomePanel: vscode.WebviewPanel | undefined;
 
-/** Open (or reveal) the welcome panel. */
-export function openWelcomePanel(context: vscode.ExtensionContext): void {
+/** Live tour state, derived from the store + a persisted flag — no extra tracking. */
+export interface WelcomeTour {
+  captured: boolean;
+  reviewed: boolean;
+  verified: boolean;
+}
+
+/** Open (or reveal) the welcome panel. Pass the store so the tour reflects reality. */
+export function openWelcomePanel(context: vscode.ExtensionContext, store?: { getAll(): { reviewState?: string }[] }): void {
   if (welcomePanel) {
     welcomePanel.reveal(vscode.ViewColumn.One);
     return;
   }
+  const records = store?.getAll() ?? [];
+  const tour: WelcomeTour = {
+    captured: records.length > 0,
+    reviewed: records.some(r => (r.reviewState ?? 'unreviewed') !== 'unreviewed'),
+    verified: context.globalState.get<boolean>('lineagelens.tour.verified') ?? false,
+  };
   welcomePanel = vscode.window.createWebviewPanel(
     'lineagelens.welcome',
     'Welcome to LineageLens',
     vscode.ViewColumn.One,
     { enableScripts: true, retainContextWhenHidden: true },
   );
-  welcomePanel.webview.html = renderHtml(welcomePanel.webview);
+  welcomePanel.webview.html = renderHtml(welcomePanel.webview, tour);
   welcomePanel.onDidDispose(() => { welcomePanel = undefined; });
 
   welcomePanel.webview.onDidReceiveMessage((msg: { type: string; command?: string }) => {
@@ -67,7 +81,7 @@ function getNonce(): string {
   return out;
 }
 
-function renderHtml(webview: vscode.Webview): string {
+function renderHtml(webview: vscode.Webview, tour: WelcomeTour = { captured: false, reviewed: false, verified: false }): string {
   const nonce = getNonce();
   const csp = [
     `default-src 'none'`,
@@ -115,6 +129,27 @@ function renderHtml(webview: vscode.Webview): string {
   }
   .btn.sec:hover { background: transparent; border-color: rgba(255,255,255,.32); }
   .btn.sm { padding: 5px 10px; font-size: 11.5px; border-radius: 6px; }
+
+  /* 60-second tour — one quiet checklist, checks reflect live state. */
+  .tour {
+    max-width: 560px; margin: 26px auto 0; text-align: left;
+    border: 1px solid rgba(255,255,255,.08); border-radius: 12px;
+    background: rgba(255,255,255,.03); padding: 16px 18px;
+  }
+  .tour h2 { font-size: 13px; margin: 0 0 10px; }
+  .tour ol { list-style: none; }
+  .tour li { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: #A1A1A1; padding: 7px 0; border-top: 1px solid rgba(255,255,255,.06); }
+  .tour li:first-child { border-top: none; }
+  .tour .box {
+    flex: none; width: 20px; height: 20px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,.24);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; color: #000000;
+  }
+  .tour li.done .box { background: #FFFFFF; border-color: #FFFFFF; }
+  .tour li.done span.t { color: #FFFFFF; text-decoration: line-through; text-decoration-color: rgba(255,255,255,.4); }
+  .tour li .sp { flex: 1; }
+  .tour.done-all { border-color: rgba(255,255,255,.2); }
 
   h2 { font-size: 18px; font-weight: 700; margin: 36px 0 4px; color: #FFFFFF; }
   h2 .em { color: #FFFFFF; }
@@ -182,8 +217,30 @@ function renderHtml(webview: vscode.Webview): string {
     <div class="sub">Everything works locally. No server, no account, no internet required.</div>
     <div class="cta">
       <button class="btn" data-cmd="lineagelens.captures.focus">Open AI Captures</button>
+      <button class="btn sec" data-cmd="lineagelens.searchCaptures">Find a capture…</button>
       <button class="btn sec" data-act="settings">Open settings</button>
     </div>
+  </div>
+
+  <div class="tour${tour.captured && tour.reviewed && tour.verified ? ' done-all' : ''}">
+    <h2>Get started in a minute</h2>
+    <ol>
+      <li class="${tour.captured ? 'done' : ''}">
+        <span class="box">${tour.captured ? '✓' : ''}</span>
+        <span class="sp"><span class="t">Capture your first AI block</span> — accept or paste 4+ lines of code</span>
+        <span class="actions"><button class="btn sec sm" data-cmd="lineagelens.captures.focus">Open captures</button></span>
+      </li>
+      <li class="${tour.reviewed ? 'done' : ''}">
+        <span class="box">${tour.reviewed ? '✓' : ''}</span>
+        <span class="sp"><span class="t">Review one capture</span> — hover a card and press ✓, or open it</span>
+        <span class="actions"><button class="btn sec sm" data-cmd="lineagelens.searchCaptures">Find a capture…</button></span>
+      </li>
+      <li class="${tour.verified ? 'done' : ''}">
+        <span class="box">${tour.verified ? '✓' : ''}</span>
+        <span class="sp"><span class="t">Verify your evidence chain</span> — one click, no server needed</span>
+        <span class="actions"><button class="btn sec sm" data-cmd="lineagelens.verifyEvidence">Verify now</button></span>
+      </li>
+    </ol>
   </div>
 
   <div class="wrap">
@@ -303,7 +360,7 @@ function renderHtml(webview: vscode.Webview): string {
       <button class="btn sec" data-act="settings">Open settings</button>
     </div>
 
-    <div class="note">Tip: the AI Captures panel has a one-click actions bar for Verify, Capsule, PR summary, Pre-commit, Timeline, Focus, and exports.</div>
+    <div class="note">Tip: press <code>Find a capture…</code> above (or run “LineageLens: Find a Capture…” from the command palette). In the sidebar search, <code>risk:high</code>, <code>review:unreviewed</code> and <code>source:ai</code> filter that field.</div>
   </div>
 
   <script nonce="${nonce}">

@@ -331,6 +331,21 @@ describe('undo/redo guard', () => {
     svc.dispose();
   });
 
+  it('records matching clipboard insertions as paste captures instead of dropping them', async () => {
+    const ctx = makeContext();
+    const store = makeStore(ctx);
+    const bar = makeStatusBar();
+    const svc = new CaptureService(store, bar, ctx, () => {});
+    const text = 'const pasted = true;\n'.repeat(6);
+    jest.spyOn(vscode.env.clipboard, 'readText').mockResolvedValue(text);
+
+    await (svc as any).handleChange(makeEvent(text, undefined));
+
+    expect(store.getAll()).toHaveLength(1);
+    expect(store.getAll()[0].source).toBe('paste');
+    svc.dispose();
+  });
+
   it('records the inserted range and a content hash on capture', async () => {
     const ctx = makeContext();
     const store = makeStore(ctx);
