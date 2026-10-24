@@ -1,0 +1,179 @@
+{
+  "capturedAt": "2026-07-25T09:06:45.634Z",
+  "capturedFrom": "Lineagelens",
+  "scan": {
+    "kind": "retroactive",
+    "generatedAt": "2026-07-25T09:06:45.621Z",
+    "repoRoot": "C:/Users/karna/OneDrive/Desktop/Lineagelens",
+    "branch": "main",
+    "headSha": "6ea22d153c4fc904142827f2cea8fbeaff01490e",
+    "commitsExamined": 115,
+    "aiCommits": 4,
+    "firstAiCommit": "2026-05-29T07:46:47+05:30",
+    "lastAiCommit": "2026-05-31T16:28:00+05:30"
+  },
+  "totals": {
+    "trackedFiles": 519,
+    "trackedLines": 109155,
+    "aiAttributedFiles": 26,
+    "aiAttributedLines": 1227,
+    "aiAttributedPercent": 1.1,
+    "unattributedLines": 107928
+  },
+  "byTool": {
+    "Claude Code": {
+      "lines": 1227,
+      "commits": 4,
+      "files": 26,
+      "models": []
+    }
+  },
+  "byCategory": {
+    "auth": {
+      "lines": 559,
+      "files": 8
+    },
+    "large-block": {
+      "lines": 763,
+      "files": 6
+    },
+    "secrets": {
+      "lines": 194,
+      "files": 1
+    }
+  },
+  "files": [
+    {
+      "path": "lineagelens-config/tiers.json",
+      "totalLines": 222,
+      "attributedLines": 194,
+      "byTool": {
+        "Claude Code": 194
+      },
+      "categories": [
+        "large-block",
+        "secrets"
+      ],
+      "firstSeen": "2026-05-31T16:17:13+05:30",
+      "lastSeen": "2026-05-31T16:17:13+05:30"
+    },
+    {
+      "path": "lineagelens-backend/tests/test_auth_register.py",
+      "totalLines": 187,
+      "attributedLines": 186,
+      "byTool": {
+        "Claude Code": 186
+      },
+      "categories": [
+        "auth",
+        "large-block"
+      ],
+      "firstSeen": "2026-05-29T07:46:47+05:30",
+      "lastSeen": "2026-05-29T07:46:47+05:30"
+    },
+    {
+      "path": ".github/CONTRIBUTING.md",
+      "totalLines": 118,
+      "attributedLines": 117,
+      "byTool": {
+        "Claude Code": 117
+      },
+      "categories": [
+        "auth",
+        "large-block"
+      ],
+      "firstSeen": "2026-05-31T16:17:13+05:30",
+      "lastSeen": "2026-05-31T16:17:13+05:30"
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/bug_report.yml",
+      "totalLines": 97,
+      "attributedLines": 96,
+      "byTool": {
+        "Claude Code": 96
+      },
+      "categories": [
+        "large-block"
+      ],
+      "firstSeen": "2026-05-31T16:17:13+05:30",
+      "lastSeen": "2026-05-31T16:17:13+05:30"
+    },
+    {
+      "path": "lineagelens-backend/app/services/oidc_service.py",
+      "totalLines": 169,
+      "attributedLines": 89,
+      "byTool": {
+        "Claude Code": 89
+      },
+      "categories": [
+        "auth",
+        "large-block"
+      ],
+      "firstSeen": "2026-05-29T07:46:47+05:30",
+      "lastSeen": "2026-05-29T07:46:47+05:30"
+    },
+    {
+      "path": "lineagelens-backend/app/api/routes/webhooks.py",
+      "totalLines": 280,
+      "attributedLines": 81,
+      "byTool": {
+        "Claude Code": 81
+      },
+      "categories": [
+        "large-block"
+      ],
+      "firstSeen": "2026-05-29T07:46:47+05:30",
+      "lastSeen": "2026-05-29T07:46:47+05:30"
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/feature_request.yml",
+      "totalLines": 65,
+      "attributedLines": 64,
+      "byTool": {
+        "Claude Code": 64
+      },
+      "categories": [],
+      "firstSeen": "2026-05-31T16:17:13+05:30",
+      "lastSeen": "2026-05-31T16:17:13+05:30"
+    },
+    {
+      "path": "lineagelens-backend/app/core/encryption.py",
+      "totalLines": 81,
+      "attributedLines": 59,
+      "byTool": {
+        "Claude Code": 59
+      },
+      "categories": [],
+      "firstSeen": "2026-05-29T07:46:47+05:30",
+      "lastSeen": "2026-05-29T07:46:47+05:30"
+    }
+  ],
+  "coverage": {
+    "status": "known_incomplete",
+    "reasons": [
+      "only 4 of 115 commits (3.5%) declare an AI tool, so any AI work committed without a trailer is invisible to this scan"
+    ],
+    "configuredTools": [
+      {
+        "tool": "Claude Code",
+        "evidence": ".claude/ (untracked)",
+        "tracked": false
+      }
+    ],
+    "declarationRate": 0.034782608695652174
+  },
+  "assurance": {
+    "evidenceClass": "declared",
+    "basis": "self-declared AI authorship in git commit metadata",
+    "unavailable": [
+      "prompt",
+      "model_reasoning",
+      "accepted_rejected_status",
+      "review_state",
+      "human_attestation"
+    ],
+    "unattributedMeaning": "no AI signal found in the commits that introduced these lines; this is not evidence of human authorship",
+    "completeness": "known_incomplete",
+    "measurementKind": "lower_bound"
+  }
+}

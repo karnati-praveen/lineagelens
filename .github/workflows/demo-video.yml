@@ -1,0 +1,57 @@
+name: Demo Video
+
+# Renders the Remotion demo compositions. The hackathon cut embeds real screen
+# recordings from lineagelens-demo/public/recordings/ (gitignored); when a clip
+# is missing its scene renders a styled placeholder, so this workflow always
+# produces a valid MP4 artifact.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "lineagelens-demo/**"
+
+jobs:
+  render:
+    name: Render demo compositions
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: lineagelens-demo
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: lineagelens-demo/package-lock.json
+
+      - name: Install demo dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Render marketing cut (16:9)
+        run: npx remotion render src/index.ts LineageLensDemo out/lineagelens-demo.mp4 --gl=angle --concurrency=2
+
+      - name: Render hackathon cut
+        run: npx remotion render src/index.ts HackathonDemo out/lineagelens-hackathon.mp4 --gl=angle --concurrency=2
+
+      - name: Poster still
+        run: npx remotion still src/index.ts LineageLensDemo out/poster.png --frame=90 --gl=angle
+
+      - name: Upload rendered videos
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-videos
+          path: |
+            lineagelens-demo/out/lineagelens-demo.mp4
+            lineagelens-demo/out/lineagelens-hackathon.mp4
+            lineagelens-demo/out/poster.png
+          if-no-files-found: error
