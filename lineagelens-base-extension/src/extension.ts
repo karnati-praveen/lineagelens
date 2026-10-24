@@ -22,6 +22,7 @@ import { CaptureCodeLensProvider } from './ide/codeLens';
 import { CaptureHoverProvider } from './ide/hover';
 import { CaptureDecorations } from './ide/decorations';
 import { openFileTimeline } from './ide/timeline';
+import { resolveInsertTarget, insertIntoEditor, insertAtDocumentEnd } from './ide/insertTarget';
 
 /** Whether secrets should be scrubbed from data leaving the machine (default on). */
 function shouldRedactOnEgress(): boolean {
@@ -179,43 +180,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   decorations.apply(vscode.window.activeTextEditor);
 
   // ── Shared record actions (reused by tree commands and the detail panel) ──────
-  function sameFile(editor: vscode.TextEditor | undefined, filePath: string | undefined): boolean {
-    if (!editor || !filePath || editor.document.uri.scheme !== 'file') { return false; }
-    const left = path.resolve(editor.document.uri.fsPath);
-    const right = path.resolve(filePath);
-    return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
-  }
-
-  async function insertIntoEditor(editor: vscode.TextEditor, text: string): Promise<boolean> {
-    return editor.edit(editBuilder => {
-      for (const sel of editor.selections) {
-        editBuilder.insert(sel.active, text);
-      }
-    });
-  }
-
-  async function insertAtDocumentEnd(filePath: string, text: string): Promise<boolean> {
-    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
-    const editor = await vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.One });
-    const lastLine = doc.lineAt(Math.max(0, doc.lineCount - 1));
-    // A file without a trailing newline would otherwise glue the insert onto
-    // the last line and corrupt it — start on a fresh line instead.
-    const prefix = lastLine.text.length > 0 ? (doc.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n') : '';
-    return editor.edit(editBuilder => { editBuilder.insert(lastLine.range.end, prefix + text); });
-  }
-
-  function isLiveEditor(editor: vscode.TextEditor | undefined): editor is vscode.TextEditor {
-    return !!editor && !editor.document.isClosed
-      && vscode.window.visibleTextEditors.includes(editor);
-  }
-
+  // Insert-target resolution and the insert/open helpers live in ./ide/insertTarget.
   async function insertRecord(record: { insertedCode: string; fileName: string; filePath?: string }): Promise<void> {
-    // Prefer the capture's own open file, then a live active editor. A stored
-    // `lastActiveTextEditor` may point at a closed document — never let that
-    // dead reference win over reopening the capture's file.
-    const editor = vscode.window.visibleTextEditors.find(e => sameFile(e, record.filePath))
-      ?? (isLiveEditor(vscode.window.activeTextEditor) ? vscode.window.activeTextEditor : undefined)
-      ?? (isLiveEditor(lastActiveTextEditor) ? lastActiveTextEditor : undefined);
+    const target = resolveInsertTarget(record, lastActiveTextEditor);
+    const editor = target.kind === 'none' ? undefined : target.editor;
 
     if (!editor) {
       if (!record.filePath) {

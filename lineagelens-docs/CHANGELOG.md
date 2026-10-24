@@ -1,5 +1,29 @@
 ﻿# Change Log
 
+## [Unreleased] - 2026-10-24
+
+### Added
+- **Llama support, pinned by tests** — Llama served over any OpenAI-compatible endpoint (Llama API,
+  vLLM, llama.cpp, Ollama, Together, Groq) is captured with full fidelity through the proxy's
+  chat-completions adapter. `lineagelens-proxy/test_llama_conformance.py` pins the contract:
+  tool-call write/replace extraction, `meta-llama/…` model attribution into the captured prompt
+  context, fenced-code text fallback, and tool-result applied/rejected tracking. README gained a
+  "Works with Llama out of the box" section, and the supported-tools table now lists Llama and
+  Antigravity.
+- **Base extension 1.3.9** — filesystem-watcher capture path (catches agent edits written
+  directly to disk, e.g. Antigravity), Antigravity/Gemini tool recognition, AGENTS.md
+  instruction-scan coverage, and the webview-focus "Insert at cursor" fix (see the base
+  extension's own CHANGELOG).
+- **CI hardening** — base-extension job now typechecks (`npm run typecheck`), builds the bundle,
+  and uploads a VSIX artifact per PR (explicit `out/` path so committed .vsix files can't be
+  scooped up); the backend SQLite job installs `lineagelens-verifier` so the capsule↔verifier
+  roundtrip test stops silently skipping; job timeouts, npm caching, and a cancel-in-progress
+  concurrency group were added.
+
+### Fixed
+- TSA notarization fails closed when no TSA is configured (no fabricated receipts); pinned by
+  `tests/test_tsa_fail_closed.py`.
+
 ## [1.2.x] - 2026-06-04
 
 Consolidated summary of backend/proxy additions since the initial release (intermediate

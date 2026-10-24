@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.9] - 2026-10-24
+
+### Added
+- **Filesystem-watcher capture path** — a second capture engine besides editor events. Files
+  changed on disk (by the Antigravity agent, CLI agents like Aider/Gemini CLI, or any tool that
+  writes directly) are diffed against activation-time snapshots and captured when a block of
+  ≥ `minInsertionLines` new lines appears. Editor-path snapshots are kept aligned so an edit is
+  never double-captured, and the watcher honors `excludePatterns` with per-file/total size caps.
+- **Antigravity & Gemini recognition** — `AI_TOOL_HINTS` and host `appName` detection now cover
+  Antigravity and Gemini-family tools, so those captures are classified `ai` with boosted
+  confidence instead of `unknown`. `AGENTS.md` is included in the instruction-influence scan.
+
+### Fixed
+- **"Insert at cursor" no longer fails from webview focus** — clicking Insert in the capture
+  detail panel or sidebar used to clear `activeTextEditor`, guaranteeing the "No active editor"
+  warning. Resolution now walks: visible editor showing the capture's file → live active editor
+  → last active editor → reopen the capture's file and insert at its end. The chain lives in
+  `src/ide/insertTarget.ts` with unit tests pinning each fallback step.
+
 ## [1.3.3] - 2026-06-26
 
 ### Added

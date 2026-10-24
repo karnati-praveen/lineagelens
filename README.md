@@ -127,16 +127,37 @@ resolve whether the edit actually landed.
 |---|---|---|
 | **Claude Code** (terminal) | Proxy (`ANTHROPIC_BASE_URL`) | Full — prompt, model, edit, applied/rejected |
 | **OpenAI Codex CLI** | Proxy (`OPENAI_BASE_URL`) | Full — Responses API + `apply_patch` DSL |
+| **Llama (Llama API, vLLM, llama.cpp, Ollama)** | Proxy (`OPENAI_BASE_URL`) | Full — tool_calls + text edits, model recorded |
 | **Gemini CLI** | Proxy — parses `functionCall` / `functionResponse` | Full |
 | **Goose** (Block) | Proxy — rides Anthropic/OpenAI format | Full |
 | **VS Code Copilot** | Extension | Editor-only — file + inserted lines, no prompt |
 | **Cursor** | Extension | Editor-only — agent traffic goes to api.cursor.sh |
 | **Windsurf** | Extension | Editor-only — same proprietary backend |
+| **Antigravity** | Extension — filesystem-watcher capture | Editor-level — catches agent edits written to disk |
 | **Continue** | Proxy (native-tool-call provider) | Full or editor-only depending on model |
 | **Aider** | Planned — git-log + `.aider.chat.history.md` | — |
 | **Cline / Roo Code** | Planned — XML tool-format parser | — |
 | **GitHub Copilot CLI** | Not supported — proprietary endpoints | — |
 | **Amazon Q Developer** | Not supported — AWS proprietary protocol | — |
+
+### Works with Llama out of the box
+
+Llama is served over the OpenAI-compatible Chat Completions API — by Llama API,
+vLLM, llama.cpp's server, Ollama, Together, or Groq — and the LineageLens proxy
+speaks that protocol natively. Point your agent at the proxy and Llama traffic is
+captured with full fidelity: the prompt, `meta-llama/…` as the recorded model,
+every tool-call edit, and the applied/rejected outcome. Nothing to configure,
+and no code or prompts leave your network.
+
+```bash
+# serve Llama anywhere that speaks OpenAI-compatible chat completions, then:
+export OPENAI_BASE_URL=http://localhost:8788/v1   # the LineageLens proxy
+# e.g. behind it: vLLM on :8000, Ollama on :11434, or the Llama API
+```
+
+The Llama capture contract is pinned by `lineagelens-proxy/test_llama_conformance.py`
+(tool-call writes/replaces, model attribution, fenced-code text fallback, and
+tool-result accept/reject tracking) so a proxy change cannot silently break it.
 
 ---
 

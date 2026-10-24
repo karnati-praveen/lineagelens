@@ -3,7 +3,7 @@
   "displayName": "LineageLens Base",
   "description": "Lightweight AI code provenance \u2014 capture and review every AI-generated insertion locally, no server required.",
   "_extensionRole": "BASE \u2014 zero-server standalone edition. Install for local-only capture with no backend, no proxy, and no account required. The full server-connected edition (Lite/Plus/Max) lives in the repo root package.json.",
-  "version": "1.3.8",
+  "version": "1.3.9",
   "publisher": "karnatipraveen",
   "license": "MIT",
   "repository": {
@@ -294,6 +294,7 @@
     }
   },
   "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
     "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
     "package": "vsce package",
