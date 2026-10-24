@@ -446,6 +446,42 @@ test('add() attaches local risk signals (and none for clean code)', () => {
   expect(clean.riskSignals).toEqual([]);
 });
 
+test('dispose() flushes a pending debounced save to disk', () => {
+  const ctx = makeContext();
+  const store = new CaptureStore(ctx);
+  store.add({ filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'x', linesAdded: 4, workspaceFolder: null });
+  // No flush() — dispose() alone must persist the in-memory record.
+  store.dispose();
+  const reopened = new CaptureStore(ctx);
+  expect(reopened.count).toBe(1);
+  expect(reopened.getAll()[0].fileName).toBe('a.ts');
+});
+
+test('load() preserves a corrupt store as a timestamped backup instead of wiping it', () => {
+  const ctx = makeContext();
+  const storePath = path.join(tmpDir, 'captures.json');
+  fs.writeFileSync(storePath, '{ this is not json', 'utf-8');
+
+  const store = new CaptureStore(ctx);
+  expect(store.count).toBe(0);
+  const leftovers = fs.readdirSync(tmpDir);
+  expect(leftovers).not.toContain('captures.json');
+  expect(leftovers.some(f => /^captures\.json\.corrupt-\d+\.bak$/.test(f))).toBe(true);
+});
+
+test('load() backfills language/insertedCode so legacy entries cannot crash webviews', () => {
+  const ctx = makeContext();
+  const legacy = [
+    { id: 'a', timestamp: '2026-06-25T10:00:00.000Z', filePath: '/a.ts', fileName: 'a.ts', linesAdded: 1, workspaceFolder: null },
+  ];
+  fs.writeFileSync(path.join(tmpDir, 'captures.json'), JSON.stringify(legacy), 'utf-8');
+
+  const store = new CaptureStore(ctx);
+  const rec = store.getAll()[0];
+  expect(rec.language).toBe('text');
+  expect(rec.insertedCode).toBe('');
+});
+
 test('reclassifying or reviewing a record does not break its chain', () => {
   const store = new CaptureStore(makeContext());
   const a = store.add({ filePath: '/a.ts', fileName: 'a.ts', language: 'typescript', insertedCode: 'x', linesAdded: 4, workspaceFolder: null });

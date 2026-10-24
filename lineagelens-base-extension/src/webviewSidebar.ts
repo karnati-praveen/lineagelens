@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import { CaptureStore, CaptureSource, ReviewState } from './store';
 
-/** Lightweight per-card payload sent to the webview (no full code body). */
 interface CardData {
   id: string;
   fileName: string;
@@ -11,17 +10,15 @@ interface CardData {
   confidence: number;
   source: CaptureSource;
   reviewState: ReviewState;
-  /** Highest-severity risk signal, if any (for the row badge). */
   risk: { label: string; severity: string } | null;
   filePath: string;
   workspaceFolder: string | null;
   preview: string;
 }
 
-// Commands the sidebar toolbar may invoke. Allowlisted so the webview can never
-// execute an arbitrary command id.
 const SIDEBAR_COMMANDS = new Set<string>([
   'lineagelens.openWelcome',
+  'lineagelens.searchCaptures',
   'lineagelens.verifyEvidence',
   'lineagelens.exportCapsule',
   'lineagelens.exportPrSummary',
@@ -37,7 +34,7 @@ const SIDEBAR_COMMANDS = new Set<string>([
 function firstMeaningfulLine(code: string): string {
   for (const line of code.split('\n')) {
     const t = line.trim();
-    if (t) { return t.slice(0, 120); }
+    if (t) { return t.slice(0, 140); }
   }
   return '';
 }
@@ -49,16 +46,12 @@ function getNonce(): string {
   return text;
 }
 
-/**
- * Card-stack sidebar rendered as a webview (replaces the native tree so the
- * panel can carry its own background, elevation, and inline search/grouping).
- * All record mutations are delegated to existing commands / the store; the
- * webview is a pure view that re-renders whenever {@link refresh} is called.
- */
 export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
   static readonly VIEW_ID = 'lineagelens.captures';
 
   private view?: vscode.WebviewView;
+  private lastPost = { records: 0, ok: true, error: '', at: '' };
+  private postSeq = 0;
 
   constructor(
     private readonly store: CaptureStore,
@@ -69,14 +62,22 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
     this.view = webviewView;
     webviewView.webview.options = { enableScripts: true };
 
-    webviewView.webview.onDidReceiveMessage((msg: { type: string; id?: string; source?: string; command?: string }) => {
+    webviewView.webview.onDidReceiveMessage((msg: { type: string; id?: string; source?: string; command?: string; error?: string }) => {
       switch (msg.type) {
         case 'ready': this.postRecords(); break;
+        case 'webviewError':
+          this.lastPost = { ...this.lastPost, ok: false, error: msg.error ?? 'Unknown webview error' };
+          console.error('LineageLens Base sidebar webview failed:', msg.error);
+          break;
         case 'open': if (msg.id) { vscode.commands.executeCommand('lineagelens.openCapture', msg.id); } break;
         case 'insert': if (msg.id) { vscode.commands.executeCommand('lineagelens.insertAtCursor', msg.id); } break;
         case 'copy': if (msg.id) { vscode.commands.executeCommand('lineagelens.copyCode', msg.id); } break;
         case 'reveal': if (msg.id) { vscode.commands.executeCommand('lineagelens.revealInFile', msg.id); } break;
         case 'delete': if (msg.id) { vscode.commands.executeCommand('lineagelens.deleteCapture', msg.id); } break;
+        case 'reviewed': {
+          if (msg.id && this.store.setReviewState(msg.id, 'reviewed')) { this.onMutate(); }
+          break;
+        }
         case 'clearAll': vscode.commands.executeCommand('lineagelens.clearAll'); break;
         case 'cmd': if (msg.command && SIDEBAR_COMMANDS.has(msg.command)) { vscode.commands.executeCommand(msg.command); } break;
         case 'reclassify': {
@@ -89,18 +90,27 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
       }
     });
 
-    // Re-send data whenever the view becomes visible again (state can change while hidden).
     webviewView.onDidChangeVisibility(() => { if (webviewView.visible) { this.postRecords(); } });
+    webviewView.onDidDispose(() => { if (this.view === webviewView) { this.view = undefined; } });
 
-    // Set HTML last: the webview fires `ready` on load, so the listener above
-    // must exist before any script can post. The deferred push covers hosts
-    // that restore the view without re-firing `ready`.
     webviewView.webview.html = this.html(webviewView.webview);
-    setTimeout(() => { this.postRecords(); }, 0);
+    for (const delay of [0, 75, 250, 750, 1500]) {
+      setTimeout(() => { this.postRecords(); }, delay);
+    }
   }
 
-  /** Push the current store contents to the webview, if it is live. */
   refresh(): void { this.postRecords(); }
+
+  diagnostics(): string {
+    return [
+      `viewLive=${Boolean(this.view)}`,
+      `viewVisible=${this.view?.visible ?? false}`,
+      `lastPostedRecords=${this.lastPost.records}`,
+      `lastPostOk=${this.lastPost.ok}`,
+      `lastPostAt=${this.lastPost.at || 'never'}`,
+      `lastPostError=${this.lastPost.error || 'none'}`,
+    ].join('\n');
+  }
 
   private postRecords(): void {
     if (!this.view) { return; }
@@ -125,8 +135,28 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
     const backendUrl = (cfg.get<string>('backendUrl', '') ?? '').trim();
     const workspaceId = (cfg.get<string>('workspaceId', '') ?? '').trim();
     const server = backendUrl ? { backendUrl, workspaceId: workspaceId || 'default' } : null;
+    const stats = {
+      total: cards.length,
+      needsReview: cards.filter(c => c.reviewState === 'unreviewed' || c.reviewState === 'needs_changes').length,
+      highRisk: cards.filter(c => c.risk?.severity === 'high').length,
+      ai: cards.filter(c => c.source === 'ai').length,
+      paste: cards.filter(c => c.source === 'paste').length,
+    };
 
-    this.view.webview.postMessage({ type: 'data', records: cards, server });
+    const seq = ++this.postSeq;
+    this.lastPost = { records: cards.length, ok: true, error: '', at: new Date().toISOString() };
+    this.view.webview.postMessage({ type: 'data', seq, records: cards, server, stats }).then(
+      ok => {
+        if (!ok) {
+          this.lastPost = { records: cards.length, ok: false, error: 'postMessage returned false', at: new Date().toISOString() };
+          console.warn('LineageLens Base sidebar postMessage returned false');
+        }
+      },
+      err => {
+        this.lastPost = { records: cards.length, ok: false, error: String(err), at: new Date().toISOString() };
+        console.error('LineageLens Base sidebar postMessage failed:', err);
+      },
+    );
   }
 
   private html(webview: vscode.Webview): string {
@@ -143,380 +173,470 @@ export class CaptureWebviewProvider implements vscode.WebviewViewProvider {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
-<title>AI Captures</title>
+<title>LineageLens Captures</title>
 <style>
   :root {
-    --accent-ai: #7c8cff;
-    --accent-paste: #f5a623;
-    --accent-unknown: #8a8a8a;
+    --bg: var(--vscode-sideBar-background, #161616);
+    --panel: color-mix(in srgb, var(--vscode-sideBar-background, #161616) 82%, white 7%);
+    --panel2: color-mix(in srgb, var(--vscode-sideBar-background, #161616) 74%, white 10%);
+    --line: color-mix(in srgb, var(--vscode-sideBar-foreground, #d4d4d4) 14%, transparent);
+    --muted: var(--vscode-descriptionForeground, #8f8f8f);
+    --text: var(--vscode-sideBar-foreground, var(--vscode-foreground));
+    --accent: #8b95ff;
+    --green: #39d98a;
+    --amber: #f5b342;
+    --red: #ff6b6b;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
   body {
     font-family: var(--vscode-font-family);
     font-size: 12px;
-    color: var(--vscode-foreground);
-    /* The custom backdrop: a soft indigo glow over the theme's sidebar colour. */
+    color: var(--text);
     background:
-      radial-gradient(130% 70% at 50% -8%, rgba(124,140,255,.12), transparent 62%),
-      var(--vscode-sideBar-background, var(--vscode-editor-background));
-    padding: 10px 10px 24px;
+      radial-gradient(520px 260px at 12% -6%, rgba(139,149,255,.15), transparent 58%),
+      radial-gradient(360px 220px at 90% 8%, rgba(57,217,138,.08), transparent 60%),
+      var(--bg);
+    padding: 8px 10px 22px;
   }
+  button, input, select { font: inherit; }
+  button { color: inherit; }
 
-  /* ── Toolbar ────────────────────────────────────────────────────────────── */
-  .toolbar {
-    position: sticky; top: 0; z-index: 5;
-    display: flex; flex-direction: column; gap: 8px;
-    padding: 8px 2px 10px;
-    background: linear-gradient(var(--vscode-sideBar-background, var(--vscode-editor-background)) 70%, transparent);
-    margin: -10px -10px 6px; padding-left: 12px; padding-right: 12px;
+  .top {
+    position: sticky; top: 0; z-index: 10;
+    margin: -8px -10px 10px; padding: 8px 10px 9px;
+    background: linear-gradient(180deg, var(--bg) 82%, transparent);
+    backdrop-filter: blur(10px);
   }
-  .search {
-    display: flex; align-items: center; gap: 6px;
-    background: var(--vscode-input-background);
-    border: 1px solid var(--vscode-input-border, transparent);
-    border-radius: 8px; padding: 5px 9px;
+  .total-pill {
+    flex: none; display: inline-flex; align-items: baseline; gap: 4px;
+    border: 1px solid var(--line); background: rgba(255,255,255,.055);
+    border-radius: 999px; padding: 4px 8px;
   }
-  .search:focus-within { border-color: var(--vscode-focusBorder); }
-  .search svg { opacity: .6; flex: none; }
-  .search input {
-    flex: 1; background: transparent; border: none; outline: none;
-    color: var(--vscode-input-foreground); font-family: inherit; font-size: 12px;
-  }
-  .tools { display: flex; align-items: center; gap: 8px; }
-  .tools select {
-    flex: 1; background: var(--vscode-dropdown-background);
-    color: var(--vscode-dropdown-foreground);
-    border: 1px solid var(--vscode-dropdown-border, transparent);
-    border-radius: 7px; padding: 4px 8px; font-family: inherit; font-size: 11px; outline: none;
-  }
-  .count { font-size: 11px; color: var(--vscode-descriptionForeground); white-space: nowrap; }
-  .clear-btn {
-    background: transparent; border: 1px solid var(--vscode-panel-border);
-    color: var(--vscode-descriptionForeground);
-    border-radius: 7px; padding: 4px 9px; font-size: 11px; cursor: pointer; font-family: inherit;
-  }
-  .clear-btn:hover { color: var(--vscode-errorForeground); border-color: var(--vscode-errorForeground); }
+  .total-pill strong { font-size: 12px; }
+  .total-pill span { color: var(--muted); font-size: 10px; }
 
-  /* ── Actions bar ────────────────────────────────────────────────────────── */
-  .actions-bar { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
-  .tool-btn {
-    background: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-button-secondaryForeground);
-    border: 1px solid var(--vscode-widget-border, transparent);
-    border-radius: 6px; padding: 3px 8px; font-size: 10.5px; cursor: pointer;
-    font-family: inherit; white-space: nowrap;
+  .status-row { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; }
+  .server {
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px;
+    color: var(--muted); border: 1px solid var(--line); background: rgba(255,255,255,.035);
+    border-radius: 9px; padding: 5px 8px;
   }
-  .tool-btn:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  .server-dot { width: 7px; height: 7px; border-radius: 50%; background: #747474; flex: none; }
+  .server-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .server-count { margin-left: auto; color: var(--text); font-size: 10.5px; white-space: nowrap; }
+  .ghost-btn {
+    flex: none; border: 1px solid var(--line); background: rgba(255,255,255,.045);
+    border-radius: 9px; padding: 5px 8px; color: var(--text); cursor: pointer;
+  }
+  .ghost-btn:hover { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); background: rgba(139,149,255,.12); }
 
-  /* ── Group header ───────────────────────────────────────────────────────── */
-  .group-head {
-    display: flex; align-items: center; gap: 6px;
-    margin: 14px 0 4px; padding: 0 14px; font-size: 10px; font-weight: 700;
-    letter-spacing: .07em; text-transform: uppercase;
-    color: var(--vscode-descriptionForeground); cursor: pointer; user-select: none;
+  .searchbox {
+    display: flex; align-items: center; gap: 8px;
+    border: 1px solid var(--line); background: rgba(255,255,255,.06);
+    border-radius: 10px; padding: 6px 9px; margin-bottom: 7px;
   }
-  .group-head .caret { transition: transform .15s ease; }
-  .group-head.collapsed .caret { transform: rotate(-90deg); }
-  .group-head .gcount {
-    margin-left: auto; font-weight: 600; letter-spacing: 0; text-transform: none;
-    background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);
-    border-radius: 9px; padding: 1px 7px;
-  }
+  .searchbox:focus-within { border-color: color-mix(in srgb, var(--accent) 75%, white 5%); box-shadow: 0 0 0 1px rgba(139,149,255,.14); }
+  .mag { color: var(--muted); font-size: 13px; }
+  #search { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); }
+  #search::placeholder { color: color-mix(in srgb, var(--muted) 78%, transparent); }
 
-  /* ── Row (compact list) ─────────────────────────────────────────────────── */
+  .chips { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip {
+    flex: none; border: 1px solid var(--line); background: rgba(255,255,255,.035);
+    border-radius: 999px; padding: 4px 8px; color: var(--muted); cursor: pointer; white-space: nowrap;
+  }
+  .chip strong { color: var(--text); font-weight: 650; }
+  .chip:hover { color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  .chip.active { color: #fff; background: rgba(139,149,255,.18); border-color: rgba(139,149,255,.55); }
+  .chip.danger.active { background: rgba(255,107,107,.16); border-color: rgba(255,107,107,.55); }
+
+  .controls { display: flex; align-items: center; gap: 7px; margin: 7px 0 9px; }
+  .controls select {
+    min-width: 0; flex: 1; border: 1px solid var(--line); border-radius: 10px;
+    background: rgba(255,255,255,.045); color: var(--text); padding: 5px 8px; outline: 0;
+  }
+  .action {
+    border: 1px solid var(--line); border-radius: 10px; padding: 5px 8px;
+    background: rgba(255,255,255,.045); color: var(--text); cursor: pointer; white-space: nowrap;
+  }
+  .action.primary { border-color: rgba(57,217,138,.35); background: rgba(57,217,138,.11); }
+  .action:hover { border-color: rgba(139,149,255,.55); }
+  .more { position: relative; }
+  .more-menu {
+    display: none; position: absolute; right: 0; top: 31px; min-width: 150px; z-index: 20;
+    border: 1px solid var(--line); border-radius: 12px; padding: 5px;
+    background: color-mix(in srgb, var(--bg) 88%, white 8%); box-shadow: 0 10px 32px rgba(0,0,0,.32);
+  }
+  .more.open .more-menu { display: block; }
+  .more-menu button { display: block; width: 100%; text-align: left; border: 0; background: transparent; border-radius: 8px; padding: 7px 8px; cursor: pointer; }
+  .more-menu button:hover { background: rgba(255,255,255,.07); }
+  .clear { color: var(--red); }
+
   #list { margin: 0 -10px; }
-  .row {
-    position: relative;
-    padding: 7px 12px 7px 14px;
-    border-bottom: 1px solid var(--vscode-widget-border, rgba(255,255,255,.05));
+  .group-head {
+    display: flex; align-items: center; gap: 7px; margin: 15px 0 5px; padding: 0 12px;
+    color: var(--muted); font-size: 10px; font-weight: 760; letter-spacing: .08em; text-transform: uppercase;
+    cursor: pointer; user-select: none;
+  }
+  .group-head .gcount { margin-left: auto; color: var(--text); background: rgba(255,255,255,.07); border-radius: 999px; padding: 1px 7px; letter-spacing: 0; text-transform: none; }
+  .group-head.collapsed .caret { transform: rotate(-90deg); }
+
+  .card {
+    position: relative; margin: 0 0 7px; padding: 10px 11px 9px 13px;
+    border-top: 1px solid transparent; border-bottom: 1px solid var(--line);
+    background: linear-gradient(90deg, rgba(139,149,255,.07), transparent 46%);
     cursor: pointer;
-    transition: background .1s ease;
   }
-  .row::before {
-    content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
-    background: var(--accent-unknown);
-  }
-  .row.s-ai::before    { background: var(--accent-ai); }
-  .row.s-paste::before { background: var(--accent-paste); }
-  .row:hover { background: var(--vscode-list-hoverBackground); }
+  .card:hover, .card:focus-within { background: rgba(255,255,255,.045); border-top-color: var(--line); }
+  .card::before { content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 4px 4px 0; background: #747474; }
+  .card.s-ai::before { background: var(--accent); }
+  .card.s-paste::before { background: var(--amber); }
+  .card-main { display: flex; align-items: flex-start; gap: 9px; }
+  .card-title { min-width: 0; flex: 1; }
+  .file { font-size: 12.8px; font-weight: 740; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .path { margin-top: 3px; color: var(--muted); font-size: 10.4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pill-stack { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; max-width: 42%; }
+  .badge { border: 1px solid var(--line); border-radius: 999px; padding: 2px 7px; font-size: 9.7px; color: var(--muted); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .risk-high { color: var(--red); border-color: rgba(255,107,107,.5); background: rgba(255,107,107,.11); }
+  .risk-medium { color: var(--amber); border-color: rgba(245,179,66,.48); background: rgba(245,179,66,.1); }
+  .review-new { color: var(--muted); }
+  .review-ok { color: var(--green); border-color: rgba(57,217,138,.45); background: rgba(57,217,138,.08); }
+  .review-bad { color: var(--red); border-color: rgba(255,107,107,.45); background: rgba(255,107,107,.09); }
+  .meta { display: flex; align-items: center; gap: 6px; margin-top: 7px; color: var(--muted); font-size: 10.5px; }
+  .meta b { color: var(--green); font-weight: 720; }
+  .source-dot { width: 6px; height: 6px; border-radius: 50%; background: #747474; }
+  .source-dot.ai { background: var(--accent); }
+  .source-dot.paste { background: var(--amber); }
+  .preview { margin-top: 8px; color: color-mix(in srgb, var(--muted) 84%, white 8%); font-family: var(--vscode-editor-font-family, monospace); font-size: 10.7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card-actions { display: none; gap: 5px; margin-top: 9px; }
+  .card:hover .card-actions, .card:focus-within .card-actions { display: flex; }
+  .card-actions button { flex: 1; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.045); padding: 5px 6px; cursor: pointer; font-size: 10.5px; }
+  .card-actions button:hover { border-color: rgba(139,149,255,.55); background: rgba(139,149,255,.12); }
+  .card-actions .ok { flex: .7; color: var(--green); border-color: rgba(57,217,138,.35); }
+  .card-actions .del { flex: .7; color: var(--red); }
 
-  .row-top { display: flex; align-items: center; gap: 8px; }
-  .fname {
-    font-weight: 600; font-size: 12.5px; flex: 1;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .badges { display: flex; align-items: center; gap: 5px; flex: none; }
-  .b {
-    font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 9px;
-    white-space: nowrap; border: 1px solid transparent; letter-spacing: .01em;
-  }
-  .b-rev-ok   { color: #34d058; border-color: rgba(52,208,88,.4); }
-  .b-rev-warn { color: #f44747; border-color: rgba(244,71,71,.4); }
-  .b-rev-new  { color: var(--vscode-descriptionForeground); border-color: var(--vscode-panel-border); opacity: .8; }
-  .b-risk-high { color: #f44747; background: rgba(244,71,71,.12); border-color: rgba(244,71,71,.4); }
-  .b-risk-med  { color: #f5a623; background: rgba(245,166,35,.12); border-color: rgba(245,166,35,.4); }
-  .b-risk-low  { color: var(--vscode-descriptionForeground); border-color: var(--vscode-panel-border); }
-
-  .row-sub { display: flex; align-items: center; margin-top: 3px; font-size: 10.5px; color: var(--vscode-descriptionForeground); }
-  .row-sub .dot { opacity: .45; margin: 0 5px; }
-  .row-sub .lines { color: #34d058; font-weight: 600; }
-  .conf { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; opacity: .9; }
-  .conf .cdot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-unknown); }
-  .conf.hi .cdot  { background: #34d058; }
-  .conf.mid .cdot { background: #f5a623; }
-  .conf.lo .cdot  { background: #f44747; }
-
-  /* Preview + actions reveal on hover only — keeps the list quiet by default. */
-  .reveal { max-height: 0; opacity: 0; overflow: hidden; transition: max-height .16s ease, opacity .16s ease; }
-  .row:hover .reveal { max-height: 90px; opacity: 1; margin-top: 7px; }
-  .preview {
-    font-family: var(--vscode-editor-font-family, monospace); font-size: 10.5px;
-    color: var(--vscode-descriptionForeground);
-    background: var(--vscode-textCodeBlock-background, rgba(0,0,0,.18));
-    border-radius: 5px; padding: 3px 8px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .row-actions { display: flex; gap: 4px; margin-top: 6px; }
-  .act {
-    flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
-    background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground);
-    border: none; border-radius: 5px; padding: 4px 6px; font-size: 10.5px; cursor: pointer; font-family: inherit;
-  }
-  .act:hover { background: var(--vscode-button-secondaryHoverBackground); }
-  .act.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
-  .act.primary:hover { background: var(--vscode-button-hoverBackground); }
-  .act.del { flex: 0 0 30px; }
-  .act.del:hover { background: var(--vscode-errorForeground); color: var(--vscode-editor-background); }
-
-  /* ── Empty state ────────────────────────────────────────────────────────── */
-  .empty { text-align: center; padding: 48px 18px; color: var(--vscode-descriptionForeground); }
-  .empty .big { font-size: 30px; margin-bottom: 12px; opacity: .8; }
-  .empty .t { font-weight: 600; margin-bottom: 6px; color: var(--vscode-foreground); }
-  .empty .s { font-size: 11px; line-height: 1.6; }
-  .hidden { display: none; }
+  .state { text-align: center; padding: 54px 22px; color: var(--muted); }
+  .state .mark { width: 42px; height: 42px; margin: 0 auto 13px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 14px; background: rgba(255,255,255,.04); color: var(--text); font-size: 18px; }
+  .state .title { color: var(--text); font-weight: 720; margin-bottom: 5px; }
+  .state .copy { font-size: 11px; line-height: 1.55; }
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
-  <div class="toolbar">
-    <div id="server-bar" style="display:flex;align-items:center;justify-content:space-between;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.04);border:1px solid var(--vscode-widget-border, rgba(255,255,255,0.08));font-size:11px;margin-bottom:2px;">
-      <span id="server-info" style="display:inline-flex;align-items:center;gap:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-        <span id="server-dot" style="width:7px;height:7px;border-radius:50%;background:#8a8a8a;flex-shrink:0;"></span>
-        <span id="server-text" style="color:var(--vscode-descriptionForeground);">Local Mode</span>
-      </span>
-      <button id="server-act-btn" class="tool-btn" data-cmd="lineagelensBase.connectToServer" style="padding:1px 6px;font-size:10px;">Connect</button>
+  <div class="top">
+    <div class="status-row">
+      <div class="server" title="Capture mode">
+        <span id="server-dot" class="server-dot"></span>
+        <span id="server-text" class="server-text">Local mode</span>
+        <span id="subtitle" class="server-count">0 captures</span>
+      </div>
+      <button id="server-act-btn" class="ghost-btn" data-cmd="lineagelensBase.connectToServer" type="button">Connect</button>
     </div>
-    <label class="search">
-      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
-        <circle cx="7" cy="7" r="4.5"/><path d="M11 11l3.5 3.5"/>
-      </svg>
-      <input id="search" type="text" placeholder="Search file, language, source, code…" />
+
+    <label class="searchbox">
+      <span class="mag">Search</span>
+      <input id="search" type="text" placeholder="files, risks, source, review state" />
     </label>
-    <div class="tools">
+
+    <div class="chips" role="toolbar" aria-label="Capture filters">
+      <button class="chip active" data-filter="all" type="button">All <strong id="chip-all">0</strong></button>
+      <button class="chip" data-filter="inbox" type="button">Inbox <strong id="chip-inbox">0</strong></button>
+      <button class="chip danger" data-filter="risk" type="button">High risk <strong id="chip-risk">0</strong></button>
+      <button class="chip" data-filter="ai" type="button">AI <strong id="chip-ai">0</strong></button>
+      <button class="chip" data-filter="paste" type="button">Paste <strong id="chip-paste">0</strong></button>
+    </div>
+
+    <div class="controls">
       <select id="group" title="Group captures">
         <option value="none">No grouping</option>
-        <option value="file">Group by file</option>
-        <option value="source">Group by source</option>
-        <option value="day">Group by day</option>
+        <option value="file">By file</option>
+        <option value="source">By source</option>
+        <option value="day">By day</option>
       </select>
-      <span class="count" id="count">0</span>
-      <button class="clear-btn" id="clearAll" type="button">Clear all</button>
-    </div>
-    <div class="actions-bar">
-      <button class="tool-btn" data-cmd="lineagelens.verifyEvidence" type="button" title="Verify Local Evidence Store">✓ Verify</button>
-      <button class="tool-btn" data-cmd="lineagelens.exportCapsule" type="button" title="Export Evidence Capsule">📦 Capsule</button>
-      <button class="tool-btn" data-cmd="lineagelens.exportPrSummary" type="button" title="Generate PR Summary of AI Changes">📝 PR summary</button>
-      <button class="tool-btn" data-cmd="lineagelens.checkBeforeCommit" type="button" title="Check AI Changes Before Commit">⎇ Pre-commit</button>
-      <button class="tool-btn" data-cmd="lineagelens.showFileTimeline" type="button" title="Show AI Timeline for This File">🕓 Timeline</button>
-      <button class="tool-btn" data-cmd="lineagelens.toggleFocusMode" type="button" title="Toggle AI Focus Mode">👁 Focus</button>
-      <button class="tool-btn" data-cmd="lineagelens.exportJson" type="button" title="Export Captures as JSON">⬇ JSON</button>
-      <button class="tool-btn" data-cmd="lineagelens.exportAgentTrace" type="button" title="Export Agent Trace">⬇ Trace</button>
+      <button class="action primary" data-cmd="lineagelens.verifyEvidence" type="button">Verify</button>
+      <div class="more" id="more">
+        <button class="action" id="moreBtn" type="button">More</button>
+        <div class="more-menu" id="moreMenu">
+          <button data-cmd="lineagelens.searchCaptures" type="button">Find capture</button>
+          <button data-cmd="lineagelens.exportCapsule" type="button">Export capsule</button>
+          <button data-cmd="lineagelens.exportPrSummary" type="button">PR summary</button>
+          <button data-cmd="lineagelens.checkBeforeCommit" type="button">Pre-commit check</button>
+          <button data-cmd="lineagelens.showFileTimeline" type="button">File timeline</button>
+          <button data-cmd="lineagelens.toggleFocusMode" type="button">Focus mode</button>
+          <button data-cmd="lineagelens.exportJson" type="button">Export JSON</button>
+          <button data-cmd="lineagelens.exportAgentTrace" type="button">Agent trace</button>
+          <button id="clearAll" class="clear" type="button">Clear all</button>
+        </div>
+      </div>
     </div>
   </div>
 
   <div id="list"></div>
-  <div id="empty" class="empty hidden">
-    <div class="big">⚡</div>
-    <div class="t">No captures yet</div>
-    <div class="s">LineageLens records AI insertions of 4+ lines automatically.<br>Use Copilot, Cursor, or Claude and they'll appear here.</div>
-    <button class="tool-btn" data-cmd="lineagelens.openWelcome" type="button" style="margin-top:14px">❔ Open the guide</button>
+  <div id="error" class="state hidden">
+    <div class="mark">!</div>
+    <div class="title">Sidebar render failed</div>
+    <div class="copy" id="errorText">Run LineageLens: Diagnostics.</div>
+  </div>
+  <div id="empty" class="state hidden">
+    <div class="mark">LL</div>
+    <div class="title">No captures yet</div>
+    <div class="copy">Accept or paste 4+ lines of code. LineageLens will add the evidence here automatically.</div>
   </div>
 
   <script nonce="${nonce}">
     (function() {
-      const vscode = acquireVsCodeApi();
-      let RECORDS = [];
-      let filter = '';
-      let group = 'none';
-      const collapsed = new Set();
+      var vscode = acquireVsCodeApi();
+      var RECORDS = [];
+      var STATS = { total: 0, needsReview: 0, highRisk: 0, ai: 0, paste: 0 };
+      var query = '';
+      var group = 'none';
+      var filter = 'all';
+      var collapsed = new Set();
 
-      const $ = (id) => document.getElementById(id);
+      function el(id) { return document.getElementById(id); }
+      function text(id, value) { var node = el(id); if (node) node.textContent = String(value); }
+      function esc(value) {
+        return String(value == null ? '' : value)
+          .split('&').join('&amp;')
+          .split('<').join('&lt;')
+          .split('>').join('&gt;')
+          .split('"').join('&quot;');
+      }
+      function lower(value) { return String(value == null ? '' : value).toLowerCase(); }
+      function showError(err) {
+        var msg = err && (err.stack || err.message || String(err)) || 'Unknown sidebar error';
+        var list = el('list'), empty = el('empty'), box = el('error'), errorText = el('errorText');
+        if (list) list.innerHTML = '';
+        if (empty) empty.classList.add('hidden');
+        if (errorText) errorText.textContent = msg;
+        if (box) box.classList.remove('hidden');
+        try { vscode.postMessage({ type: 'webviewError', error: msg }); } catch (_) {}
+      }
+      window.addEventListener('error', function(e) { showError(e.error || e.message); });
+      window.addEventListener('unhandledrejection', function(e) { showError(e.reason); });
 
-      function esc(s) {
-        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      function parentPath(filePath) {
+        var value = String(filePath || '');
+        var i = Math.max(value.lastIndexOf('/'), value.lastIndexOf(String.fromCharCode(92)));
+        return i >= 0 ? value.slice(0, i) : '';
       }
-      function rel(iso) {
-        const d = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-        if (isNaN(d) || d < -60) return 'unknown';
-        if (d < 60) return 'just now';
-        if (d < 3600) return Math.floor(d/60) + 'm ago';
-        if (d < 86400) return Math.floor(d/3600) + 'h ago';
-        if (d < 172800) return 'yesterday';
-        return new Date(iso).toLocaleDateString([], { month:'short', day:'numeric' });
+      function displayUrl(url) {
+        var value = String(url || '');
+        if (value.indexOf('https://') === 0) return value.slice(8);
+        if (value.indexOf('http://') === 0) return value.slice(7);
+        return value;
       }
-      function srcLabel(s) { return s === 'ai' ? '🤖 AI' : s === 'paste' ? '📋 Paste' : '❓ Unknown'; }
-      function confCls(p) { return p >= 70 ? 'hi' : p >= 45 ? 'mid' : 'lo'; }
-      function reviewBadge(s) {
-        if (s === 'reviewed' || s === 'accepted') return '<span class="b b-rev-ok">✓ reviewed</span>';
-        if (s === 'needs_changes') return '<span class="b b-rev-warn">✎ changes</span>';
-        if (s === 'rejected') return '<span class="b b-rev-warn">✕ rejected</span>';
-        return '<span class="b b-rev-new">new</span>';
+      function relTime(iso) {
+        var time = new Date(iso).getTime();
+        if (!time) return 'unknown';
+        var secs = Math.floor((Date.now() - time) / 1000);
+        if (secs < 60) return 'now';
+        if (secs < 3600) return Math.floor(secs / 60) + 'm';
+        if (secs < 86400) return Math.floor(secs / 3600) + 'h';
+        if (secs < 172800) return 'yesterday';
+        return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
       }
-      function riskBadge(r) {
-        if (!r) return '';
-        var cls = r.severity === 'high' ? 'b-risk-high' : r.severity === 'medium' ? 'b-risk-med' : 'b-risk-low';
-        return '<span class="b ' + cls + '" title="local risk signal">⚠ ' + esc(r.label) + '</span>';
+      function needsReview(r) {
+        return (r.reviewState || 'unreviewed') === 'unreviewed' || r.reviewState === 'needs_changes';
       }
-
-      function matches(r, q) {
-        return (r.fileName||'').toLowerCase().includes(q)
-          || (r.language||'').toLowerCase().includes(q)
-          || (r.source||'').toLowerCase().includes(q)
-          || (r.filePath||'').toLowerCase().includes(q)
-          || (r.preview||'').toLowerCase().includes(q);
+      function sourceLabel(source) {
+        if (source === 'ai') return 'AI';
+        if (source === 'paste') return 'Paste';
+        return 'Unknown';
       }
-
+      function reviewBadge(state) {
+        if (state === 'reviewed' || state === 'accepted') return '<span class="badge review-ok">reviewed</span>';
+        if (state === 'needs_changes') return '<span class="badge review-bad">needs changes</span>';
+        if (state === 'rejected') return '<span class="badge review-bad">rejected</span>';
+        return '<span class="badge review-new">new</span>';
+      }
+      function riskBadge(risk) {
+        if (!risk) return '';
+        var cls = risk.severity === 'high' ? 'risk-high' : risk.severity === 'medium' ? 'risk-medium' : '';
+        return '<span class="badge ' + cls + '">' + esc(risk.label || risk.severity) + '</span>';
+      }
       function dayBucket(iso) {
-        const d = new Date(iso);
-        if (isNaN(d.getTime())) return { key:'unknown', label:'Unknown date' };
-        const sod = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-        const delta = Math.round((sod(new Date()) - sod(d)) / 86400000);
-        const key = d.getFullYear()+'-'+d.getMonth()+'-'+d.getDate();
-        if (delta === 0) return { key, label:'Today' };
-        if (delta === 1) return { key, label:'Yesterday' };
-        return { key, label: d.toLocaleDateString([], { weekday:'short', month:'short', day:'numeric' }) };
+        var d = new Date(iso);
+        if (!d.getTime()) return { key: 'unknown', label: 'Unknown date' };
+        var now = new Date();
+        var start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        var then = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        var delta = Math.round((start - then) / 86400000);
+        var key = d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate();
+        if (delta === 0) return { key: key, label: 'Today' };
+        if (delta === 1) return { key: key, label: 'Yesterday' };
+        return { key: key, label: d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) };
       }
 
-      function cardHtml(r) {
-        const pct = Math.round((r.confidence ?? 0.5) * 100);
-        const preview = r.preview ? '<div class="preview">' + esc(r.preview) + '</div>' : '';
-        return '<div class="row s-' + esc(r.source) + '" data-id="' + esc(r.id) + '" title="' + esc(srcLabel(r.source)) + '">'
-          + '<div class="row-top">'
-          +   '<span class="fname" title="' + esc(r.filePath) + '">' + esc(r.fileName) + '</span>'
-          +   '<span class="badges">' + riskBadge(r.risk) + reviewBadge(r.reviewState) + '</span>'
-          + '</div>'
-          + '<div class="row-sub">'
-          +   '<span>' + esc(r.language || 'text') + '</span>'
-          +   '<span class="dot">·</span><span class="lines">+' + r.linesAdded + '</span>'
-          +   '<span class="dot">·</span><span>' + rel(r.timestamp) + '</span>'
-          +   '<span class="conf ' + confCls(pct) + '" title="AI confidence"><span class="cdot"></span>' + pct + '%</span>'
-          + '</div>'
-          + '<div class="reveal">'
-          +   preview
-          +   '<div class="row-actions">'
-          +     '<button class="act primary" data-act="insert">⤵ Insert</button>'
-          +     '<button class="act" data-act="copy">⧉ Copy</button>'
-          +     '<button class="act" data-act="reveal">↗ File</button>'
-          +     '<button class="act del" data-act="delete">🗑</button>'
-          +   '</div>'
-          + '</div>'
-          + '</div>';
-      }
-
-      function groupsFor(recs) {
-        const map = new Map();
-        for (const r of recs) {
-          let key, label;
-          if (group === 'file') { key = r.fileName || 'unknown'; label = key; }
-          else if (group === 'source') { key = r.source; label = srcLabel(r.source); }
-          else { const b = dayBucket(r.timestamp); key = b.key; label = b.label; }
-          const g = map.get(key);
-          if (g) g.recs.push(r); else map.set(key, { label, recs: [r] });
-        }
-        return [...map.entries()];
-      }
-
-      function render() {
-        const q = filter.trim().toLowerCase();
-        const visible = q ? RECORDS.filter(r => matches(r, q)) : RECORDS;
-        $('count').textContent = q ? (visible.length + '/' + RECORDS.length) : String(RECORDS.length);
-
-        const empty = $('empty'), list = $('list');
-        if (RECORDS.length === 0) { empty.classList.remove('hidden'); list.innerHTML = ''; return; }
-        empty.classList.add('hidden');
-
-        if (group === 'none') {
-          list.innerHTML = visible.map(cardHtml).join('') ||
-            '<div class="empty"><div class="t">No matches</div><div class="s">Nothing matches “' + esc(filter) + '”.</div></div>';
-          return;
-        }
-
-        let html = '';
-        for (const [key, g] of groupsFor(visible)) {
-          const isCol = collapsed.has(key);
-          html += '<div class="group-head ' + (isCol ? 'collapsed' : '') + '" data-group="' + esc(key) + '">'
-            + '<span class="caret">▾</span><span>' + esc(g.label) + '</span>'
-            + '<span class="gcount">' + g.recs.length + '</span></div>';
-          if (!isCol) { html += g.recs.map(cardHtml).join(''); }
-        }
-        list.innerHTML = html ||
-          '<div class="empty"><div class="t">No matches</div><div class="s">Nothing matches “' + esc(filter) + '”.</div></div>';
-      }
-
-      // ── Events ────────────────────────────────────────────────────────────
-      $('search').addEventListener('input', (e) => { filter = e.target.value; render(); });
-      $('group').addEventListener('change', (e) => { group = e.target.value; render(); });
-      $('clearAll').addEventListener('click', () => vscode.postMessage({ type: 'clearAll' }));
-      Array.prototype.forEach.call(document.querySelectorAll('.tool-btn'), function (b) {
-        b.addEventListener('click', function () {
-          vscode.postMessage({ type: 'cmd', command: b.getAttribute('data-cmd') });
-        });
-      });
-
-      $('list').addEventListener('click', (e) => {
-        const head = e.target.closest('.group-head');
-        if (head) {
-          const k = head.getAttribute('data-group');
-          if (collapsed.has(k)) collapsed.delete(k); else collapsed.add(k);
-          render(); return;
-        }
-        const card = e.target.closest('.row');
-        if (!card) return;
-        const id = card.getAttribute('data-id');
-        const actBtn = e.target.closest('.act');
-        if (actBtn) {
-          e.stopPropagation();
-          vscode.postMessage({ type: actBtn.getAttribute('data-act'), id });
-          return;
-        }
-        vscode.postMessage({ type: 'open', id });
-      });
-
-      window.addEventListener('message', (ev) => {
-        const msg = ev.data;
-        if (msg && msg.type === 'data') {
-          RECORDS = msg.records || [];
-          const s = msg.server;
-          const sDot = $('server-dot');
-          const sText = $('server-text');
-          const sBtn = $('server-act-btn');
-          if (s && sDot && sText && sBtn) {
-            sDot.style.background = '#22c55e';
-            sDot.style.boxShadow = '0 0 6px rgba(34,197,94,0.6)';
-            sText.textContent = s.workspaceId + ' (' + s.backendUrl.replace(/^https?:\/\//, '') + ')';
-            sText.style.color = 'var(--vscode-foreground)';
-            sBtn.textContent = 'Disconnect';
-            sBtn.setAttribute('data-cmd', 'lineagelensBase.disconnectServer');
-          } else if (sDot && sText && sBtn) {
-            sDot.style.background = '#8a8a8a';
-            sDot.style.boxShadow = 'none';
-            sText.textContent = 'Local Mode';
-            sText.style.color = 'var(--vscode-descriptionForeground)';
-            sBtn.textContent = 'Connect';
-            sBtn.setAttribute('data-cmd', 'lineagelensBase.connectToServer');
+      function matchesQuery(r, q) {
+        if (!q) return true;
+        var colon = q.indexOf(':');
+        if (colon > 0) {
+          var field = q.slice(0, colon);
+          var value = q.slice(colon + 1).trim();
+          if (value) {
+            if (field === 'risk') return lower((r.risk && r.risk.severity) || '').indexOf(value) >= 0 || lower((r.risk && r.risk.label) || '').indexOf(value) >= 0;
+            if (field === 'review') return lower(r.reviewState || 'unreviewed').indexOf(value) >= 0;
+            if (field === 'source') return lower(r.source || '').indexOf(value) >= 0;
           }
-          render();
         }
+        return lower(r.fileName).indexOf(q) >= 0
+          || lower(r.language).indexOf(q) >= 0
+          || lower(r.source).indexOf(q) >= 0
+          || lower(r.reviewState).indexOf(q) >= 0
+          || lower(r.filePath).indexOf(q) >= 0
+          || lower(r.preview).indexOf(q) >= 0
+          || lower((r.risk && r.risk.label) || '').indexOf(q) >= 0;
+      }
+      function matchesFilter(r) {
+        if (filter === 'inbox') return needsReview(r);
+        if (filter === 'risk') return r.risk && r.risk.severity === 'high';
+        if (filter === 'ai') return r.source === 'ai';
+        if (filter === 'paste') return r.source === 'paste';
+        return true;
+      }
+      function visibleRecords() {
+        var q = query.trim().toLowerCase();
+        return RECORDS.filter(function(r) { return matchesFilter(r) && matchesQuery(r, q); });
+      }
+      function groupKeyFor(r) {
+        if (group === 'file') return 'file:' + (r.filePath || r.fileName || 'unknown');
+        if (group === 'source') return 'source:' + (r.source || 'unknown');
+        return 'day:' + dayBucket(r.timestamp).key;
+      }
+      function groupsFor(records) {
+        var map = new Map();
+        records.forEach(function(r) {
+          var key = groupKeyFor(r);
+          var label;
+          if (group === 'file') label = (r.fileName || 'unknown') + (r.filePath && r.filePath !== r.fileName ? ' - ' + parentPath(r.filePath) : '');
+          else if (group === 'source') label = sourceLabel(r.source);
+          else label = dayBucket(r.timestamp).label;
+          var item = map.get(key);
+          if (item) item.records.push(r); else map.set(key, { label: label, records: [r] });
+        });
+        Array.from(collapsed).forEach(function(k) { if (!map.has(k)) collapsed.delete(k); });
+        return Array.from(map.entries());
+      }
+      function cardHtml(r) {
+        var pct = Math.round(Number(r.confidence == null ? 0.5 : r.confidence) * 100);
+        var parent = parentPath(r.filePath);
+        var pathLabel = [r.language || 'text', parent || r.workspaceFolder || '', relTime(r.timestamp)].filter(Boolean).join(' / ');
+        var sourceClass = r.source === 'ai' ? 'ai' : r.source === 'paste' ? 'paste' : '';
+        var source = '<span class="source-dot ' + sourceClass + '"></span><span>' + sourceLabel(r.source) + '</span>';
+        var preview = r.preview ? '<div class="preview">' + esc(r.preview) + '</div>' : '';
+        var done = needsReview(r) ? '<button class="ok" data-act="reviewed" type="button">Done</button>' : '';
+        return '<article class="card s-' + esc(r.source || 'unknown') + '" data-id="' + esc(r.id) + '">'
+          + '<div class="card-main">'
+          + '<div class="card-title"><div class="file" title="' + esc(r.filePath) + '">' + esc(r.fileName || 'unknown') + '</div><div class="path">' + esc(pathLabel) + '</div></div>'
+          + '<div class="pill-stack">' + riskBadge(r.risk) + reviewBadge(r.reviewState) + '</div>'
+          + '</div>'
+          + '<div class="meta">' + source + '<span>+<b>' + esc(Number(r.linesAdded) || 0) + '</b> lines</span><span>' + esc(pct) + '% confidence</span></div>'
+          + preview
+          + '<div class="card-actions">' + done + '<button data-act="open" type="button">Open</button><button data-act="copy" type="button">Copy</button><button data-act="reveal" type="button">File</button><button class="del" data-act="delete" type="button">Delete</button></div>'
+          + '</article>';
+      }
+      function updateTop(visible) {
+        text('chip-all', STATS.total || RECORDS.length);
+        text('chip-inbox', STATS.needsReview || 0);
+        text('chip-risk', STATS.highRisk || 0);
+        text('chip-ai', STATS.ai || 0);
+        text('chip-paste', STATS.paste || 0);
+        var sub = visible.length === RECORDS.length ? RECORDS.length + ' captures' : visible.length + '/' + RECORDS.length;
+        text('subtitle', sub);
+        Array.prototype.forEach.call(document.querySelectorAll('.chip'), function(btn) {
+          btn.classList.toggle('active', btn.getAttribute('data-filter') === filter);
+        });
+      }
+      function render() {
+        var list = el('list'), empty = el('empty'), error = el('error');
+        if (error) error.classList.add('hidden');
+        var visible = visibleRecords();
+        updateTop(visible);
+        if (!list || !empty) return;
+        if (RECORDS.length === 0) {
+          list.innerHTML = '';
+          empty.classList.remove('hidden');
+          return;
+        }
+        empty.classList.add('hidden');
+        if (group === 'none') {
+          list.innerHTML = visible.map(cardHtml).join('') || '<div class="state"><div class="mark">0</div><div class="title">No matches</div><div class="copy">Try All captures or clear the search.</div></div>';
+          return;
+        }
+        var html = '';
+        groupsFor(visible).forEach(function(entry) {
+          var key = entry[0], value = entry[1], isCollapsed = collapsed.has(key);
+          html += '<div class="group-head ' + (isCollapsed ? 'collapsed' : '') + '" data-group="' + esc(key) + '"><span class="caret">v</span><span>' + esc(value.label) + '</span><span class="gcount">' + value.records.length + '</span></div>';
+          if (!isCollapsed) html += value.records.map(cardHtml).join('');
+        });
+        list.innerHTML = html || '<div class="state"><div class="mark">0</div><div class="title">No matches</div><div class="copy">Try All captures or clear the search.</div></div>';
+      }
+      function setServer(server) {
+        var dot = el('server-dot'), label = el('server-text'), btn = el('server-act-btn');
+        if (!dot || !label || !btn) return;
+        if (server) {
+          dot.style.background = '#39d98a';
+          dot.style.boxShadow = '0 0 8px rgba(57,217,138,.55)';
+          label.textContent = server.workspaceId + ' / ' + displayUrl(server.backendUrl);
+          btn.textContent = 'Disconnect';
+          btn.setAttribute('data-cmd', 'lineagelensBase.disconnectServer');
+        } else {
+          dot.style.background = '#747474';
+          dot.style.boxShadow = 'none';
+          label.textContent = 'Local mode';
+          btn.textContent = 'Connect';
+          btn.setAttribute('data-cmd', 'lineagelensBase.connectToServer');
+        }
+      }
+      function postCommand(command) { if (command) vscode.postMessage({ type: 'cmd', command: command }); }
+
+      el('search').addEventListener('input', function(e) { try { query = e.target.value || ''; render(); } catch (err) { showError(err); } });
+      el('group').addEventListener('change', function(e) { try { group = e.target.value || 'none'; collapsed.clear(); render(); } catch (err) { showError(err); } });
+      el('moreBtn').addEventListener('click', function(e) { e.stopPropagation(); el('more').classList.toggle('open'); });
+      document.addEventListener('click', function() { var more = el('more'); if (more) more.classList.remove('open'); });
+      Array.prototype.forEach.call(document.querySelectorAll('.chip'), function(btn) {
+        btn.addEventListener('click', function() { try { filter = btn.getAttribute('data-filter') || 'all'; render(); } catch (err) { showError(err); } });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('[data-cmd]'), function(btn) {
+        btn.addEventListener('click', function(e) { e.stopPropagation(); postCommand(btn.getAttribute('data-cmd')); });
+      });
+      el('clearAll').addEventListener('click', function(e) { e.stopPropagation(); vscode.postMessage({ type: 'clearAll' }); });
+      el('list').addEventListener('click', function(e) {
+        try {
+          var target = e.target && e.target.closest ? e.target : null;
+          if (!target) return;
+          var groupHead = target.closest('.group-head');
+          if (groupHead) {
+            var k = groupHead.getAttribute('data-group');
+            if (collapsed.has(k)) collapsed.delete(k); else collapsed.add(k);
+            render();
+            return;
+          }
+          var card = target.closest('.card');
+          if (!card) return;
+          var id = card.getAttribute('data-id');
+          var action = target.closest('[data-act]');
+          if (action) {
+            e.stopPropagation();
+            var act = action.getAttribute('data-act');
+            vscode.postMessage({ type: act === 'open' ? 'open' : act, id: id });
+            return;
+          }
+          vscode.postMessage({ type: 'open', id: id });
+        } catch (err) { showError(err); }
+      });
+      window.addEventListener('message', function(ev) {
+        try {
+          var msg = ev.data;
+          if (!msg || msg.type !== 'data') return;
+          RECORDS = Array.isArray(msg.records) ? msg.records : [];
+          STATS = msg.stats || STATS;
+          setServer(msg.server);
+          render();
+        } catch (err) { showError(err); }
       });
 
       vscode.postMessage({ type: 'ready' });

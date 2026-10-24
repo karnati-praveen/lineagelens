@@ -31,16 +31,30 @@ export function matchesAiToolHint(value: string): boolean {
 }
 
 // Scanning all extensions on every text-change event is O(extensions).
-// Cache the result and invalidate only when the extension set actually changes.
+// Cache briefly: extension activation is lazy, so an assistant that activates
+// *after* the first capture must still be seen (a forever-cache would pin the
+// first answer for the whole session). The set-change listener clears it
+// eagerly; the TTL is the backstop.
+const AI_TOOL_CACHE_TTL_MS = 60_000;
 let _cachedAiToolActive: boolean | null = null;
+let _cachedAiToolActiveAt = 0;
 
 function detectAiToolActive(): boolean {
-  if (_cachedAiToolActive !== null) { return _cachedAiToolActive; }
+  if (_cachedAiToolActive !== null && Date.now() - _cachedAiToolActiveAt < AI_TOOL_CACHE_TTL_MS) {
+    return _cachedAiToolActive;
+  }
   _cachedAiToolActive = matchesAiToolHint(vscode.env.appName) ||
     vscode.extensions.all.some(ext =>
       matchesAiToolHint(ext.id) && ext.isActive,
     );
+  _cachedAiToolActiveAt = Date.now();
   return _cachedAiToolActive;
+}
+
+/** Test hook: reset the AI-tool detection cache. */
+export function resetAiToolCacheForTests(): void {
+  _cachedAiToolActive = null;
+  _cachedAiToolActiveAt = 0;
 }
 
 export interface InsertedBlock {
@@ -220,7 +234,11 @@ export class CaptureService {
   }
 
   private isExcluded(filePath: string, patterns: string[]): boolean {
-    return patterns.some(p => minimatch(filePath, p, { matchBase: true }));
+    // Glob patterns use forward slashes; normalise Windows paths so excludes
+    // like **/node_modules/** actually match on win32 (minimatch treats `\`
+    // as an escape character, so raw backslash paths never match).
+    const normalized = filePath.replace(/\\/g, '/');
+    return patterns.some(p => minimatch(normalized, p, { dot: true, matchBase: true }));
   }
 
   private async readSnapshot(filePath: string): Promise<string | undefined> {
@@ -313,8 +331,6 @@ export class CaptureService {
       minLines,
       detectAiToolActive(),
     );
-    if (source === 'paste') { return; }
-
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
     const cwd = workspaceFolder?.uri.fsPath ?? this.gitCwd();
     if (cwd && Date.now() - this._gitContextAt > CaptureService.GIT_TTL_MS) {
@@ -371,10 +387,16 @@ export class CaptureService {
       change.range.start.character === 0 &&
       change.range.end.isEqual(doc.lineAt(doc.lineCount - 1).range.end),
     );
-    // Keep disk snapshots aligned with normal editor changes so the subsequent
-    // save event cannot double-capture them. External whole-file reloads are left
-    // for the filesystem watcher, which still has the previous disk contents.
-    if (!wholeDocumentReplacement && typeof doc.getText === 'function') {
+    // Keep disk snapshots aligned with editor changes big enough to examine, so
+    // the subsequent save event cannot double-capture them. Sub-threshold
+    // keystrokes (e.g. an assistant streaming one line at a time) deliberately
+    // leave the baseline alone, so the filesystem watcher still sees the
+    // cumulative diff on save. External whole-file reloads are left for the
+    // filesystem watcher, which still has the previous disk contents.
+    const significant = !wholeDocumentReplacement && event.contentChanges.some(change =>
+      !!change.text && (change.text.match(/\n/g) || []).length >= minLines - 1,
+    );
+    if (significant && typeof doc.getText === 'function') {
       this._fileSnapshots.set(this.snapshotKey(filePath), doc.getText());
     }
 
@@ -398,9 +420,6 @@ export class CaptureService {
         minLines,
         aiExtensionActive,
       );
-
-      // Skip confirmed pastes to reduce false positives.
-      if (source === 'paste') { continue; }
 
       const workspaceFolder = vscode.workspace.getWorkspaceFolder(doc.uri);
 
@@ -510,12 +529,13 @@ export class CaptureService {
     this._scheduleRetry();
   }
 
-  private _scheduleRetry(): void {
+  private _scheduleRetry(delayMs: number = RETRY_BASE_MS): void {
     if (this._retryTimer !== null) { return; }  // already scheduled
     this._retryTimer = setTimeout(() => {
       this._retryTimer = null;
       this.retryOutbox().catch(() => {});
-    }, RETRY_BASE_MS);
+    }, Math.max(0, delayMs));
+    this._retryTimer.unref?.();
   }
 
   /** Retry all outbox entries whose nextRetryAt is in the past.
@@ -547,13 +567,17 @@ export class CaptureService {
       }
     }
 
+    // Always re-arm toward the earliest outstanding retry — even when nothing
+    // was due this run. Otherwise a backoff landing past the next tick would
+    // strand entries with no timer until the next new failure.
+    const remaining = outbox.filter(e => e.attempts !== -1);
     if (changed) {
-      const remaining = outbox.filter(e => e.attempts !== -1);
       this._saveOutbox(remaining);
       this.updateStatusBar();
-      if (remaining.length > 0) {
-        this._scheduleRetry();
-      }
+    }
+    if (remaining.length > 0 && !this._disposed) {
+      const nextDue = Math.min(...remaining.map(e => e.nextRetryAt ?? Date.now()));
+      this._scheduleRetry(nextDue - Date.now());
     }
   }
 

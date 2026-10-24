@@ -177,13 +177,22 @@ export class CaptureStore {
         const wasEncrypted = raw.startsWith(ENC_PREFIX);
         const json = wasEncrypted ? this.decrypt(raw) : raw;
         const parsed = JSON.parse(json) as CaptureRecord[];
+        if (!Array.isArray(parsed)) {
+          throw new Error('Capture store root is not an array.');
+        }
         // Backfill fields so older stored records stay valid:
         //  – confidence/source landed in v1.2.3
         //  – the v2 evidence layer (schemaVersion, reviewState, lineageState,
         //    rangeContentHash) lands here. One bump carries all later-phase
         //    fields; they remain optional until a phase populates them.
+        //  – language/insertedCode/fileName/filePath are backfilled so a
+        //    hand-edited or legacy entry can never crash a webview.
         this.records = parsed.map(r => ({
           ...r,
+          fileName: r.fileName ?? path.basename(r.filePath ?? '') ?? 'unknown',
+          filePath: r.filePath ?? '',
+          language: r.language ?? 'text',
+          insertedCode: r.insertedCode ?? '',
           confidence: r.confidence ?? 0.5,
           source: (r.source ?? 'unknown') as CaptureSource,
           schemaVersion: r.schemaVersion ?? CAPTURE_SCHEMA_VERSION,
@@ -204,6 +213,21 @@ export class CaptureStore {
         }
       }
     } catch {
+      // Never silently discard: a corrupt file or an undecryptable one (e.g.
+      // OS keychain reset, storage copied to another machine) is preserved as
+      // a timestamped backup so no evidence is lost without a trace.
+      try {
+        if (fs.existsSync(this.storePath)) {
+          const backup = `${this.storePath}.corrupt-${Date.now()}.bak`;
+          fs.renameSync(this.storePath, backup);
+          vscode.window.showWarningMessage(
+            'LineageLens: the previous capture store could not be read (corrupt or locked to another keychain). ' +
+            `A backup was kept at ${path.basename(backup)} — starting fresh.`,
+          );
+        }
+      } catch {
+        // Best effort only; an empty in-memory store is still safe to use.
+      }
       this.records = [];
     }
   }
@@ -251,17 +275,45 @@ export class CaptureStore {
     await this._pendingWrite;
   }
 
-  /** Cancel any pending debounced save. Call on extension deactivate. */
+  /** Flush any pending debounced save synchronously. Call on extension deactivate. */
   dispose(): void {
     if (this._saveDebounceTimer !== null) {
       clearTimeout(this._saveDebounceTimer);
       this._saveDebounceTimer = null;
+      // Deactivate is synchronous — a pending capture must hit disk now, not
+      // be dropped with the timer. Best-effort: never throw out of dispose.
+      try {
+        this._saveSync();
+      } catch (error) {
+        console.error('LineageLens Base: failed to flush captures on dispose:', error);
+      }
+    }
+  }
+
+  private _serialize(): string {
+    return this.encrypt(JSON.stringify(this.records, null, 2));
+  }
+
+  private _saveSync(): void {
+    const tmp = this.storePath + '.tmp';
+    try {
+      fs.writeFileSync(tmp, this._serialize(), 'utf-8');
+      try {
+        fs.renameSync(tmp, this.storePath);
+      } catch {
+        // On Windows, rename throws EPERM when the target is briefly held open.
+        fs.copyFileSync(tmp, this.storePath);
+        fs.unlinkSync(tmp);
+      }
+    } catch (error) {
+      try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+      throw error;
     }
   }
 
   private async _saveAsync(): Promise<void> {
     const tmp = this.storePath + '.tmp';
-    const content = this.encrypt(JSON.stringify(this.records, null, 2));
+    const content = this._serialize();
     try {
       await fs.promises.writeFile(tmp, content, 'utf-8');
       try {
@@ -320,6 +372,10 @@ export class CaptureStore {
 
   getAll(): CaptureRecord[] {
     return this.records;
+  }
+
+  getStoragePath(): string {
+    return this.storePath;
   }
 
   getById(id: string): CaptureRecord | undefined {

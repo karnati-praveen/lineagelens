@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import Text, and_, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -212,4 +212,55 @@ async def get_search_facets(
         "capture_status": capture_facets,
         "file_extension": ext_facets,
         "ai_category": ai_category_facets,
+    }
+
+
+def _escape_like(value: str) -> str:
+    """Escape user input for use inside a LIKE pattern (backslash is the escape char)."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+@router.get("/search/suggest", dependencies=[Depends(require_non_solo)])
+async def get_search_suggestions(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+    q: str = Query(min_length=1, max_length=200),
+    limit: int = Query(default=10, ge=1, le=50),
+) -> dict:
+    """Prefix/substring autocomplete over indexed file paths and model names.
+
+    Powers omnibox-style find-as-you-type UX without running a full search.
+    Both the query and the limit are bounded; LIKE wildcards in `q` are
+    escaped so users can search literal `%`/`_` characters.
+    """
+    ensure_workspace_scope(auth, auth.workspace_id)
+    role = await get_verified_user_role(session, auth)
+    access_clause = build_record_visibility_clause(
+        ProvenanceRecord.uuid,
+        workspace_id=auth.workspace_id,
+        user_id=auth.subject,
+        is_admin=role == "admin",
+    )
+    ws = and_(ProvenanceRecord.workspace_id == auth.workspace_id, access_clause)
+    pattern = f"%{_escape_like(q)}%"
+
+    fp_rows = await session.execute(
+        select(ProvenanceRecord.file_path, func.count(ProvenanceRecord.id).label("cnt"))
+        .where(ws, ProvenanceRecord.file_path.isnot(None), ProvenanceRecord.file_path.like(pattern, escape="\\"))
+        .group_by(ProvenanceRecord.file_path)
+        .order_by(func.count(ProvenanceRecord.id).desc())
+        .limit(limit)
+    )
+    model_rows = await session.execute(
+        select(ProvenanceRecord.model_name, func.count(ProvenanceRecord.id).label("cnt"))
+        .where(ws, ProvenanceRecord.model_name.isnot(None), ProvenanceRecord.model_name.like(pattern, escape="\\"))
+        .group_by(ProvenanceRecord.model_name)
+        .order_by(func.count(ProvenanceRecord.id).desc())
+        .limit(limit)
+    )
+
+    return {
+        "query": q,
+        "file_paths": [{"value": r.file_path, "count": r.cnt} for r in fp_rows],
+        "models": [{"value": r.model_name, "count": r.cnt} for r in model_rows],
     }
