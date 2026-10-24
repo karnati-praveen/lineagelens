@@ -84,7 +84,9 @@ jobs:
       - name: Package base extension VSIX
         # Explicit out/ path — the repo root also contains committed .vsix
         # files that a wildcard artifact glob would pick up by mistake.
-        run: npx vsce package --no-dependencies --allow-missing-repository --out out/lineagelens-base-pr.vsix
+        run: |
+          mkdir -p out
+          npx vsce package --no-dependencies --allow-missing-repository --out out/lineagelens-base-pr.vsix
 
       - name: Upload base extension VSIX artifact
         uses: actions/upload-artifact@v4
