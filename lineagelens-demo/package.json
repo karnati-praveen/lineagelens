@@ -9,6 +9,7 @@
     "build": "remotion render src/index.ts LineageLensDemo out/lineagelens-demo.mp4",
     "build:social": "remotion render src/index.ts LineageLensDemoSquare out/lineagelens-demo-square.mp4",
     "build:hackathon": "remotion render src/index.ts HackathonDemo out/lineagelens-hackathon.mp4",
+    "build:walkthrough": "remotion render src/index.ts WalkthroughDemo out/lineagelens-walkthrough.mp4",
     "still": "remotion still src/index.ts LineageLensDemo out/poster.png --frame=90",
     "capture": "node scripts/capture-scan.js",
     "typecheck": "tsc --noEmit"
